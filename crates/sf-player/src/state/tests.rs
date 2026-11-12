@@ -2634,6 +2634,32 @@ mod actor {
     }
 
     #[tokio::test]
+    async fn autoplay_asks_again_while_its_answers_add_nothing() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        let _lane = rig.youtube().await;
+        let wanted = |events: &[PlayerEvent]| {
+            events.iter().filter(|event| matches!(event, PlayerEvent::AutoplayWanted(track) if track.uri == "youtube:track:v1")).count()
+        };
+        let answer = |items: Vec<TrackItem>| Msg::Command(Command::Autoplay { seed_uri: "youtube:track:v1".into(), items });
+        let mut events = rig
+            .send(Msg::Command(Command::PlayItems { items: vec![yt("v1")], row: 0, context: PlayContext::new("playlist") }))
+            .await;
+        events.extend(rig.settle().await);
+        assert_eq!(wanted(&events), 1, "the last song of the list asks for autoplay");
+        for _ in 0..3 {
+            // the song itself (already listed) or an empty page: nothing added, so it asks again
+            let events = rig.send(answer(vec![yt("v1")])).await;
+            assert_eq!(wanted(&events), 1);
+        }
+        assert_eq!(wanted(&rig.send(answer(Vec::new())).await), 0, "after three empty answers it stops for this song");
+        assert_eq!(wanted(&rig.send(answer(vec![yt("r1"), yt("r2")])).await), 0);
+        let queue = rig.snapshot.borrow().queue.clone();
+        let uris: Vec<&str> = queue.iter().map(|row| row.track.uri.as_str()).collect();
+        assert!(uris.contains(&"youtube:track:r1") && uris.contains(&"youtube:track:r2"), "{uris:?}");
+    }
+
+    #[tokio::test]
     async fn youtube_tracks_play_in_their_own_lane_and_pause_spotify() {
         let mut rig = Rig::new();
         rig.ready().await;
@@ -2672,6 +2698,44 @@ mod actor {
         // the bridge's model follows the lane's rows
         assert_eq!(rig.model, *snapshot.queue);
         assert!(events.iter().any(|event| matches!(event, PlayerEvent::TrackStarted(started) if started.track.uri == "youtube:track:v1")));
+    }
+
+    #[tokio::test]
+    async fn a_restored_youtube_song_plays_in_the_lane_not_through_spotify() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        let (source, player) = rig.youtube().await;
+        player.take();
+        let data = crate::state::session::SessionData {
+            version: crate::state::session::SessionData::VERSION,
+            context: PlayContext::new("tracks"),
+            track: Some(yt("kalank")),
+            position_ms: 178_000,
+            rows: vec![yt("next"), song("spotify:track:x")],
+            ..Default::default()
+        };
+        rig.send(Msg::Restore(Some(data))).await;
+        // shown paused where it was, nothing resolved yet
+        let snapshot = rig.snapshot.borrow().clone();
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:kalank"));
+        assert!(!snapshot.playing && snapshot.position_ms == 178_000);
+        assert_eq!(uris(&snapshot.queue), [
+            (md3_model::QueueSection::Current, "youtube:track:kalank".to_owned()),
+            (md3_model::QueueSection::Context, "youtube:track:next".to_owned()),
+        ]);
+        assert!(source.resolved.lock().unwrap().is_empty());
+
+        rig.engine.commands.lock().unwrap().clear();
+        let events = rig.send(Msg::Command(Command::TogglePlay)).await;
+        rig.settle().await;
+        assert!(!events.iter().any(|event| matches!(event, PlayerEvent::Notice(_))), "{events:?}");
+        assert!(rig.engine.commands.lock().unwrap().is_empty());
+        assert_eq!(source.resolved.lock().unwrap().as_slice(), ["kalank"]);
+        assert!(player.take().iter().any(|command| matches!(command, YtCommand::Load { play: true, position_ms: 178_000, .. })));
+        // and the session the actor saves is the lane's
+        let saved = rig.actor.with_lane_session(Default::default());
+        assert_eq!(saved.track.map(|track| track.uri), Some("youtube:track:kalank".to_owned()));
+        assert_eq!(saved.rows.len(), 1);
     }
 
     #[tokio::test]

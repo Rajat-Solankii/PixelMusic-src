@@ -112,53 +112,6 @@ is_spotify_image_host(const QString& host)
   return false;
 }
 
-// Wrapper to prevent caching of failed responses
-class NoCacheReply : public QNetworkReply
-{
-public:
-  NoCacheReply(QNetworkReply* reply, QObject* parent = nullptr)
-    : QNetworkReply(parent)
-    , m_reply(reply)
-  {
-    m_reply->setParent(this);
-    setOpenMode(m_reply->openMode());
-    
-    // Forward all signals
-    connect(m_reply, &QNetworkReply::finished, this, &NoCacheReply::finished);
-    connect(m_reply, &QNetworkReply::readyRead, this, &NoCacheReply::readyRead);
-    connect(m_reply, &QNetworkReply::downloadProgress, this, &NoCacheReply::downloadProgress);
-    connect(m_reply, &QNetworkReply::errorOccurred, this, &NoCacheReply::errorOccurred);
-    connect(m_reply, &QNetworkReply::sslErrors, this, &NoCacheReply::sslErrors);
-    connect(m_reply, &QNetworkReply::redirected, this, &NoCacheReply::redirected);
-    
-    // On error, remove from cache to prevent permanent caching of failures
-    connect(m_reply, &QNetworkReply::finished, this, [this] {
-      if (m_reply->error() != QNetworkReply::NoError) {
-        if (QAbstractNetworkCache* disk = m_reply->manager()->cache()) {
-          disk->remove(m_reply->url());
-        }
-      }
-    });
-  }
-  
-  ~NoCacheReply() override = default;
-  
-  void abort() override { m_reply->abort(); }
-  void close() override { m_reply->close(); }
-  bool atEnd() const override { return m_reply->atEnd(); }
-  qint64 bytesAvailable() const override { return m_reply->bytesAvailable(); }
-  qint64 bytesToWrite() const override { return m_reply->bytesToWrite(); }
-  bool canReadLine() const override { return m_reply->canReadLine(); }
-  bool isSequential() const override { return m_reply->isSequential(); }
-  
-protected:
-  qint64 readData(char* data, qint64 maxSize) override { return m_reply->read(data, maxSize); }
-  qint64 writeData(const char* data, qint64 maxSize) override { return m_reply->write(data, maxSize); }
-  
-private:
-  QNetworkReply* m_reply;
-};
-
 // Только HTTP/1.1: по HTTP/2 сервер обложек отвечает REFUSED_STREAM, когда страница
 // разом просит десятки картинок, и часть обложек не появляется.
 class Http1Nam : public QNetworkAccessManager
@@ -201,10 +154,6 @@ protected:
     url.setHost(QLatin1String(spotify_image_hosts[host]));
     copy.setUrl(url);
     QNetworkReply* reply = QNetworkAccessManager::createRequest(op, copy, data);
-    
-    // Wrap to prevent caching of failed responses
-    auto* wrapped = new NoCacheReply(reply, nullptr);
-    
     QObject::connect(reply, &QNetworkReply::finished, reply, [reply, host] {
       const auto error = reply->error();
       const bool host_failed = error == QNetworkReply::OperationCanceledError // таймаут
@@ -221,7 +170,7 @@ protected:
         spotify_image_host.compare_exchange_strong(expected, (host + 1) % spotify_image_host_count);
       }
     });
-    return wrapped;
+    return reply;
   }
 };
 
@@ -442,6 +391,8 @@ app_set_names(const QString& name, const QString& org, const QString& desktop)
   QCoreApplication::setApplicationName(name);
   QCoreApplication::setOrganizationName(org);
   QGuiApplication::setDesktopFileName(desktop);
+  // the name people see; applicationName stays "Materialfy": it names the settings and data folders
+  QGuiApplication::setApplicationDisplayName(QStringLiteral("Pixel Music"));
 #if defined(Q_OS_WIN)
   // AppUserModelID = имя приложения (как у ярлыков из materialfy.iss): группировка на панели задач
   SetCurrentProcessExplicitAppUserModelID(reinterpret_cast<const wchar_t*>(name.utf16()));

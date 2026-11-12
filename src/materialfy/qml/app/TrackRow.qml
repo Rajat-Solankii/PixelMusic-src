@@ -69,27 +69,6 @@ Item {
     signal dragMoved(real dy, real sceneY)
     signal dragFinished()
 
-    // Lazy duration resolution for YouTube tracks missing duration (e.g., Quick Picks)
-    // Use a guard to prevent multiple resolution calls for the same track instance
-    property bool _durationResolutionRequested: false
-    onVisibleChanged: {
-        // Only request resolution once per track, and only when needed
-        if (visible && durationMs <= 0 && trackId !== "" && !_durationResolutionRequested) {
-            _durationResolutionRequested = true
-            Catalog.resolveDuration(trackId, durationMs)
-        }
-    }
-    Connections {
-        target: Catalog
-        ignoreUnknownSignals: true
-        function onDurationResolved(resolvedTrackId, resolvedMs) {
-            // Only update if this is our track and we don't already have a valid duration
-            if (resolvedTrackId === trackId && durationMs <= 0 && resolvedMs > 0) {
-                durationMs = resolvedMs
-            }
-        }
-    }
-
     implicitHeight: 64
 
     function trackData() {
@@ -416,10 +395,8 @@ Item {
         }
 
         Label {
-            // Always show duration, use "--:--" when resolving
-            visible: true
             Layout.preferredWidth: 44
-            text: root.durationMs > 0 ? root._time(root.durationMs) : "--:--"
+            text: root.durationMs > 0 ? root._time(root.durationMs) : ""
             type: "bodyMedium"
             color: Theme.fgSurfaceVariant
             horizontalAlignment: Text.AlignRight

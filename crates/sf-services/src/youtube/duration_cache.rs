@@ -1,98 +1,88 @@
-//! Duration resolution for YouTube Music tracks.
-//! 
-//! YouTube Music home feed items (Quick Picks, shelf tracks) often lack duration information.
-//! This module provides lazy resolution and caching for missing durations.
-
-use std::collections::HashMap;
+//! Song lengths the home feed leaves out. Quick picks and "Listen again" rows come without a length, so the
+//! service asks for all of them in one WEB_REMIX `music/get_queue` request (as ytmusicapi's `get_queue` does) and
+//! remembers them per video id.
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use super::client::{InnerTube, Login};
+use super::client::{Login, WEB_REMIX};
+use super::models::{ShelvesPage, YtItem};
+use super::{YouTubeService, parsers};
 use crate::lock;
 
-/// How long cached durations are kept in memory.
-const DURATION_TTL: Duration = Duration::from_secs(30 * 60); // 30 minutes
-/// Maximum number of cached durations to keep.
-const MAX_CACHE_SIZE: usize = 1000;
+/// A song's length does not change; the limit only keeps the map from growing for ever.
+const DURATION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const MAX_CACHE_SIZE: usize = 2000;
+/// Video ids per `get_queue` request.
+const BATCH: usize = 50;
 
-/// Duration cache for YouTube Music tracks.
+/// Lengths in milliseconds by video id.
+#[derive(Default)]
 pub struct DurationCache {
     cache: Mutex<HashMap<String, (Instant, i64)>>,
 }
 
 impl DurationCache {
     pub fn new() -> Self {
-        Self {
-            cache: Mutex::new(HashMap::new()),
-        }
+        Self::default()
     }
 
-    /// Get a cached duration if it exists and hasn't expired.
     pub fn get(&self, video_id: &str) -> Option<i64> {
-        let cache = lock(&self.cache);
-        cache.get(video_id).filter(|(at, _)| at.elapsed() < DURATION_TTL).map(|(_, ms)| *ms)
+        lock(&self.cache).get(video_id).filter(|(at, _)| at.elapsed() < DURATION_TTL).map(|(_, ms)| *ms)
     }
 
-    /// Store a resolved duration in the cache.
     pub fn set(&self, video_id: String, duration_ms: i64) {
         let mut cache = lock(&self.cache);
-        
-        // Evict old entries if cache is full
         if cache.len() >= MAX_CACHE_SIZE {
             cache.retain(|_, (at, _)| at.elapsed() < DURATION_TTL);
             if cache.len() >= MAX_CACHE_SIZE {
-                // Remove oldest 25% of entries
-                let mut entries: Vec<_> = cache.iter().map(|(id, (at, _))| (id.clone(), *at)).collect();
-                entries.sort_by_key(|(_, at)| *at);
-                let to_remove: Vec<String> = entries.iter().take(cache.len() / 4).map(|(id, _)| id.clone()).collect();
-                // Drop the immutable borrow before modifying
-                drop(entries);
-                for id in to_remove {
-                    cache.remove(&id);
-                }
+                cache.clear();
             }
         }
-        
         cache.insert(video_id, (Instant::now(), duration_ms));
     }
 
-    /// Check if a duration needs to be resolved (not in cache or expired).
-    pub fn needs_resolution(&self, video_id: &str) -> bool {
-        self.get(video_id).is_none()
-    }
-
-    /// Clear the entire cache.
     pub fn clear(&self) {
         lock(&self.cache).clear();
     }
 }
 
-impl Default for DurationCache {
-    fn default() -> Self {
-        Self::new()
-    }
+fn video_id(uri: &str) -> Option<&str> {
+    uri.strip_prefix("youtube:track:").filter(|id| !id.is_empty())
 }
 
-impl InnerTube {
-    /// Fetch basic video info to extract duration.
-    /// This is a lightweight player request that only needs the video metadata.
-    pub async fn get_video_info(&self, video_id: &str) -> super::Result<serde_json::Value> {
-        // Use ANDROID_VR client for unauthenticated requests (no PoToken needed)
-        self.post(&super::client::ANDROID_VR, "player", json!({ "videoId": video_id }), Login::Never).await
-    }
-    
-    /// Extract duration in milliseconds from video info response.
-    pub fn extract_duration_ms(response: &serde_json::Value) -> Option<i64> {
-        // Extract duration from videoDetails.lengthSeconds
-        let duration_text = response
-            .get("videoDetails")?
-            .get("lengthSeconds")?
-            .as_str()?;
-        
-        let seconds: i64 = duration_text.parse().ok()?;
-        Some(seconds * 1000)
+impl YouTubeService {
+    /// Gives every song of `page` that came without a length its length: from the cache, else from one
+    /// `music/get_queue` request per 50 songs. A failed request leaves those songs at 0 (the UI shows nothing).
+    pub(crate) async fn fill_durations(&self, page: &mut ShelvesPage) {
+        let mut seen = HashSet::new();
+        let missing: Vec<String> = (page.shelves.iter().flat_map(|shelf| &shelf.items))
+            .filter_map(|item| match item {
+                YtItem::Track(track) if track.duration_ms <= 0 => video_id(&track.uri),
+                _ => None,
+            })
+            .filter(|id| self.duration_cache.get(id).is_none() && seen.insert(*id))
+            .map(str::to_owned)
+            .collect();
+        for batch in missing.chunks(BATCH) {
+            match self.client.post(&WEB_REMIX, "music/get_queue", json!({ "videoIds": batch }), Login::IfSignedIn).await {
+                Ok(response) => {
+                    for (id, seconds) in parsers::queue_lengths(&response) {
+                        self.duration_cache.set(id, seconds * 1000);
+                    }
+                }
+                Err(error) => log::debug!("youtube: song lengths of the home feed: {error}"),
+            }
+        }
+        for item in page.shelves.iter_mut().flat_map(|shelf| shelf.items.iter_mut()) {
+            if let YtItem::Track(track) = item
+                && track.duration_ms <= 0
+                && let Some(ms) = video_id(&track.uri).and_then(|id| self.duration_cache.get(id))
+            {
+                track.duration_ms = ms;
+            }
+        }
     }
 }
-

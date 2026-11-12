@@ -11,11 +11,10 @@ members = [
     "crates/mf-platform",
     "crates/mf-i18n",
     "crates/materialfy",
-    "crates/icon-gen",
 ]
 
 [workspace.package]
-description = "Materialfy — клиент Spotify на Qt Quick (Material 3 Expressive) и Rust"
+description = "Pixel Music — YouTube Music player on Qt Quick (Material 3 Expressive) and Rust"
 version = "0.5.1"
 edition = "2024"
 rust-version = "1.98"

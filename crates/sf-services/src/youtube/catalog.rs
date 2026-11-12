@@ -115,6 +115,16 @@ impl YouTubeService {
         self.next(Some(video_id), Some(&radio_playlist_id(video_id)), None, true).await
     }
 
+    /// A track's radio one page at a time (autoplay): the first page without an automix, so its continuation
+    /// belongs to `RDAMVM<videoId>`; with `continuation`, the page after it.
+    pub async fn radio_page(&self, video_id: &str, continuation: Option<&str>) -> Result<NextPage> {
+        let playlist_id = radio_playlist_id(video_id);
+        match continuation {
+            Some(token) => self.next_continuation(&playlist_id, token).await,
+            None => self.next(Some(video_id), Some(&playlist_id), None, false).await,
+        }
+    }
+
     /// Plain lyrics of a track, `None` when YouTube Music has none.
     pub async fn lyrics(&self, video_id: &str) -> Result<Option<String>> {
         let page = self.next(Some(video_id), None, None, false).await?;

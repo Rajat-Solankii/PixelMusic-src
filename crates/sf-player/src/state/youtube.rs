@@ -226,6 +226,46 @@ impl YtLane {
         self.start_list(kept, start, context);
     }
 
+    /// The previous session's song, shown paused at `position_ms` with the rows that followed it. Nothing is
+    /// resolved until Play, so the app starts quietly; transport then belongs to the lane, not to Spotify.
+    pub fn restore(&mut self, track: TrackItem, rows: Vec<TrackItem>, position_ms: u64, context: PlayContext) {
+        if !is_lane_track(&track.uri) {
+            return;
+        }
+        let items: Vec<TrackItem> = std::iter::once(track)
+            .chain(rows.into_iter().filter(|row| is_lane_track(&row.uri) && row.available))
+            .collect();
+        self.leave(false);
+        self.active = true;
+        self.items = items.into_iter().map(|track| self.entry(track)).collect();
+        self.order = (0..self.items.len()).collect();
+        self.pos = 0;
+        self.manual.clear();
+        self.context = context;
+        self.direction = 1;
+        let entry = self.items[0].clone();
+        self.duration_ms = entry.track.duration_ms.max(0) as u64;
+        let cover = if entry.track.cover_large.is_empty() { entry.track.cover.clone() } else { entry.track.cover_large.clone() };
+        self.current = Some(Current { entry, manual: false });
+        self.seq += 1;
+        self.stream = None;
+        self.playing = false;
+        self.loading = false;
+        self.position_ms = if self.duration_ms > 0 { position_ms.min(self.duration_ms) } else { position_ms };
+        self.position_at = None;
+        self.start_ms = self.position_ms;
+        self.error.clear();
+        self.effects.push(YtEffect::Cover(cover));
+    }
+
+    /// What `restore` needs next time: the current song, where it is, and the rows after it.
+    pub fn session(&self) -> Option<(TrackItem, u64, Vec<TrackItem>, PlayContext)> {
+        let current = self.current.as_ref()?;
+        let rows = self.manual.iter().chain(self.order.iter().skip(self.pos + 1).map(|&index| &self.items[index]));
+        let rows = rows.take(30).map(|entry| entry.track.clone()).collect();
+        Some((current.entry.track.clone(), self.position_ms(), rows, self.context.clone()))
+    }
+
     /// Shuffle on and start from a random track.
     pub fn shuffle_from(&mut self, items: Vec<TrackItem>, context: PlayContext) {
         let items: Vec<TrackItem> =
@@ -562,6 +602,28 @@ impl YtLane {
         if !self.active || self.context.context_uri.as_deref() != Some(context_uri) {
             return 0;
         }
+        self.append(items)
+    }
+
+    /// Autoplay: the song whose radio should follow once the list runs out — the current YouTube song while at
+    /// most one song of the list is left after it, nothing is in "Playing next" and repeat is off.
+    pub fn autoplay_seed(&self) -> Option<&TrackItem> {
+        let current = self.current.as_ref()?;
+        let left = self.order.len().saturating_sub(self.pos + 1);
+        (self.active && self.repeat == Repeat::Off && self.manual.is_empty() && left <= 1)
+            .then_some(&current.entry.track)
+            .filter(|track| track.uri.starts_with("youtube:track:"))
+    }
+
+    /// Autoplay: `items` (the radio of `seed_uri`) go after the list, if that song still plays.
+    pub fn autoplay(&mut self, seed_uri: &str, items: Vec<TrackItem>) -> usize {
+        if !self.active || self.current.as_ref().is_none_or(|current| current.entry.track.uri != seed_uri) {
+            return 0;
+        }
+        self.append(items)
+    }
+
+    fn append(&mut self, items: Vec<TrackItem>) -> usize {
         let first = self.items.len();
         for track in items {
             if !is_lane_track(&track.uri) || !track.available || self.items.iter().any(|entry| entry.track.uri == track.uri)
@@ -1128,5 +1190,41 @@ mod tests {
             effect,
             YtEffect::Engine(YtCommand::Load { position_ms: 30_000, play: false, .. })
         )));
+    }
+
+    #[test]
+    fn autoplay_asks_for_the_radio_near_the_end_and_appends_it_while_the_song_plays() {
+        let mut lane = started(&["a", "b", "c"], 0);
+        // two songs left: not yet
+        assert!(lane.autoplay_seed().is_none());
+        lane.next();
+        assert_eq!(lane.autoplay_seed().map(|track| track.track_id.as_str()), Some("b"));
+        // "Playing next" or repeat keep the list going on their own
+        lane.add(vec![yt("m")]);
+        assert!(lane.autoplay_seed().is_none());
+        lane.clear_manual();
+        lane.set_repeat(Repeat::All);
+        assert!(lane.autoplay_seed().is_none());
+        lane.set_repeat(Repeat::Off);
+
+        // the radio of another song (the user moved on) is ignored; the seed and songs already listed are skipped
+        assert_eq!(lane.autoplay("youtube:track:a", vec![yt("x")]), 0);
+        assert_eq!(lane.autoplay("youtube:track:b", vec![yt("b"), yt("c"), yt("r1"), yt("r2")]), 2);
+        let ids: Vec<String> = uris(&lane).into_iter().map(|(_, id)| id).collect();
+        assert_eq!(ids, ["b", "c", "r1", "r2"]);
+        assert!(lane.autoplay_seed().is_none());
+    }
+
+    #[test]
+    fn a_restored_song_waits_for_play_and_starts_where_it_was() {
+        let mut lane = YtLane::default();
+        lane.restore(yt("a"), vec![yt("b")], 90_000, PlayContext::new("tracks"));
+        assert!(lane.is_active() && !lane.playing() && !lane.loading());
+        assert_eq!(lane.position_ms(), 90_000);
+        assert!(resolves(&lane.take_effects()).is_empty());
+        lane.play();
+        assert_eq!(resolves(&lane.take_effects()), [(lane.seq(), "a".to_owned())]);
+        let (track, position, rows, _) = lane.session().unwrap();
+        assert_eq!((track.track_id.as_str(), position, rows.len()), ("a", 90_000, 1));
     }
 }

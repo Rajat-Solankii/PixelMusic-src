@@ -143,6 +143,7 @@ Get-ChildItem (Join-Path $Stage "qml") -Recurse -Directory -Filter "__pycache__"
 $assets = Join-Path $Stage "assets"
 New-Item -ItemType Directory -Force $assets | Out-Null
 Copy-Item (Join-Path $srcAssets "fonts") (Join-Path $assets "fonts") -Recurse   # fonts-src (исходники шрифтов) не нужен
+Copy-Item (Join-Path $srcAssets "logo") (Join-Path $assets "logo") -Recurse     # логотипы Pixel Music по цветам (боковая панель, иконка окна)
 Get-ChildItem $srcAssets -File | Where-Object { $_.Extension -in ".svg", ".png" } |
     Copy-Item -Destination $assets
 

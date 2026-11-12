@@ -165,7 +165,7 @@ impl qobject::Home {
             return;
         }
         let changed = |prev: &Arc<Vec<TrackItem>>, next: &Arc<Vec<TrackItem>>| !Arc::ptr_eq(prev, next) && prev != next;
-        let mut this = self.as_mut().rust_mut();
+        let this = self.as_mut().rust_mut();
         let this = this.get_mut();
         if changed(&prev.recent, &next.recent) {
             this.recently_played = to_qlist(&next.recent);

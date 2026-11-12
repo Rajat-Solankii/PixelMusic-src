@@ -13,11 +13,15 @@ pub const CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 const NEAR_PART: u64 = 4;
 /// The first request after a jump asks for a sixteenth of a chunk.
 const JUMP_PART: u64 = 16;
+/// A reader that has read this part of a chunk on from where it last seeked is playing, not probing.
+const PLAYING_PART: u64 = 64;
 /// How long a read waits for bytes before it gives up.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Further attempts at a chunk after a network failure or an unexpected status.
 const RETRIES: u32 = 3;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an answer may keep back its head or its next bytes. A server that stops sending in the middle of an
+/// answer (Monochrome's does at times) is asked again from where it stopped instead of keeping the song silent.
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Why a download stopped before the end.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +84,8 @@ struct State {
     want: Option<u64>,
     /// a reader this close ahead of `head` just waits for the download
     near: u64,
+    /// [`PLAYING_PART`] of a chunk
+    playing: u64,
     /// total size, once a response or the stream description names it
     total: Option<u64>,
     done: bool,
@@ -173,11 +179,19 @@ pub struct DownloadSpec {
     pub user_agent: String,
     pub content_length: Option<u64>,
     pub chunk_bytes: u64,
+    /// [`IDLE_TIMEOUT`]
+    pub idle_timeout: Duration,
 }
 
 impl DownloadSpec {
     pub fn new(url: impl Into<String>, user_agent: impl Into<String>, content_length: Option<u64>) -> Self {
-        Self { url: url.into(), user_agent: user_agent.into(), content_length, chunk_bytes: CHUNK_BYTES }
+        Self {
+            url: url.into(),
+            user_agent: user_agent.into(),
+            content_length,
+            chunk_bytes: CHUNK_BYTES,
+            idle_timeout: IDLE_TIMEOUT,
+        }
     }
 }
 
@@ -188,11 +202,13 @@ pub fn start(client: reqwest::Client, runtime: &tokio::runtime::Handle, spec: Do
         let mut state = shared.lock();
         state.total = spec.content_length.filter(|&length| length > 0);
         state.near = (spec.chunk_bytes / NEAR_PART).max(1);
+        state.playing = (spec.chunk_bytes / PLAYING_PART).max(1);
     }
     let task = runtime.spawn(run(client, spec, shared.clone()));
     StreamReader {
         shared: shared.clone(),
         position: 0,
+        since: 0,
         timeout: READ_TIMEOUT,
         _guard: Arc::new(Guard { shared, task: task.abort_handle() }),
     }
@@ -320,15 +336,14 @@ async fn fetch(
     end: u64,
     shared: &Shared,
 ) -> Result<Fetched, DownloadError> {
-    let mut request = client
-        .get(&spec.url)
-        .header(reqwest::header::RANGE, format!("bytes={offset}-{end}"))
-        .timeout(REQUEST_TIMEOUT);
+    let mut request = client.get(&spec.url).header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
     if !spec.user_agent.is_empty() {
         request = request.header(reqwest::header::USER_AGENT, &spec.user_agent);
     }
     let failed = |error: reqwest::Error| DownloadError::Failed(error.without_url().to_string());
-    let mut response = request.send().await.map_err(failed)?;
+    let idle = spec.idle_timeout;
+    let silent = || DownloadError::Failed(format!("nothing arrived for {idle:?}"));
+    let mut response = tokio::time::timeout(idle, request.send()).await.map_err(|_| silent())?.map_err(failed)?;
     let status = response.status().as_u16();
     // A range past the end once the size is unknown means the file is complete.
     if status == 416 && offset > 0 {
@@ -363,7 +378,18 @@ async fn fetch(
     let ranged = status == 206;
     let mut cursor = if ranged { offset } else { 0 };
     let mut arrived = 0u64;
-    while let Some(bytes) = response.chunk().await.map_err(failed)? {
+    loop {
+        let bytes = match tokio::time::timeout(idle, response.chunk()).await {
+            Ok(Ok(Some(bytes))) => bytes,
+            Ok(Ok(None)) => break,
+            Ok(Err(error)) if arrived == 0 => return Err(failed(error)),
+            Err(_) if arrived == 0 => return Err(silent()),
+            // cut off or stalled after some bytes: they are kept, and the next request goes on from there
+            Ok(Err(_)) | Err(_) => {
+                log::debug!("youtube download: the answer at {offset} stopped after {arrived} bytes; asking again");
+                return Ok(Fetched::Bytes(arrived));
+            }
+        };
         if bytes.is_empty() {
             continue;
         }
@@ -398,6 +424,8 @@ fn content_range_total(value: &str) -> Option<u64> {
 pub struct StreamReader {
     shared: Arc<Shared>,
     position: u64,
+    /// where the reader last seeked to: reading on from there is playback (the read-ahead below)
+    since: u64,
     timeout: Duration,
     _guard: Arc<Guard>,
 }
@@ -422,6 +450,12 @@ impl DownloadStatus {
 
     pub fn finished(&self) -> bool {
         self.0.lock().done
+    }
+
+    /// Where what has arrived from `position` on ends.
+    #[cfg(test)]
+    fn arrived_until(&self, position: u64) -> u64 {
+        self.0.lock().gap_from(position)
     }
 }
 
@@ -471,12 +505,22 @@ impl Read for StreamReader {
         {
             let mut state = self.shared.lock();
             let past_end = state.total.is_some_and(|total| position >= total);
-            if !state.done && !past_end && !state.covers(position) {
-                // after a seek the bytes may be far from where the download is: it comes here instead of
-                // the reader waiting for everything in between
-                let near = position >= state.head && position - state.head <= state.near;
-                if !near {
-                    state.want = Some(position);
+            if !state.done && !past_end {
+                if !state.covers(position) {
+                    // after a seek the bytes may be far from where the download is: it comes here instead of
+                    // the reader waiting for everything in between
+                    let near = position >= state.head && position - state.head <= state.near;
+                    if !near {
+                        state.want = Some(position);
+                    }
+                } else if position.saturating_sub(self.since) >= state.playing {
+                    // playing a stretch fetched for another position (a FLAC seek probes the file here and there
+                    // and lands in one of them): the download goes on right after it, not where it last was. Not
+                    // while probing: each move of the download costs a round trip.
+                    let gap = state.gap_from(position);
+                    if gap != state.head && state.total.is_some_and(|total| gap < total) && state.want != Some(gap) {
+                        state.want = Some(gap);
+                    }
                 }
             }
         }
@@ -507,6 +551,9 @@ impl Seek for StreamReader {
         };
         match target {
             Some(target) if target >= 0 => {
+                if target as u64 != self.position {
+                    self.since = target as u64;
+                }
                 self.position = target as u64;
                 Ok(self.position)
             }
@@ -543,6 +590,10 @@ pub(crate) mod tests {
         Html,
         /// 206 answers that say the file is `n` bytes long
         ClaimsTotal(usize),
+        /// ranges answered after a delay of `n` ms
+        Slow(u64),
+        /// each range answer sends at most `n` bytes, then holds the connection without sending more
+        Stalls(usize),
     }
 
     /// An HTTP server on 127.0.0.1 serving `body` at any path, honouring `Range`. Returns the URL and a count of
@@ -568,6 +619,9 @@ pub(crate) mod tests {
                         head.push(byte[0]);
                     }
                     let index = counter.fetch_add(1, Ordering::SeqCst);
+                    if let Mode::Slow(ms) = mode {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
                     let head = String::from_utf8_lossy(&head).to_lowercase();
                     let range = head.lines().find_map(|line| line.strip_prefix("range: bytes=")).map(|range| {
                         let (start, end) = range.trim().split_once('-').unwrap();
@@ -614,6 +668,15 @@ pub(crate) mod tests {
                             out
                         }
                     };
+                    if let (Mode::Stalls(most), Some(_)) = (mode, range) {
+                        // the head and the first `most` bytes of the body, then nothing
+                        let header = response.windows(4).position(|window| window == b"\r\n\r\n").map_or(0, |at| at + 4);
+                        let _ = socket.write_all(&response[..(header + most).min(response.len())]).await;
+                        if header + most < response.len() {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                        }
+                        return;
+                    }
                     let _ = socket.write_all(&response).await;
                     let _ = socket.shutdown().await;
                 });
@@ -711,6 +774,60 @@ pub(crate) mod tests {
         .unwrap();
         assert!(read == body);
         assert_eq!(status.downloaded(), 4_000_000);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reading_an_earlier_stretch_brings_the_download_back_after_it() {
+        // every answer takes a while, as a far server's do
+        let body = sample_body(4_000_000);
+        let (url, _) = serve(body.clone(), Mode::Slow(150)).await;
+        let mut reader = start(client(), &tokio::runtime::Handle::current(), spec(&url, 64_000));
+        let status = reader.status();
+        let end = tokio::task::spawn_blocking(move || {
+            let mut buf = [0u8; 100];
+            // probes far apart, as a FLAC seek makes them, then it lands in the first one
+            for at in [3_000_000, 1_000_000, 3_000_000] {
+                reader.seek(SeekFrom::Start(at)).unwrap();
+                reader.read_exact(&mut buf).unwrap();
+            }
+            // then it plays on (past a 64th of a chunk): that, not the probing, brings the download back
+            for _ in 0..20 {
+                reader.read_exact(&mut buf).unwrap();
+            }
+            (reader, status.arrived_until(3_000_000))
+        })
+        .await
+        .unwrap();
+        let (reader, end) = end;
+        let status = reader.status();
+        // the download left 1 MB for what follows the stretch being read, before the reader got there
+        // (going on from 1 MB in 64 kB answers would take seconds)
+        let started = std::time::Instant::now();
+        while status.arrived_until(3_000_000) <= end + 64_000 {
+            assert!(started.elapsed() < Duration::from_millis(1_500), "the download stayed elsewhere");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        drop(reader);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_answer_that_stops_sending_is_asked_again_from_where_it_stopped() {
+        let body = sample_body(200_000);
+        let (url, requests) = serve(body.clone(), Mode::Stalls(30_000)).await;
+        let spec = DownloadSpec { idle_timeout: Duration::from_millis(100), ..spec(&url, 64_000) };
+        let mut reader = start(client(), &tokio::runtime::Handle::current(), spec);
+        let status = reader.status();
+        let read = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            reader.read_to_end(&mut out).unwrap();
+            out
+        })
+        .await
+        .unwrap();
+        assert!(read == body);
+        assert_eq!(status.error(), None);
+        // 30 kB an answer: seven of them, none counted as a failure
+        assert_eq!(requests.load(Ordering::SeqCst), 7);
     }
 
     #[test]

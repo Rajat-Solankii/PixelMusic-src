@@ -165,11 +165,14 @@ impl AuthService {
             let Some(account) = account else {
                 service.yt.service.set_account(None);
                 service.yt_update(|s| s.state = YouTubeAuthState::SignedOut);
+                // the identity is known: the first song need not wait for the web player
+                tokio::spawn(service.yt.service.warm_streams());
                 return;
             };
             // signed in at once from the saved card; the fresh card follows when YouTube answers
             let card = card_of(&account);
             service.yt.service.set_account(Some(account.clone()));
+            tokio::spawn(service.yt.service.warm_streams());
             service.yt_update(|s| {
                 s.state = YouTubeAuthState::SignedIn;
                 s.account = Some(card.clone());

@@ -31,6 +31,8 @@ pub mod qobject {
         type QMap_QString_QVariant = cxx_qt_lib::QMap<cxx_qt_lib::QMapPair_QString_QVariant>;
         include!("cxx-qt-lib/qstringlist.h");
         type QStringList = cxx_qt_lib::QStringList;
+        include!("cxx-qt-lib/qlist.h");
+        type QList_QVariant = cxx_qt_lib::QList<cxx_qt_lib::QVariant>;
     }
 
     unsafe extern "RustQt" {
@@ -179,6 +181,11 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "playUris"]
         fn play_uris(self: &Player, uris: &QStringList, index: i32);
+        /// A list of track maps (Home shelves) from index: the queue gets whole rows (title, cover, duration),
+        /// not bare URIs that learn their metadata only when they play.
+        #[qinvokable]
+        #[cxx_name = "playTracks"]
+        fn play_tracks(self: &Player, tracks: &QList_QVariant, index: i32);
         /// Выпуск с позиции (resumeMs).
         #[qinvokable]
         #[cxx_name = "playEpisode"]
@@ -672,6 +679,15 @@ impl qobject::Player {
         {
             remember_track(&uris[index]);
             ctx().services.player.play_uris(uris, index, PlayContext::new(md3_model::contexts::TRACKS));
+        }
+    }
+
+    fn play_tracks(&self, tracks: &crate::qt::QVariantList, index: i32) {
+        let items = super::tracks_from_list(tracks);
+        if let Ok(index) = usize::try_from(index)
+            && index < items.len()
+        {
+            ctx().services.player.play_items(items, index, PlayContext::new(md3_model::contexts::TRACKS));
         }
     }
 

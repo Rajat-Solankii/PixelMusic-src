@@ -1,11 +1,14 @@
 //! GVS PO tokens ("proof of origin"): web-client stream URLs stop after the first megabyte without `&pot=`, a
 //! token bound to the video id. The built-in minter runs Google's BotGuard challenge in the sandboxed JS engine
 //! (`jsworker.rs`, `js/env.js`, `js/botguard.js`): `Create` gives the challenge, its snapshot goes to `GenerateIT`
-//! for an integrity token, and the minter that token unlocks signs video ids until the token expires.
+//! for an integrity token, and the minter that token unlocks signs video ids until the token expires. Both calls
+//! carry the public API key found in the player script (`cipher::botguard_key`; `BOTGUARD_API_KEY` overrides it).
+//! Signing in or out drops the tokens and the minter (`reset`).
 //!
 //! An external bgutil-style provider can be used instead: `POST {server}/get_pot` with `{"content_binding": id}`
 //! answers `{"poToken": ...}` (`YouTubeService::set_po_token_server`, or `MATERIALFY_POT_PROVIDER`).
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -28,6 +31,8 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(20);
 const MINT_TIMEOUT: Duration = Duration::from_secs(10);
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const PROVIDER_ENV: &str = "MATERIALFY_POT_PROVIDER";
+/// Overrides the BotGuard API key read from the player script.
+pub(crate) const KEY_ENV: &str = "BOTGUARD_API_KEY";
 
 enum Minter {
     /// the context `CONTEXT` holds a minter, usable until then
@@ -40,8 +45,10 @@ pub(crate) struct PoTokens {
     worker: Arc<JsWorker>,
     server: RwLock<Option<String>>,
     minter: tokio::sync::Mutex<Option<Minter>>,
-    /// video id -> (token, valid until)
+    /// binding -> (token, valid until)
     cache: Mutex<HashMap<String, (String, Instant)>>,
+    /// set by `reset`: the minter belongs to the previous identity
+    stale: AtomicBool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -51,7 +58,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 impl PoTokens {
     pub(crate) fn new(worker: Arc<JsWorker>) -> Self {
         let server = std::env::var(PROVIDER_ENV).ok().map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
-        Self { worker, server: RwLock::new(server), minter: tokio::sync::Mutex::new(None), cache: Mutex::default() }
+        Self { worker, server: RwLock::new(server), minter: tokio::sync::Mutex::new(None), cache: Mutex::default(), stale: AtomicBool::new(false) }
     }
 
     /// Use an external provider (`Some(base URL)`) or the built-in minter (`None`).
@@ -66,28 +73,64 @@ impl PoTokens {
         lock(&self.cache).remove(video_id);
     }
 
-    /// A token for the video. `Ok(None)`: BotGuard refused this environment, go on without one.
-    pub(crate) async fn token(&self, client: &InnerTube, video_id: &str) -> Result<Option<String>, String> {
+    /// Another identity (signed in or out): drop every token and the minter, so nothing minted for the previous
+    /// identity is reused. The next token starts a fresh BotGuard challenge.
+    pub(crate) fn reset(&self) {
+        self.stale.store(true, Ordering::SeqCst);
+        lock(&self.cache).clear();
+    }
+
+    /// Gets the built-in minter ready ahead of the first token (the BotGuard challenge takes a second or two).
+    /// Nothing to do with an external provider or a minter that is still good.
+    pub(crate) async fn warm(&self, client: &InnerTube, key: Option<&str>) -> Result<(), String> {
+        if self.server.read().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some() {
+            return Ok(());
+        }
+        let key = std::env::var(KEY_ENV).ok().filter(|key| !key.trim().is_empty()).or(key.map(str::to_owned));
+        let Some(key) = key else { return Err("no BotGuard API key in the player script".into()) };
+        let mut minter = self.minter.lock().await;
+        if self.stale.swap(false, Ordering::SeqCst) {
+            *minter = None;
+        }
+        if let Some(Minter::Ready(until) | Minter::Refused(until)) = *minter
+            && Instant::now() < until
+        {
+            return Ok(());
+        }
+        *minter = None;
+        *minter = Some(self.start_minter(client, &key).await?);
+        Ok(())
+    }
+
+    /// A token bound to `binding` (a video id, or a signed-in user's datasync id). `key` is BotGuard's API key
+    /// from the player script (`BOTGUARD_API_KEY` overrides it). `Ok(None)`: BotGuard refused this environment, go
+    /// on without one.
+    pub(crate) async fn token(&self, client: &InnerTube, key: Option<&str>, binding: &str) -> Result<Option<String>, String> {
         let now = Instant::now();
         {
             let mut cache = lock(&self.cache);
             cache.retain(|_, (_, until)| *until > now);
-            if let Some((token, _)) = cache.get(video_id) {
+            if let Some((token, _)) = cache.get(binding) {
                 return Ok(Some(token.clone()));
             }
         }
         let server = self.server.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
         if let Some(server) = server {
-            match from_provider(client, &server, video_id).await {
+            match from_provider(client, &server, binding).await {
                 Ok(token) => {
                     // the provider keeps its own cache; an hour here spares the round trip
-                    lock(&self.cache).insert(video_id.to_owned(), (token.clone(), now + Duration::from_secs(3600)));
+                    lock(&self.cache).insert(binding.to_owned(), (token.clone(), now + Duration::from_secs(3600)));
                     return Ok(Some(token));
                 }
                 Err(error) => log::info!("youtube po token: the provider failed ({error}); using the built-in minter"),
             }
         }
+        let key = std::env::var(KEY_ENV).ok().filter(|key| !key.trim().is_empty()).or(key.map(str::to_owned));
+        let Some(key) = key else { return Err("no BotGuard API key in the player script".into()) };
         let mut minter = self.minter.lock().await;
+        if self.stale.swap(false, Ordering::SeqCst) {
+            *minter = None;
+        }
         // one fresh minter if the one we had is gone (expired, or the JS thread was replaced)
         for attempt in 0..2 {
             let until = match *minter {
@@ -95,7 +138,7 @@ impl PoTokens {
                 Some(Minter::Ready(until)) if Instant::now() < until => until,
                 _ => {
                     *minter = None;
-                    let ready = self.start_minter(client).await?;
+                    let ready = self.start_minter(client, &key).await?;
                     *minter = Some(ready);
                     match *minter {
                         Some(Minter::Ready(until)) => until,
@@ -103,9 +146,12 @@ impl PoTokens {
                     }
                 }
             };
-            match self.mint(video_id).await {
+            match self.mint(binding).await {
                 Ok(token) => {
-                    lock(&self.cache).insert(video_id.to_owned(), (token.clone(), until));
+                    // a reset meanwhile: the token is still good for this request, not for the next identity
+                    if !self.stale.load(Ordering::SeqCst) {
+                        lock(&self.cache).insert(binding.to_owned(), (token.clone(), until));
+                    }
                     return Ok(Some(token));
                 }
                 Err(error) => {
@@ -121,9 +167,9 @@ impl PoTokens {
     }
 
     /// Run the BotGuard challenge and get its minter ready in the JS context.
-    async fn start_minter(&self, client: &InnerTube) -> Result<Minter, String> {
+    async fn start_minter(&self, client: &InnerTube, key: &str) -> Result<Minter, String> {
         let started = Instant::now();
-        let create = client.botguard("Create", json!([REQUEST_KEY])).await.map_err(|error| format!("Create: {error}"))?;
+        let create = client.botguard("Create", json!([REQUEST_KEY]), key).await.map_err(|error| format!("Create: {error}"))?;
         let create = create.to_string();
         let snapshot = self
             .worker
@@ -141,7 +187,7 @@ impl PoTokens {
             })
             .await??;
         let integrity = client
-            .botguard("GenerateIT", json!([REQUEST_KEY, snapshot]))
+            .botguard("GenerateIT", json!([REQUEST_KEY, snapshot]), key)
             .await
             .map_err(|error| format!("GenerateIT: {error}"))?;
         if !integrity[0].is_string() {

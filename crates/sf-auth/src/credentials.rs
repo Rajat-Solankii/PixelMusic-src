@@ -230,6 +230,61 @@ impl ProtectedStore for NativeStore {
     }
 }
 
+/// Windows keeps at most 2560 bytes per credential, and a YouTube Music sign-in (its cookies) is bigger: such a
+/// secret is split over entries `<key>#0`, `<key>#1`, … and the entry `<key>` holds only how many there are.
+/// Small secrets stay a single entry, as before.
+const CHUNK: usize = 2048;
+const CHUNKS_PREFIX: &[u8] = b"mf-chunks:";
+
+struct Chunked<S>(S);
+
+impl<S: ProtectedStore> Chunked<S> {
+    fn chunk_key(key: &str, index: usize) -> String {
+        format!("{key}#{index}")
+    }
+
+    fn count(head: &[u8]) -> Option<usize> {
+        std::str::from_utf8(head.strip_prefix(CHUNKS_PREFIX)?).ok()?.parse().ok()
+    }
+
+    /// Chunks `from..` of a secret that is gone or was longer.
+    fn delete_chunks(&mut self, key: &str, from: usize, to: usize) -> Result<(), Error> {
+        (from..to).try_for_each(|index| self.0.delete(&Self::chunk_key(key, index)))
+    }
+}
+
+impl<S: ProtectedStore> ProtectedStore for Chunked<S> {
+    fn read(&mut self, key: &str) -> Result<Option<Vec<u8>>, Error> {
+        let Some(head) = self.0.read(key)? else { return Ok(None) };
+        let Some(count) = Self::count(&head) else { return Ok(Some(head)) };
+        let mut secret = Vec::new();
+        for index in 0..count {
+            secret.extend(self.0.read(&Self::chunk_key(key, index))?.ok_or(Error::Invalid)?);
+        }
+        Ok(Some(secret))
+    }
+
+    fn write(&mut self, key: &str, secret: &[u8]) -> Result<(), Error> {
+        let before = self.0.read(key).ok().flatten().and_then(|head| Self::count(&head)).unwrap_or(0);
+        if secret.len() <= CHUNK && !secret.starts_with(CHUNKS_PREFIX) {
+            self.0.write(key, secret)?;
+            return self.delete_chunks(key, 0, before);
+        }
+        let chunks: Vec<&[u8]> = secret.chunks(CHUNK).collect();
+        for (index, chunk) in chunks.iter().enumerate() {
+            self.0.write(&Self::chunk_key(key, index), chunk)?;
+        }
+        self.0.write(key, format!("mf-chunks:{}", chunks.len()).as_bytes())?;
+        self.delete_chunks(key, chunks.len(), before)
+    }
+
+    fn delete(&mut self, key: &str) -> Result<(), Error> {
+        let count = self.0.read(key).ok().flatten().and_then(|head| Self::count(&head)).unwrap_or(0);
+        self.0.delete(key)?;
+        self.delete_chunks(key, 0, count)
+    }
+}
+
 #[derive(Default)]
 struct MemoryStore {
     values: std::collections::HashMap<String, Vec<u8>>,
@@ -292,12 +347,12 @@ impl Store {
     /// `state_dir` — mf_platform::dirs::state_dir() (маркеры отзыва, профиль).
     /// Поток хранилища входит в текущий tokio-рантайм, если он есть (нужно Secret Service на Linux).
     pub fn new(state_dir: PathBuf) -> Self {
-        Self::with_backend(state_dir, tokio::runtime::Handle::try_current().ok(), Box::new(NativeStore::default()))
+        Self::with_backend(state_dir, tokio::runtime::Handle::try_current().ok(), Box::new(Chunked(NativeStore::default())))
     }
 
     /// Как `new`, но с явным рантаймом для потока хранилища (вызов вне контекста рантайма).
     pub fn with_runtime(state_dir: PathBuf, runtime: tokio::runtime::Handle) -> Self {
-        Self::with_backend(state_dir, Some(runtime), Box::new(NativeStore::default()))
+        Self::with_backend(state_dir, Some(runtime), Box::new(Chunked(NativeStore::default())))
     }
 
     /// Для тестов соседних крейтов: секреты в памяти, маркеры отзыва — в `state_dir`.
@@ -937,5 +992,43 @@ mod tests {
             assert!(!error.to_string().is_empty());
             assert!(error.proxy_message().contains("proxy"));
         }
+    }
+
+    /// The Windows limit: a credential holds at most 2560 bytes.
+    #[derive(Default)]
+    struct Limited(MemoryStore);
+
+    impl ProtectedStore for Limited {
+        fn read(&mut self, key: &str) -> Result<Option<Vec<u8>>, Error> {
+            self.0.read(key)
+        }
+
+        fn write(&mut self, key: &str, secret: &[u8]) -> Result<(), Error> {
+            if secret.len() > 2560 {
+                return Err(Error::Unavailable);
+            }
+            self.0.write(key, secret)
+        }
+
+        fn delete(&mut self, key: &str) -> Result<(), Error> {
+            self.0.delete(key)
+        }
+    }
+
+    #[test]
+    fn a_secret_bigger_than_a_windows_credential_is_split_and_read_back_whole() {
+        let mut store = Chunked(Limited::default());
+        let big: Vec<u8> = (0..7000u32).map(|i| b'a' + (i % 26) as u8).collect();
+        store.write("k", &big).unwrap();
+        assert_eq!(store.read("k").unwrap().as_deref(), Some(big.as_slice()));
+        assert_eq!(store.0.0.values.len(), 5); // the head and four chunks of 2048
+        // a smaller secret replaces it and leaves no chunks behind
+        store.write("k", b"small").unwrap();
+        assert_eq!(store.read("k").unwrap().as_deref(), Some(&b"small"[..]));
+        assert_eq!(store.0.0.values.len(), 1);
+        store.write("k", &big).unwrap();
+        store.delete("k").unwrap();
+        assert!(store.0.0.values.is_empty());
+        assert_eq!(store.read("k").unwrap(), None);
     }
 }

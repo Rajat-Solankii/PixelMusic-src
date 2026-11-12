@@ -150,6 +150,16 @@ pub(crate) fn track_from_map(map: &QVariantMap) -> Option<TrackItem> {
     track_from_json(map_to_json(map))
 }
 
+/// QML list of track maps → TrackItems (entries that are not track maps are skipped).
+pub(crate) fn tracks_from_list(list: &crate::qt::QVariantList) -> Vec<TrackItem> {
+    list.iter()
+        .filter_map(|item| match crate::qt::qvariant_to_json(item) {
+            Value::Object(object) => track_from_json(object),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Разбор словаря трека: без ключа available трек считается доступным; выпуск узнаётся и по URI.
 fn track_from_json(mut object: serde_json::Map<String, Value>) -> Option<TrackItem> {
     object.entry("available").or_insert(Value::Bool(true));

@@ -69,8 +69,8 @@ fn issue_url() -> String {
     let title = format!("Crash report ({version}, {})", std::env::consts::OS);
     let body = format!(
         "**What were you doing when it happened?**\n\n\n\
-         **crash.log**: drag the file from the folder Materialfy opened into this box.\n\n\
-         Materialfy {version}, {} {}",
+         **crash.log**: drag the file from the folder Pixel Music opened into this box.\n\n\
+         Pixel Music {version}, {} {}",
         std::env::consts::OS,
         std::env::consts::ARCH
     );

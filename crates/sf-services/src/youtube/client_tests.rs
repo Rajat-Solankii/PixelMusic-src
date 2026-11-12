@@ -569,7 +569,7 @@ async fn the_web_tier_deciphers_the_url_and_adds_a_video_bound_token() {
     let create = server.all_requests().into_iter().find(|request| request.target == "/api/jnn/v1/Create").expect("Create");
     assert_eq!(create.body, json!([super::potoken::REQUEST_KEY]));
     assert_eq!(create.header("content-type"), Some("application/json+protobuf"));
-    assert!(create.header("x-goog-api-key").is_some());
+    assert_eq!(create.header("x-goog-api-key"), Some("AIzaTestKeyForTheFakeBotGuard01"), "the key the player script carries");
     let generate = server.all_requests().into_iter().find(|request| request.target == "/api/jnn/v1/GenerateIT").expect("GenerateIT");
     assert_eq!(generate.body, json!([super::potoken::REQUEST_KEY, "snap:PROGRAM"]));
 
@@ -587,6 +587,25 @@ async fn the_web_tier_deciphers_the_url_and_adds_a_video_bound_token() {
 }
 
 #[tokio::test]
+async fn warming_up_loads_the_player_script_and_the_minter_before_the_first_song() {
+    let server = web_server(fixture("error_responses.json")["bot_challenge_login_required"].clone(), integrity_ok()).await;
+    let service = server.service();
+    service.warm_streams().await;
+    assert!(player_requests(&server).is_empty(), "warming up asks for no song");
+    assert_eq!((count(&server, PLAYER_PATH), count(&server, "/api/jnn/v1/Create"), count(&server, "/api/jnn/v1/GenerateIT")), (1, 1, 1));
+    // a second warm-up has nothing left to do
+    service.warm_streams().await;
+    assert_eq!(server.all_requests().len(), 4);
+    let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
+    assert!(stream.url.ends_with(&format!("&pot={}", expected_token("fJ9rUzIMcZQ"))), "{}", stream.url);
+    assert_eq!((count(&server, PLAYER_PATH), count(&server, "/api/jnn/v1/Create"), count(&server, "/api/jnn/v1/GenerateIT")), (1, 1, 1));
+    // signing in drops the minter: the next warm-up starts a new one with the same script
+    service.set_account(Some(account()));
+    service.warm_streams().await;
+    assert_eq!((count(&server, PLAYER_PATH), count(&server, "/api/jnn/v1/Create")), (1, 2));
+}
+
+#[tokio::test]
 async fn the_signed_in_web_tier_follows_a_refusal() {
     let server = web_server(fixture("error_responses.json")["unplayable_age_restricted"].clone(), integrity_ok()).await;
     let service = server.service();
@@ -595,10 +614,14 @@ async fn the_signed_in_web_tier_follows_a_refusal() {
     assert_eq!(stream.source, "WEB_REMIX");
     let requests = player_requests(&server);
     assert_eq!(requests.len(), 3);
+    let visitor = |request: &Request| request.body["context"]["client"]["visitorData"].as_str().map(str::to_owned);
     assert_eq!((client_name(&requests[0]), requests[0].header("cookie")), ("ANDROID_VR", None));
-    assert_eq!(client_name(&requests[1]), "ANDROID_VR");
-    assert!(requests[1].header("cookie").is_some(), "then ANDROID_VR as the user");
+    assert_ne!(visitor(&requests[0]), account().visitor_data, "the anonymous request never carries the account's id");
+    assert_eq!((client_name(&requests[1]), requests[1].header("cookie")), ("ANDROID_VR", None), "ANDROID_VR takes no cookies");
+    assert_eq!(visitor(&requests[1]), account().visitor_data, "then ANDROID_VR with the account's visitor id");
+    assert!(requests[1].body["context"]["user"].get("onBehalfOfUser").is_none());
     assert!(requests[2].header("cookie").is_some(), "WEB_REMIX goes as the user");
+    assert_eq!(requests[2].body["context"]["user"]["onBehalfOfUser"], "11223344556677889900");
     assert!(requests[2].body["serviceIntegrityDimensions"]["poToken"].is_string());
     // an age wall does not rest ANDROID_VR
     service.invalidate_stream("fJ9rUzIMcZQ");
@@ -607,16 +630,19 @@ async fn the_signed_in_web_tier_follows_a_refusal() {
     assert_eq!(player_requests(&server).len(), 6);
 }
 
-/// A server where the anonymous ANDROID_VR meets a bot check and the signed-in one answers `user`.
-async fn bot_checked_server(user: Option<Value>) -> MockServer {
+/// A server where ANDROID_VR answers `user` to requests with the account's visitor id and a bot check to the rest;
+/// no web player.
+async fn bot_checked_server(user: Value) -> MockServer {
     let base = Arc::new(Mutex::new(String::new()));
     let shared = base.clone();
     let server = MockServer::start(move |request, _| {
         let bot_check = fixture("error_responses.json")["bot_challenge_login_required"].clone();
-        match (request.header("cookie"), &user) {
-            (Some(_), None) => (200, player_response(&shared.lock().unwrap())),
-            (Some(_), Some(answer)) => (200, answer.clone()),
-            (None, _) => (200, bot_check),
+        let for_user = request.body["context"]["client"]["visitorData"].as_str() == account().visitor_data.as_deref();
+        match (for_user, &user) {
+            (true, Value::Null) => (200, player_response(&shared.lock().unwrap())),
+            (true, Value::Number(status)) => (status.as_u64().unwrap_or(500) as u16, json!({})),
+            (true, answer) => (200, answer.clone()),
+            (false, _) => (200, bot_check),
         }
     })
     .await;
@@ -625,13 +651,13 @@ async fn bot_checked_server(user: Option<Value>) -> MockServer {
 }
 
 #[tokio::test]
-async fn signing_in_gets_past_the_bot_check_with_android_vr() {
-    let server = bot_checked_server(None).await;
+async fn signed_in_android_vr_goes_with_the_accounts_visitor_id_and_no_cookies() {
+    let server = bot_checked_server(Value::Null).await;
     let service = server.service();
     // signed out: the bot check, and ANDROID_VR rests
     let error = service.resolve_stream("fJ9rUzIMcZQ").await.unwrap_err();
     assert!(matches!(&error, YouTubeError::Unplayable(reason) if reason.contains("not a robot")), "{error:?}");
-    // signing in forgets the rest; the anonymous client is refused again, the user's is not
+    // signing in forgets the rest; the anonymous client is refused again, the account's device is not
     service.set_account(Some(account()));
     let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
     assert_eq!((stream.source.as_str(), stream.itag), ("ANDROID_VR", 140));
@@ -639,28 +665,85 @@ async fn signing_in_gets_past_the_bot_check_with_android_vr() {
     let requests = player_requests(&server);
     let user = requests.last().unwrap();
     assert_eq!(client_name(user), "ANDROID_VR");
-    assert_eq!(user.header("cookie"), Some(account().cookie.as_str()));
-    assert!(user.header("authorization").is_some_and(|value| value.starts_with("SAPISIDHASH ")));
+    assert_eq!(user.header("cookie"), None);
+    assert_eq!(user.header("authorization"), None);
+    assert_eq!(user.header("x-goog-visitor-id"), account().visitor_data.as_deref());
+    assert!(user.body["context"]["user"].get("onBehalfOfUser").is_none(), "answered 401 without the cookie");
     assert_eq!(user.header("x-youtube-client-name"), Some("28"));
     // the next song skips the resting anonymous client
     service.resolve_stream("other").await.expect("stream");
     let after = player_requests(&server);
     assert_eq!(after.len(), requests.len() + 1);
-    assert!(after.last().unwrap().header("cookie").is_some());
+    assert_eq!(after.last().unwrap().header("x-goog-visitor-id"), account().visitor_data.as_deref());
 }
 
 #[tokio::test]
-async fn a_bot_check_of_the_account_rests_its_tier_too() {
+async fn a_bot_check_or_a_refused_request_rests_the_accounts_tier_too() {
     let bot_check = fixture("error_responses.json")["bot_challenge_login_required"].clone();
-    let server = bot_checked_server(Some(bot_check)).await;
+    for answer in [bot_check, json!(401), json!(400)] {
+        let server = bot_checked_server(answer.clone()).await;
+        let service = server.service();
+        service.set_account(Some(account()));
+        for _ in 0..2 {
+            let error = service.resolve_stream("abc").await.unwrap_err();
+            assert!(matches!(&error, YouTubeError::Unplayable(reason) if reason.contains("not a robot")), "{answer}: {error:?}");
+        }
+        let vr = player_requests(&server).into_iter().filter(|request| client_name(request) == "ANDROID_VR").count();
+        assert_eq!(vr, 2, "{answer}: one anonymous and one request for the user, then both rest");
+    }
+}
+
+#[tokio::test]
+async fn a_bot_checked_account_gets_the_web_stream_anonymously() {
+    let base = Arc::new(Mutex::new(String::new()));
+    let shared = base.clone();
+    let server = MockServer::start(move |request, _| {
+        if let Some(answer) = web_assets(request, &integrity_ok()) {
+            return answer;
+        }
+        let bot_check = fixture("error_responses.json")["bot_challenge_login_required"].clone();
+        if client_name(request) == "ANDROID_VR" || request.header("cookie").is_some() {
+            (200, bot_check)
+        } else {
+            (200, web_player_response(&shared.lock().unwrap(), &request.body["videoId"]))
+        }
+    })
+    .await;
+    *base.lock().unwrap() = server.base.clone();
     let service = server.service();
     service.set_account(Some(account()));
-    for _ in 0..2 {
-        let error = service.resolve_stream("abc").await.unwrap_err();
-        assert!(matches!(&error, YouTubeError::Unplayable(reason) if reason.contains("not a robot")), "{error:?}");
-    }
-    let vr = player_requests(&server).into_iter().filter(|request| client_name(request) == "ANDROID_VR").count();
-    assert_eq!(vr, 2, "one anonymous and one signed-in request, then both rest");
+    let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
+    assert_eq!(stream.source, "WEB_REMIX");
+    assert!(stream.url.ends_with(&format!("&pot={}", expected_token("fJ9rUzIMcZQ"))), "{}", stream.url);
+    let web: Vec<Request> = player_requests(&server).into_iter().filter(|request| client_name(request) == "WEB_REMIX").collect();
+    assert_eq!(web.len(), 2);
+    assert!(web[0].header("cookie").is_some(), "first as the user");
+    assert_eq!(web[1].header("cookie"), None, "then anonymously");
+    assert_ne!(web[1].header("x-goog-visitor-id"), account().visitor_data.as_deref());
+    assert_eq!(count(&server, "/api/jnn/v1/Create"), 1, "both go with the same video-bound token");
+}
+
+#[tokio::test]
+async fn signing_in_or_out_forgets_the_tokens_the_minter_and_the_streams() {
+    let server = web_server(fixture("error_responses.json")["bot_challenge_login_required"].clone(), integrity_ok()).await;
+    let service = server.service();
+    service.set_account(Some(account()));
+    service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
+    let web = || player_requests(&server).into_iter().filter(|request| client_name(request) == "WEB_REMIX").count();
+    assert_eq!((web(), count(&server, "/api/jnn/v1/Create")), (1, 1));
+    // the same account again (a refreshed card): nothing is forgotten
+    service.set_account(Some(account()));
+    service.resolve_stream("fJ9rUzIMcZQ").await.expect("cached");
+    assert_eq!(web(), 1, "the stream came from the cache");
+    // signed out: the stream, the token and the minter belonged to the account
+    service.set_account(None);
+    let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
+    assert!(stream.url.ends_with(&format!("&pot={}", expected_token("fJ9rUzIMcZQ"))));
+    assert_eq!(web(), 2, "resolved again");
+    assert_eq!(count(&server, "/api/jnn/v1/Create"), 2, "a fresh BotGuard challenge for the new identity");
+    let last = player_requests(&server).into_iter().filter(|request| client_name(request) == "WEB_REMIX").last().unwrap();
+    assert_eq!(last.header("cookie"), None);
+    assert_ne!(last.header("x-goog-visitor-id"), account().visitor_data.as_deref());
 }
 
 #[tokio::test]
@@ -765,4 +848,39 @@ async fn a_refused_preheat_forgets_the_stream() {
     assert_eq!(preheat.header("user-agent"), Some(ANDROID_VR.user_agent));
     service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
     assert_eq!(player_requests(&server).len(), 2, "resolved again after the 403");
+}
+
+#[tokio::test]
+async fn songs_without_a_length_get_it_from_one_get_queue_request() {
+    use super::models::{Shelf, ShelvesPage, YtItem};
+    let server = MockServer::start(|_, _| (200, super::parser_tests::get_queue_response())).await;
+    let service = server.service();
+    let song = |id: &str, duration_ms: i64| {
+        YtItem::Track(md3_model::TrackItem {
+            track_id: id.to_owned(),
+            uri: format!("youtube:track:{id}"),
+            duration_ms,
+            ..Default::default()
+        })
+    };
+    let shelf = |items| Shelf { title: "Quick picks".to_owned(), items, more: None, continuation: None };
+    let page = || ShelvesPage {
+        shelves: vec![shelf(vec![song("plain", 0), song("wrapped", 0), song("known", 5000)]), shelf(vec![song("plain", 0)])],
+        continuation: None,
+    };
+    let mut first = page();
+    service.fill_durations(&mut first).await;
+    let lengths: Vec<i64> = first.shelves.iter().flat_map(|shelf| &shelf.items).map(|item| match item {
+        YtItem::Track(track) => track.duration_ms,
+        _ => -1,
+    }).collect();
+    assert_eq!(lengths, [196_000, 3_723_000, 5000, 196_000]);
+    let requests = server.api_requests();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].target.starts_with("/youtubei/v1/music/get_queue"), "{}", requests[0].target);
+    assert_eq!(requests[0].body["videoIds"], json!(["plain", "wrapped"]));
+    // a known length comes from the cache, without a request
+    let mut again = ShelvesPage { shelves: vec![shelf(vec![song("plain", 0)])], continuation: None };
+    service.fill_durations(&mut again).await;
+    assert_eq!(server.api_requests().len(), 1);
 }

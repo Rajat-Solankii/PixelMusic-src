@@ -61,18 +61,10 @@ Page {
     Timer {
         id: debounce
         interval: 350
-        onTriggered: {
-            Catalog.search(field.text, page.type)
-            // Record the query in search history when search is actually performed
-            if (field.text.trim() !== "") {
-                Catalog.addSearchQuery(field.text)
-            }
-        }
+        // typing searches as you go; history keeps only what was sent with Enter or picked from it
+        onTriggered: Catalog.search(field.text, page.type)
     }
-    onTypeChanged: if (field.text.trim() !== "") {
-        Catalog.search(field.text, page.type)
-        Catalog.addSearchQuery(field.text)
-    }
+    onTypeChanged: if (field.text.trim() !== "") Catalog.search(field.text, page.type)
 
     SearchField {
         id: field

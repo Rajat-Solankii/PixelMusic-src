@@ -12,7 +12,7 @@
 #ifndef AppNumVersion
   #define AppNumVersion AppVersion
 #endif
-; folder assembled by build_windows.ps1: materialfy.exe, qml\, assets\, Qt, MSVC runtime
+; folder assembled by build_windows.ps1: pixelmusic.exe, qml\, assets\, Qt, MSVC runtime
 #ifndef DistDir
   #define DistDir "target\dist\pixelmusic"
 #endif
@@ -29,7 +29,7 @@ AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
 VersionInfoVersion={#AppNumVersion}
 VersionInfoProductName={#AppName}
-VersionInfoDescription={#AppName} - Spotify client in Material 3 Expressive style
+VersionInfoDescription={#AppName} - music player for YouTube Music, Monochrome and JioSaavn
 ; Per-user install, no UAC
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
@@ -51,7 +51,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 ; Close a running Pixel Music before updating
 CloseApplications=yes
-CloseApplicationsFilter=*materialfy.exe
+CloseApplicationsFilter=*pixelmusic.exe,*materialfy.exe
 ; Minimum Windows version: 10 1809
 MinVersion=10.0.17763
 ; Setup language follows the Windows UI language; the dialog appears only when it matches neither

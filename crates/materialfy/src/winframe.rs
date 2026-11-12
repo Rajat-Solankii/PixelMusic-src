@@ -53,8 +53,7 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "raiseMain"]
         fn raise_main(self: &WindowShell);
-        
-        /// Update window/taskbar icon based on colorway setting
+        /// Window/taskbar icon in the logo colour of Settings
         #[qinvokable]
         #[cxx_name = "updateIcon"]
         fn update_icon_qml(self: &WindowShell, colorway: &QString);
@@ -282,29 +281,21 @@ pub fn install(window: *mut cxx_qt::QObject) {
     }
 }
 
-/// Update window and taskbar icon based on colorway.
-/// Maps colorway names (bluePurple, babyPinkPurple, etc.) to icon files.
+/// Window and taskbar icon in the logo colour of Settings (`assets/logo/<colorway>.svg`, made by
+/// tools/pixelmusic_logo.py); the exe's own icon (shortcuts) is the default colour (build.rs).
 pub fn update_icon(colorway: &str) {
-    let icon_name = match colorway {
-        "babyPinkPurple" => "baby-pink-purple",
-        "graphiteGray" => "graphite-gray",
-        "limeGreen" => "lime-green",
-        "limeLemon" => "lime-lemon",
-        "orangeYellow" => "orange-yellow",
-        _ => "blue-purple", // default fallback
+    let name = match colorway {
+        "babyPinkPurple" => "baby_pink_purple",
+        "graphiteGray" => "graphite",
+        "limeGreen" => "lime_green",
+        "limeLemon" => "lime_lemon",
+        "orangeYellow" => "orange_yellow",
+        _ => "blue_purple",
     };
-    
-    let assets_dir = crate::engine::assets_dir();
-    let icon_path = assets_dir.join("logos").join(format!("{}.svg", icon_name));
-    
-    if !icon_path.exists() {
-        tracing::warn!("icon file not found for colorway {}: {:?}", colorway, icon_path);
+    let icon = crate::engine::assets_dir().join("logo").join(format!("{name}.svg"));
+    if !icon.is_file() {
+        tracing::warn!("no logo for colorway {colorway}: {}", icon.display());
         return;
     }
-    
-    let qpath = QString::from(icon_path.to_string_lossy().as_ref());
-    crate::qt::ffi::ffi::app_set_window_icon(&qpath);
-    
-    // Note: On Windows, taskbar icon updates automatically when window icon changes
-    // The .ico file embedded in the exe (IDI_ICON1) is used for shortcuts
+    crate::qt::ffi::ffi::app_set_window_icon(&QString::from(icon.to_string_lossy().as_ref()));
 }

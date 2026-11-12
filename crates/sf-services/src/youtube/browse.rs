@@ -32,7 +32,8 @@ impl YouTubeService {
         if !force_refresh && let Some(page) = self.cached_home() {
             return Ok(page);
         }
-        let page = parsers::shelves_page(&self.browse(HOME, None, Login::IfSignedIn).await?);
+        let mut page = parsers::shelves_page(&self.browse(HOME, None, Login::IfSignedIn).await?);
+        self.fill_durations(&mut page).await;
         *crate::lock(&self.home_cache) = Some((Instant::now(), page.clone()));
         Ok(page)
     }
@@ -50,7 +51,9 @@ impl YouTubeService {
 
     /// More home shelves. An empty page ends the feed.
     pub async fn home_continuation(&self, continuation: &str) -> Result<ShelvesPage> {
-        self.shelves_continuation(continuation).await
+        let mut page = self.shelves_continuation(continuation).await?;
+        self.fill_durations(&mut page).await;
+        Ok(page)
     }
 
     /// The explore page (new releases, charts, moods teasers).

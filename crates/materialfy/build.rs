@@ -1,5 +1,5 @@
 // Сборка: все файлы src/**/*.rs с #[cxx_qt::bridge] собираются автоматически —
-// новый мост не требует правки этого файла. Иконка exe — materialfy.ico из корня репозитория (логотип «Волна-M»).
+// новый мост не требует правки этого файла. Иконка exe — materialfy.ico из корня репозитория (логотип Pixel Music, tools/pixelmusic_logo.py).
 use std::path::{Path, PathBuf};
 
 use cxx_qt_build::CxxQtBuilder;
@@ -72,7 +72,7 @@ fn main() {
             println!("cargo::rerun-if-changed={}", ico.display());
             let rc = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("materialfy.rc");
             let ico = ico.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "\\\\");
-            // VERSIONINFO: имя «Materialfy» в диспетчере задач и свойствах файла
+            // VERSIONINFO: имя «Pixel Music» в диспетчере задач и свойствах файла
             let version = env!("CARGO_PKG_VERSION");
             let num = |i: usize| version.split(['.', '-']).nth(i).and_then(|p| p.parse::<u16>().ok()).unwrap_or(0);
             let (major, minor, patch) = (num(0), num(1), num(2));
@@ -86,11 +86,11 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "FileDescription", "Materialfy"
-      VALUE "ProductName", "Materialfy"
+      VALUE "FileDescription", "Pixel Music"
+      VALUE "ProductName", "Pixel Music"
       VALUE "FileVersion", "{version}"
       VALUE "ProductVersion", "{version}"
-      VALUE "OriginalFilename", "materialfy.exe"
+      VALUE "OriginalFilename", "pixelmusic.exe"
     END
   END
   BLOCK "VarFileInfo"

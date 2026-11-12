@@ -1,21 +1,21 @@
 import QtQuick
-import QtQuick.Shapes
 import Md3
-import "../Md3/Shapes.js" as Shapes
+import Materialfy.Core
 
-// Шапка боковой панели: logo mark (M-wave) and wordmark «Pixel Music». The mark — a button that toggles
-// sidebar collapse/expand, similar to ChatGPT and Claude: on hover or keyboard focus the cookie morphs
-// into a circle, the M with runner dissolves, and an action icon appears in its place.
-// Morph and icon transition follow Theme.motion tokens; instant when Theme.reducedMotion is true.
-// Знак — кнопка «свернуть / развернуть панель», как в ChatGPT и Claude: при наведении или фокусе с клавиатуры
-// печенька морфится в круг, «M» с бегунком растворяется, на её месте проявляется иконка действия.
-// Морф и смена иконки — переходы свойств по токенам Theme.motion; при Theme.reducedMotion — мгновенно.
+// Sidebar header: the Pixel Music logo (Settings → logo colour) and the name. The logo is also the button that
+// collapses / expands the sidebar, as in ChatGPT and Claude: on hover or keyboard focus it fades into a circle
+// with the action icon. Transitions follow Theme.motion; instant with Theme.reducedMotion.
 Item {
     id: root
 
-    LogoPaths { id: logo }
+    // Settings.logoColorway → the logo built from the Android app's drawables (tools/pixelmusic_logo.py)
+    readonly property var _logoFiles: ({
+        bluePurple: "blue_purple", babyPinkPurple: "baby_pink_purple", graphiteGray: "graphite",
+        limeGreen: "lime_green", limeLemon: "lime_lemon", orangeYellow: "orange_yellow"
+    })
+    readonly property url logoSource: Qt.resolvedUrl("../../assets/logo/" + (_logoFiles[Settings.logoColorway] ?? "blue_purple") + ".svg")
 
-    property real markSize: 40                 // диаметр печеньки
+    property real markSize: 40                 // logo side
     property bool expanded: true               // true — действие «свернуть», false — «развернуть»
     property bool wordmarkVisible: expanded
     // Наведение или фокус; стенды и снимки могут выставить вручную
@@ -26,7 +26,6 @@ Item {
 
     signal activated()
 
-    readonly property real _k: markSize / 480  // координаты LogoPaths: печенька — квадрат 0..480
     readonly property bool _instant: Theme.reducedMotion
 
     implicitWidth: wordmark.x + wordmark.width
@@ -74,47 +73,24 @@ Item {
                                     : root.highlighted ? (mark.activeFocus && !area.containsMouse ? Theme.stateLayer.focus : Theme.stateLayer.hover) : 0
         Behavior on stateOpacity { enabled: !root._instant; NumberAnimation { duration: Theme.motion.effectsFast } }
 
-        Shape {
+        // the button: a circle under the action icon
+        Rectangle {
             anchors.fill: parent
-            preferredRendererType: Shape.CurveRenderer
-            ShapePath {
-                strokeColor: "transparent"
-                strokeWidth: 0
-                // градиент icon.svg: (80, 40) → (432, 472) при печеньке 16..496
-                fillGradient: LinearGradient {
-                    x1: mark.width * 64 / 480; y1: mark.height * 24 / 480
-                    x2: mark.width * 416 / 480; y2: mark.height * 456 / 480
-                    GradientStop { position: 0; color: Qt.tint(logo.ultraviolet[0], Qt.alpha(logo.lilac, mark.stateOpacity)) }
-                    GradientStop { position: 1; color: Qt.tint(logo.ultraviolet[1], Qt.alpha(logo.lilac, mark.stateOpacity)) }
-                }
-                PathPolyline {
-                    // зубцы доворачиваются на полшага, пока сглаживаются в круг
-                    path: Shapes.outline(logo.cookie, "circle", mark.t, 96, mark.width, mark.height, mark.t * Math.PI / 8, 0, 0, 0)
-                }
-            }
+            radius: width / 2
+            color: Qt.tint(Theme.secondaryContainer, Qt.alpha(Theme.fgSecondaryContainer, mark.stateOpacity))
+            opacity: mark.t
+            visible: opacity > 0
         }
 
-        // Знак: волна-M и бегунок
-        Shape {
+        Image {
             anchors.fill: parent
-            preferredRendererType: Shape.CurveRenderer
+            source: root.logoSource
+            sourceSize: Qt.size(width * Screen.devicePixelRatio, height * Screen.devicePixelRatio)
+            smooth: true
+            mipmap: true
             opacity: mark.glyphOut
             visible: opacity > 0
             scale: 0.6 + 0.4 * mark.glyphOut
-            ShapePath {
-                strokeColor: "transparent"
-                strokeWidth: 0
-                fillColor: logo.lilac
-                scale: Qt.size(root._k, root._k)
-                PathSvg { path: logo.glyph }
-            }
-            ShapePath {
-                strokeColor: "transparent"
-                strokeWidth: 0
-                fillColor: logo.ember
-                scale: Qt.size(root._k, root._k)
-                PathSvg { path: logo.runner }
-            }
         }
 
         Icon {
@@ -122,7 +98,7 @@ Item {
             name: root.actionIcon
             size: 24
             weight: 500
-            color: logo.lilac
+            color: Theme.fgSecondaryContainer
             opacity: mark.iconIn
             visible: opacity > 0
             scale: 0.6 + 0.4 * mark.iconIn
@@ -151,31 +127,16 @@ Item {
         }
     }
 
-    // Надпись в кривых из wordmark.svg (без знака), цвет onSurface; гаснет в рейле
-    Shape {
+    Label {
         id: wordmark
-        x: mark.x + logo.textLeft * root._k
-        width: logo.textWidth * root._k
-        height: root.markSize
+        x: mark.x + mark.width + 12
         anchors.verticalCenter: parent.verticalCenter
-        preferredRendererType: Shape.CurveRenderer
+        text: "Pixel Music"
+        type: "titleLarge"
+        color: Theme.fgSurface
         opacity: root.wordmarkVisible ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: root._instant ? 0 : Theme.motion.effectsFast } }
-        ShapePath {
-            strokeColor: "transparent"
-            strokeWidth: 0
-            fillColor: Theme.fgSurface
-            scale: Qt.size(root._k, root._k)
-            PathSvg { path: logo.text }
-        }
-        ShapePath {
-            strokeColor: "transparent"
-            strokeWidth: 0
-            fillColor: logo.ember
-            scale: Qt.size(root._k, root._k)
-            PathSvg { path: logo.textDot }
-        }
     }
 
     // Подсказка MD3 (plain tooltip). Живёт в корне окна: панель обрезает своё содержимое, а в рейле

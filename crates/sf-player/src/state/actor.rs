@@ -46,6 +46,8 @@ pub(crate) enum Command {
     PlayEpisode { uri: String, position_ms: i64 },
     /// more tracks for the playing YouTube context (a radio filling in after its first song)
     ExtendContext { context_uri: String, items: Vec<TrackItem> },
+    /// Autoplay: the radio of `seed_uri` after the lane's list (ignored once another song plays).
+    Autoplay { seed_uri: String, items: Vec<TrackItem> },
     PlayIndex(usize),
     PlayQueueRow(u64),
     AddToQueue(Vec<TrackItem>),
@@ -125,7 +127,15 @@ pub(crate) struct Actor {
     /// the cover `Core` asked for last (shown again when the lane stops)
     core_cover: String,
     yt_was_active: bool,
+    /// the song autoplay was last asked for (once per song)
+    autoplay_asked: Option<String>,
+    /// the song autoplay is asked for and how many of its answers added nothing (each is asked again, up to
+    /// AUTOPLAY_RETRIES: the services move on along the radio)
+    autoplay_empty: (String, u32),
 }
+
+/// Answers that add nothing before autoplay stops asking for one song.
+const AUTOPLAY_RETRIES: u32 = 3;
 
 impl Actor {
     #[allow(clippy::too_many_arguments)]
@@ -168,6 +178,8 @@ impl Actor {
             yt_spotify_sequence: 0,
             core_cover: String::new(),
             yt_was_active: false,
+            autoplay_asked: None,
+            autoplay_empty: (String::new(), 0),
         }
     }
 
@@ -274,8 +286,12 @@ impl Actor {
             Msg::Restore(data) => {
                 if !self.restored {
                     self.restored = true;
-                    if let Some(data) = data {
-                        self.core.restore_session(data);
+                    // the last song goes back to the lane (YouTube, local files). Spotify is no longer played: a
+                    // Spotify song from an old session is not restored, Play would find nothing to play with it
+                    if let Some(data) = data
+                        && let Some(track) = data.track.filter(|track| is_lane_track(&track.uri))
+                    {
+                        self.youtube.restore(track, data.rows, u64::from(data.position_ms), data.context);
                     }
                 }
                 self.core.poll_remote_soon();
@@ -322,7 +338,7 @@ impl Actor {
             Command::Remember(item) => core.remember(&item),
             Command::PlayEpisode { uri, position_ms } => core.play_episode(uri, position_ms),
             // the YouTube lane takes these; Spotify contexts are not extended
-            Command::ExtendContext { .. } => {}
+            Command::ExtendContext { .. } | Command::Autoplay { .. } => {}
             Command::PlayIndex(index) => {
                 // индекс строки Player.queue: 0 — текущая
                 let rows = core.queue_rows();
@@ -418,6 +434,7 @@ impl Actor {
                     }
                 }
                 Effect::Save(data) => {
+                    let data = self.with_lane_session(*data);
                     if let Some(path) = self.session_file.clone() {
                         tokio::task::spawn_blocking(move || {
                             if let Err(error) = data.save(&path) {
@@ -605,7 +622,7 @@ impl Actor {
         self.core.save_session();
         for effect in self.core.take_effects() {
             if let (Effect::Save(data), Some(path)) = (effect, self.session_file.as_ref())
-                && let Err(error) = data.save(path)
+                && let Err(error) = self.with_lane_session(*data).save(path)
             {
                 tracing::warn!("player session not saved: {error:#}");
             }
@@ -629,6 +646,24 @@ impl Actor {
             }
             YtMsg::Resolved { seq, result } => self.youtube.resolved(seq, result),
             YtMsg::Event { seq, event } => self.youtube.event(seq, event),
+        }
+    }
+
+    /// While the lane has a song, the saved session is the lane's (`Core` knows nothing of YouTube songs).
+    pub(crate) fn with_lane_session(&self, data: SessionData) -> SessionData {
+        let session = if self.youtube.is_active() { self.youtube.session() } else { None };
+        let Some((track, position_ms, rows, context)) = session else {
+            return data;
+        };
+        SessionData {
+            version: SessionData::VERSION,
+            context_uri: context.context_uri.clone(),
+            context,
+            track: Some(track),
+            position_ms: u32::try_from(position_ms).unwrap_or(u32::MAX),
+            manual: Vec::new(),
+            rows,
+            shuffle: data.shuffle,
         }
     }
 
@@ -682,6 +717,17 @@ impl Actor {
             Command::Remember(item) if is_lane_track(&item.uri) => None,
             Command::ExtendContext { context_uri, items } => {
                 self.youtube.extend_context(&context_uri, items);
+                None
+            }
+            Command::Autoplay { seed_uri, items } => {
+                let added = self.youtube.autoplay(&seed_uri, items);
+                // nothing new (all already listed, or an empty page) while that song still plays: ask again
+                let (song, empty) = &mut self.autoplay_empty;
+                if added == 0 && *song == seed_uri && *empty < AUTOPLAY_RETRIES && self.autoplay_asked.as_deref() == Some(&seed_uri)
+                {
+                    *empty += 1;
+                    self.autoplay_asked = None;
+                }
                 None
             }
             command @ (Command::PlayItems { .. }
@@ -842,9 +888,26 @@ impl Actor {
                         self.cover(url);
                     }
                 }
-                YtEffect::Started(started) => self.pending.push(PlayerEvent::TrackStarted((*started).into())),
+                YtEffect::Started(started) => {
+                    self.pending.push(PlayerEvent::TrackStarted((*started).into()));
+                    // a new song: the session file follows it
+                    self.core.save_session();
+                }
                 YtEffect::Ended(ended) => self.pending.push(PlayerEvent::TrackEnded((*ended).into())),
             }
+        }
+        // the list is about to run out: ask the services once per song for its radio
+        let seed = if self.core.autoplay { self.youtube.autoplay_seed() } else { None };
+        match seed {
+            Some(track) if self.autoplay_asked.as_deref() != Some(track.uri.as_str()) => {
+                self.autoplay_asked = Some(track.uri.clone());
+                if self.autoplay_empty.0 != track.uri {
+                    self.autoplay_empty = (track.uri.clone(), 0);
+                }
+                self.pending.push(PlayerEvent::AutoplayWanted(Box::new(track.clone())));
+            }
+            Some(_) => {}
+            None => self.autoplay_asked = None,
         }
         // the lane stopped: the Spotify track's cover again
         let active = self.youtube.is_active();

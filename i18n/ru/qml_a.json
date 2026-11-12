@@ -209,7 +209,7 @@
   "Gapless playback": "Без пауз между треками",
   "The next track starts without silence — for live albums and mixes": "Следующий трек начинается без тишины — для концертных альбомов и миксов",
   "Autoplay": "Автовоспроизведение",
-  "When an album or playlist ends, similar music plays": "Когда альбом или плейлист закончится, играет похожая музыка",
+  "When the queue runs out, similar songs keep playing": "Когда очередь закончится, играют похожие песни",
   "Crossfade": "Плавный переход между треками",
   "Works together with “Gapless playback”": "Работает вместе с «Без пауз между треками»",
   "The end of a track fades out as the next one fades in": "Конец трека затихает, пока нарастает следующий",

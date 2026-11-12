@@ -5,7 +5,7 @@ import Materialfy.Core
 import ".."
 
 // Smart Mix (port of soundwave1 SmartMixScreen): a playlist built from Last.fm — top, recent or similar tracks,
-// a tag, a weighted blend or scored recommendations — found on YouTube Music or Spotify (SmartMix.tracks).
+// a tag, a weighted blend or scored recommendations — found on YouTube Music (SmartMix.tracks).
 // Under the list: the Last.fm feed (recent scrobbles, top albums, friends). The account is the Settings card's.
 TrackListPage {
     id: page
@@ -13,7 +13,7 @@ TrackListPage {
     property string mode: "mix"
     property string period: "overall"
     property int count: 25
-    property string target: "youtube"
+    readonly property string target: "youtube"   // songs are found on YouTube Music only
     property string seedTrack
     property string seedArtist
     property string seedArtistInput
@@ -152,14 +152,6 @@ TrackListPage {
                     model: [10, 25, 50, 100].map(n => ({ id: n, text: String(n) }))
                     currentValue: page.count
                     onActivated: v => page.count = v
-                }
-                MenuField {
-                    width: 200
-                    leadingIcon: "travel_explore"
-                    label: I18n.t("Find tracks on")
-                    model: [{ id: "youtube", text: I18n.t("YouTube Music") }, { id: "spotify", text: I18n.t("Spotify") }]
-                    currentValue: page.target
-                    onActivated: v => page.target = v
                 }
                 TextField {
                     visible: page.mode === "similar-tracks"

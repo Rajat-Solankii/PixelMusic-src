@@ -30,6 +30,7 @@ cp -r "$ROOT/src/materialfy/qml" "$APPDIR/usr/bin/qml"
 find "$APPDIR/usr/bin/qml" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$APPDIR/usr/bin/assets"
 cp -r "$ROOT/src/materialfy/assets/fonts" "$APPDIR/usr/bin/assets/fonts"
+cp -r "$ROOT/src/materialfy/assets/logo" "$APPDIR/usr/bin/assets/logo"
 find "$ROOT/src/materialfy/assets" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \) \
     -exec cp {} "$APPDIR/usr/bin/assets/" \;
 cp "$ROOT/src/materialfy/assets/materialfy.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/materialfy.svg"

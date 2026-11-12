@@ -221,6 +221,11 @@ impl PlayerHandle {
         self.send(Command::ExtendContext { context_uri, items });
     }
 
+    /// Autoplay: the radio of `seed_uri` after the YouTube list, if that song still plays.
+    pub fn autoplay(&self, seed_uri: String, items: Vec<TrackItem>) {
+        self.send(Command::Autoplay { seed_uri, items });
+    }
+
     /// «В очередь»: после ручных, до контекста; двойной клик < 1,5 с — одна строка (п. 2).
     pub fn add_to_queue(&self, items: Vec<TrackItem>) {
         self.send(Command::AddToQueue(items));

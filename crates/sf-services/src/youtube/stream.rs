@@ -1,15 +1,23 @@
 //! Stream resolution (`StreamResolver.kt`): `POST player` for a video, then the best `audio/mp4` format (AAC, itag
 //! 140 usually; symphonia has no Opus decoder).
 //!
-//! Tier 1 is `ANDROID_VR`, anonymous and without a PoToken: direct URLs when it works. After `LOGIN_REQUIRED` or
-//! a bot check it rests for [`COOLDOWN`]. With an account, the same client is then asked as the user
-//! (`ANDROID_VR_USER`): a bot check or an age wall is what signing in lifts. The last tier is the web player (`WEB_REMIX`, as the user when signed in): the
-//! request carries the player script's `signatureTimestamp` and a PO token bound to the video (`potoken.rs`), the
-//! chosen format's signature and `n` go through the player's own code (`cipher.rs`), and the URL gets `&pot=`. It
-//! rests after two technical failures in a row (script, BotGuard, HTTP), not after a song's own refusal. Results
-//! are cached until shortly before the URL's `expire=`; concurrent requests for one video share a resolution.
+//! Tier 1 is `ANDROID_VR`, anonymous (the anonymous visitor id, never the account's) and without a PO token:
+//! direct URLs when it works. After `LOGIN_REQUIRED` or a bot check it rests for [`COOLDOWN`], twice as long after
+//! each bot check in a row (up to [`MAX_REST_DOUBLINGS`] times: an address YouTube distrusts stays distrusted for
+//! hours, and each try costs a song a round trip). With an account,
+//! the same client is then asked for the user (`ANDROID_VR_USER`: the account's visitor id and `onBehalfOfUser`;
+//! the client refuses browser cookies). It rests after a bot check or a refused request.
+//!
+//! The last tier is the web player (`WEB_REMIX`, as the user when signed in): the request carries the player
+//! script's `signatureTimestamp` and a PO token bound to the video (`potoken.rs`, minted with the API key the
+//! player script carries), the chosen format's signature and `n` go through the player's own code (`cipher.rs`),
+//! and the URL gets `&pot=`. When the account's request is bot-checked, it is asked once more anonymously. It
+//! rests after two technical failures in a row (script, BotGuard, HTTP), not after a song's own refusal.
+//!
+//! Results are cached until shortly before the URL's `expire=`; concurrent requests for one video share a
+//! resolution. Signing in or out drops the cache, the rests, the PO tokens and the minter.
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -26,6 +34,8 @@ use super::{Result, YouTubeError, YouTubeService};
 
 /// How long a tier rests after it was refused.
 pub const COOLDOWN: Duration = Duration::from_secs(15 * 60);
+/// How many times a tier's rest doubles after bot checks in a row (15 min → 2 h).
+pub const MAX_REST_DOUBLINGS: u32 = 3;
 /// Most streams kept.
 const CACHE_LIMIT: usize = 200;
 /// A URL counts as expired this long before its `expire=`.
@@ -49,10 +59,13 @@ struct Cached {
 #[derive(Default)]
 struct Tiers {
     android_vr_until: Option<Instant>,
+    /// bot checks in a row (a stream it gives starts over)
+    android_vr_strikes: u32,
     /// what ANDROID_VR said when it began to rest, reported while it rests
     android_vr_reason: String,
-    /// the signed-in ANDROID_VR, after a bot check of its own
+    /// ANDROID_VR for the user, after a bot check or a refused request of its own
     android_vr_user_until: Option<Instant>,
+    android_vr_user_strikes: u32,
     web_failures: u32,
     web_until: Option<Instant>,
 }
@@ -66,6 +79,8 @@ pub(crate) struct Streams {
     /// the web player's URL transform
     cipher: Cipher,
     tokens: PoTokens,
+    /// bumped when the identity changes: a resolution started before is not cached
+    generation: AtomicU64,
 }
 
 impl Default for Streams {
@@ -79,8 +94,14 @@ impl Default for Streams {
             data_saver: AtomicBool::default(),
             cipher: Cipher::new(js.clone()),
             tokens: PoTokens::new(js),
+            generation: AtomicU64::new(0),
         }
     }
+}
+
+/// How long a tier rests after its `strikes`-th refusal in a row (the first is 1).
+fn rest_after(strikes: u32) -> Duration {
+    COOLDOWN * (1 << strikes.saturating_sub(1).min(MAX_REST_DOUBLINGS))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -118,11 +139,14 @@ impl Streams {
         cache.insert(stream.video_id.clone(), Cached { stream: stream.clone(), valid_until, added: Instant::now() });
     }
 
-    /// Another identity (signed in, out, another account): what the tiers refused and what was resolved belonged
-    /// to the previous one.
+    /// Another identity (signed in, out, another account): what the tiers refused, what was resolved and the PO
+    /// tokens (and their minter) belonged to the previous one.
     pub(crate) fn account_changed(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *lock(&self.tiers) = Tiers::default();
         lock(&self.cache).clear();
+        lock(&self.flights).clear();
+        self.tokens.reset();
     }
 
     fn invalidate(&self, video_id: &str) {
@@ -309,6 +333,43 @@ async fn vr_request(
     }
 }
 
+/// One go of the web tier for one identity; its error goes to `last_error` when it says more.
+async fn web_attempt(
+    client: &InnerTube,
+    streams: &Streams,
+    video_id: &str,
+    data_saver: bool,
+    login: Login,
+    last_error: &mut Option<YouTubeError>,
+) -> std::result::Result<YtStream, bool> {
+    match web_tier(client, streams, video_id, data_saver, login).await {
+        Ok(stream) => {
+            lock(&streams.tiers).web_failures = 0;
+            Ok(stream)
+        }
+        Err(WebError::Refused(error, bot_check)) => {
+            // the anonymous tier's reason says more than "no stream"
+            if last_error.is_none() || !matches!(error, YouTubeError::Unplayable(ref reason) if reason.is_empty()) {
+                *last_error = Some(error);
+            }
+            Err(bot_check)
+        }
+        Err(WebError::Failed(error)) => {
+            let mut tiers = lock(&streams.tiers);
+            tiers.web_failures += 1;
+            if tiers.web_failures >= WEB_FAILURE_LIMIT {
+                log::info!("youtube streams: the web tier failed {} times, resting", tiers.web_failures);
+                tiers.web_failures = 0;
+                tiers.web_until = Some(Instant::now() + COOLDOWN);
+            }
+            if last_error.is_none() {
+                *last_error = Some(error);
+            }
+            Err(false)
+        }
+    }
+}
+
 /// Asks the tiers in turn.
 async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) -> Result<YtStream> {
     let data_saver = streams.data_saver.load(Ordering::Relaxed);
@@ -326,11 +387,15 @@ async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) 
     };
     if !vr_resting {
         match vr_request(&client, &ANDROID_VR, Login::Never, &video_id, data_saver).await {
-            Ok(stream) => return Ok(stream),
+            Ok(stream) => {
+                lock(&streams.tiers).android_vr_strikes = 0;
+                return Ok(stream);
+            }
             Err((error, bot_check)) => {
                 if let Some(reason) = bot_check {
                     let mut tiers = lock(&streams.tiers);
-                    tiers.android_vr_until = Some(Instant::now() + COOLDOWN);
+                    tiers.android_vr_strikes += 1;
+                    tiers.android_vr_until = Some(Instant::now() + rest_after(tiers.android_vr_strikes));
                     tiers.android_vr_reason = reason;
                 }
                 last_error = Some(error);
@@ -338,14 +403,20 @@ async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) 
         }
     }
 
-    // the same client as the user: the account is what a bot check and an age wall ask for
+    // the same client for the user: the account's device is what a bot check asks for
     let user_resting = lock(&streams.tiers).android_vr_user_until.is_some_and(|until| Instant::now() < until);
     if client.signed_in() && !user_resting {
         match vr_request(&client, &ANDROID_VR_USER, Login::Required, &video_id, data_saver).await {
-            Ok(stream) => return Ok(stream),
+            Ok(stream) => {
+                lock(&streams.tiers).android_vr_user_strikes = 0;
+                return Ok(stream);
+            }
             Err((error, bot_check)) => {
-                if bot_check.is_some() {
-                    lock(&streams.tiers).android_vr_user_until = Some(Instant::now() + COOLDOWN);
+                // a bot check, or the request itself refused (HTTP 4xx): every song would get the same answer
+                if bot_check.is_some() || matches!(error, YouTubeError::Http(400..=499) | YouTubeError::SessionExpired) {
+                    let mut tiers = lock(&streams.tiers);
+                    tiers.android_vr_user_strikes += 1;
+                    tiers.android_vr_user_until = Some(Instant::now() + rest_after(tiers.android_vr_user_strikes));
                 }
                 // what the account was told says more than the anonymous answer; a failed request does not
                 if last_error.is_none() || matches!(error, YouTubeError::Unplayable(ref reason) if !reason.is_empty()) {
@@ -359,52 +430,48 @@ async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) 
     if web_resting {
         log::debug!("youtube streams: {video_id}: the web tier is resting");
     } else {
-        match web_tier(&client, &streams, &video_id, data_saver).await {
-            Ok(stream) => {
-                lock(&streams.tiers).web_failures = 0;
-                return Ok(stream);
-            }
-            Err(WebError::Refused(error)) => {
-                // the anonymous tier's reason says more than "no stream"
-                if last_error.is_none() || !matches!(error, YouTubeError::Unplayable(ref reason) if reason.is_empty()) {
-                    last_error = Some(error);
+        let login = if client.signed_in() { Login::IfSignedIn } else { Login::Never };
+        match web_attempt(&client, &streams, &video_id, data_saver, login, &mut last_error).await {
+            Ok(stream) => return Ok(stream),
+            // the account's request was bot-checked: the anonymous web player is still let through
+            Err(true) if login == Login::IfSignedIn => {
+                log::info!("youtube streams: {video_id}: the web player bot-checked the account; trying anonymously");
+                if let Ok(stream) = web_attempt(&client, &streams, &video_id, data_saver, Login::Never, &mut last_error).await {
+                    return Ok(stream);
                 }
             }
-            Err(WebError::Failed(error)) => {
-                let mut tiers = lock(&streams.tiers);
-                tiers.web_failures += 1;
-                if tiers.web_failures >= WEB_FAILURE_LIMIT {
-                    log::info!("youtube streams: the web tier failed {} times, resting", tiers.web_failures);
-                    tiers.web_failures = 0;
-                    tiers.web_until = Some(Instant::now() + COOLDOWN);
-                }
-                if last_error.is_none() {
-                    last_error = Some(error);
-                }
-            }
+            Err(_) => {}
         }
     }
     Err(last_error.unwrap_or_else(|| YouTubeError::Unplayable(String::new())))
 }
 
 enum WebError {
-    /// the song's own refusal (or no usable format)
-    Refused(YouTubeError),
+    /// the song's own refusal (or no usable format); true for a bot check
+    Refused(YouTubeError, bool),
     /// the tier itself failed: player script, BotGuard, HTTP
     Failed(YouTubeError),
 }
 
 /// The web player's stream: `signatureTimestamp` and a PO token in the request, the format's URL deciphered by
 /// the player script, `&pot=` added.
-async fn web_tier(client: &InnerTube, streams: &Streams, video_id: &str, data_saver: bool) -> std::result::Result<YtStream, WebError> {
+async fn web_tier(
+    client: &InnerTube,
+    streams: &Streams,
+    video_id: &str,
+    data_saver: bool,
+    login: Login,
+) -> std::result::Result<YtStream, WebError> {
     let failed = |what: &'static str| {
         move |error: String| {
             log::info!("youtube streams: {video_id}: {what} failed: {error}");
             WebError::Failed(YouTubeError::Unexpected(what))
         }
     };
-    let sts = streams.cipher.load(client).await.map_err(failed("the player script"))?;
-    let token = streams.tokens.token(client, video_id).await.map_err(failed("the PO token"))?;
+    let script = streams.cipher.load(client).await.map_err(failed("the player script"))?;
+    let sts = script.sts;
+    let key = script.botguard_key.as_deref();
+    let token = streams.tokens.token(client, key, video_id).await.map_err(failed("the PO token"))?;
     let mut body = json!({
         "videoId": video_id,
         "playbackContext": { "contentPlaybackContext": { "signatureTimestamp": sts } },
@@ -412,13 +479,14 @@ async fn web_tier(client: &InnerTube, streams: &Streams, video_id: &str, data_sa
     if let Some(token) = &token {
         body["serviceIntegrityDimensions"] = json!({ "poToken": token });
     }
-    let response = client.post(&WEB_REMIX, "player", body, Login::IfSignedIn).await.map_err(|error| {
+    let response = client.post(&WEB_REMIX, "player", body, login).await.map_err(|error| {
         log::debug!("youtube streams: {video_id}: WEB_REMIX request failed: {error:?}");
         WebError::Failed(error)
     })?;
     let (mut stream, cipher) = choose(&response, &WEB_REMIX, data_saver, true).map_err(|refusal| {
         log_refusal(&WEB_REMIX, video_id, &refusal, &response);
-        WebError::Refused(refusal.into_error())
+        let bot_check = refusal.is_bot_check();
+        WebError::Refused(refusal.into_error(), bot_check)
     })?;
     let cipher = cipher.unwrap_or_else(|| Ciphered { url: stream.url.clone(), sp: String::new(), s: String::new() });
     let mut url = streams.cipher.decipher(&cipher.url, &cipher.sp, &cipher.s).await.map_err(failed("deciphering the stream"))?;
@@ -430,7 +498,7 @@ async fn web_tier(client: &InnerTube, streams: &Streams, video_id: &str, data_sa
         None => log::info!("youtube streams: {video_id}: no PO token; the stream may stop after the first megabyte"),
     }
     stream.url = url;
-    log::debug!("youtube streams: {video_id}: web stream itag {} (signed in: {})", stream.itag, client.signed_in());
+    log::debug!("youtube streams: {video_id}: web stream itag {} (as the user: {})", stream.itag, login != Login::Never);
     Ok(with_id(stream, video_id))
 }
 
@@ -469,6 +537,7 @@ async fn resolve(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String
     if let Some(stream) = streams.cached(&video_id, unix_now()) {
         return Ok(stream);
     }
+    let generation = streams.generation.load(Ordering::SeqCst);
     let flight = {
         let mut flights = lock(&streams.flights);
         flights
@@ -479,9 +548,12 @@ async fn resolve(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String
     let result = flight.await;
     {
         let mut flights = lock(&streams.flights);
-        flights.remove(&video_id);
-        if let Ok(stream) = &result {
-            streams.store(stream, unix_now());
+        // signed in or out meanwhile: the flight and its stream belong to the previous identity
+        if streams.generation.load(Ordering::SeqCst) == generation {
+            flights.remove(&video_id);
+            if let Ok(stream) = &result {
+                streams.store(stream, unix_now());
+            }
         }
     }
     result
@@ -506,7 +578,27 @@ async fn preheat(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String
     }
 }
 
+/// Loads the player script and gets the PO token minter ready, so the first song the web tier plays does not wait
+/// for them (about two seconds).
+async fn warm(client: Arc<InnerTube>, streams: Arc<Streams>) {
+    let started = Instant::now();
+    let script = match streams.cipher.load(&client).await {
+        Ok(script) => script,
+        Err(error) => return log::info!("youtube streams: warming up the player script failed: {error}"),
+    };
+    match streams.tokens.warm(&client, script.botguard_key.as_deref()).await {
+        Ok(()) => log::debug!("youtube streams: the web player is warm in {:?}", started.elapsed()),
+        Err(error) => log::info!("youtube streams: warming up the PO token minter failed: {error}"),
+    }
+}
+
 impl YouTubeService {
+    /// Loads the web player's script and PO token minter ahead of the first song (call once the identity is
+    /// known: signing in or out drops the minter).
+    pub fn warm_streams(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        warm(self.client.clone(), self.streams.clone())
+    }
+
     /// A directly playable stream of the video (cached while its URL is valid).
     pub async fn resolve_stream(&self, video_id: &str) -> Result<YtStream> {
         resolve(self.client.clone(), self.streams.clone(), video_id.to_owned()).await
@@ -613,6 +705,12 @@ mod tests {
         assert_eq!(Ciphered::parse("sp=sig&url=x"), None);
         assert_eq!(Ciphered::parse("s=a%2Bb&url=u").unwrap().sp, "signature");
         assert_eq!(Ciphered::parse("s=a%2Bb&url=u").unwrap().s, "a+b");
+    }
+
+    #[test]
+    fn bot_checks_in_a_row_rest_a_tier_longer_up_to_two_hours() {
+        let minutes = |strikes| rest_after(strikes).as_secs() / 60;
+        assert_eq!([minutes(1), minutes(2), minutes(3), minutes(4), minutes(9)], [15, 30, 60, 120, 120]);
     }
 
     #[test]

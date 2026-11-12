@@ -27,10 +27,6 @@ Window {
     property string floatingShot: ""
     property string taskbarTheme: ""
 
-    //尺寸变换和设置已保存之间的连接（保存至上次保存的）。QML ResizeEdges 通过 startSystemResize 做尺寸变换，
-    // WindowFrame 做圆角（窗口透明）。类似地 — Windows 任务栏窗口缩略图下的“后退 / 暂停 / 前进”按钮（cpp/taskbar.cpp）
-    // 和 QML 单例 WindowShell（最小化窗口而不丢失“最大化” / “全屏”；播放器窗口在主窗口之外 — 岛屿和任务栏小组件，cpp/floating.cpp）。
-    
     // Update window/taskbar icon when logo colorway changes
     property string _currentIconColorway: ""
     Connections {

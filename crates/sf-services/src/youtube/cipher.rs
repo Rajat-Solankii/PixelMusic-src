@@ -4,7 +4,8 @@
 //!
 //! The script is found on the music.youtube.com page (`jsUrl`), patched so its decipher function is reachable
 //! (`prepare`), evaluated once with `env.js`, and kept for a few hours. Its `signatureTimestamp` goes into player
-//! requests so the formats it is asked to decipher match it.
+//! requests so the formats it is asked to decipher match it. The script also carries the public API key of
+//! BotGuard's service (`X-Goog-Api-Key`), which the PO token minter needs (`potoken.rs`).
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -51,6 +52,14 @@ pub fn signature_timestamp(js: &str) -> Option<u64> {
     STS.captures(js)?[1].parse().ok()
 }
 
+/// The API key the script sends to BotGuard's service (`jnn-pa.googleapis.com`): `{["X-Goog-Api-Key"]:"AIza..."}`.
+pub fn botguard_key(js: &str) -> Option<String> {
+    static KEY: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#""X-Goog-Api-Key"\]?\s*:\s*"(AIza[0-9A-Za-z_-]{20,})""#).expect("regex")
+    });
+    Some(KEY.captures(js)?[1].to_owned())
+}
+
 /// The script made usable outside a page: `window` is the global object, and the decipher function (`(url, sp="",
 /// s="")`, which builds the URL object and sets `alr=yes`) is exported as `_yt_player.__mf_bs`.
 pub fn prepare(js: &str) -> Result<String, &'static str> {
@@ -70,9 +79,17 @@ pub fn prepare(js: &str) -> Result<String, &'static str> {
     Ok(out.replacen("var window=this;", "var window=globalThis;", 1))
 }
 
+/// What a loaded player script gives stream resolution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Script {
+    pub sts: u64,
+    /// BotGuard's API key, when the script has it
+    pub botguard_key: Option<String>,
+}
+
 struct Loaded {
     player: String,
-    sts: u64,
+    script: Script,
     at: Instant,
 }
 
@@ -87,17 +104,21 @@ impl Cipher {
         Self { worker, state: tokio::sync::Mutex::new(None) }
     }
 
-    /// Load the current player script unless a recent one is loaded; its `signatureTimestamp`.
-    pub(crate) async fn load(&self, client: &InnerTube) -> Result<u64, String> {
+    /// Load the current player script unless a recent one is loaded; its `signatureTimestamp` and BotGuard key.
+    pub(crate) async fn load(&self, client: &InnerTube) -> Result<Script, String> {
         let mut state = self.state.lock().await;
         if let Some(loaded) = state.as_ref().filter(|loaded| loaded.at.elapsed() < SCRIPT_TTL) {
-            return Ok(loaded.sts);
+            return Ok(loaded.script.clone());
         }
         *state = None;
         let page = client.get_text("").await.map_err(|error| format!("music page: {error}"))?;
         let path = player_path(&page).ok_or("no player script on the music page")?;
         let js = client.get_text(&path).await.map_err(|error| format!("player script: {error}"))?;
         let sts = signature_timestamp(&js).ok_or("the player script has no signatureTimestamp")?;
+        let botguard_key = botguard_key(&js);
+        if botguard_key.is_none() {
+            log::info!("youtube cipher: player {path} has no BotGuard key");
+        }
         let patched = prepare(&js)?;
         let started = Instant::now();
         self.worker
@@ -113,8 +134,9 @@ impl Cipher {
             })
             .await??;
         log::debug!("youtube cipher: player {path} (sts {sts}) loaded in {:?}", started.elapsed());
-        *state = Some(Loaded { player: path, sts, at: Instant::now() });
-        Ok(sts)
+        let script = Script { sts, botguard_key };
+        *state = Some(Loaded { player: path, script: script.clone(), at: Instant::now() });
+        Ok(script)
     }
 
     /// Load the script again before the next stream (a URL it made was refused). Skipped while a load runs.
@@ -161,7 +183,7 @@ pub(crate) mod tests {
     use super::*;
 
     /// A small script shaped like base.js: a URL class, the decipher function (reverses `s` into `sp` and `n`).
-    pub(crate) const SYNTHETIC_PLAYER: &str = r#"var _yt_player={};(function(g){var window=this;g.zs=class{constructor(a,b=!1){this.u=a;this.p={}}set(a,b){this.p[a]=b}get(a){return this.p[a]||null}Ue(){var u=this.u.replace(/([?&]n=)([^&]*)/,function(m,a,b){return a+b.split("").reverse().join("")});for(var k in this.p)u+="&"+k+"="+this.p[k];return u}clone(){}};var Bs=0;Bs=function(a,b="",c=""){a=new g.zs(a,!0);a.set("alr","yes");c&&(c=c.split("").reverse().join(""),a.set(b,c));return a};var x={signatureTimestamp:19999};})(_yt_player);"#;
+    pub(crate) const SYNTHETIC_PLAYER: &str = r#"var _yt_player={};(function(g){var window=this;g.zs=class{constructor(a,b=!1){this.u=a;this.p={}}set(a,b){this.p[a]=b}get(a){return this.p[a]||null}Ue(){var u=this.u.replace(/([?&]n=)([^&]*)/,function(m,a,b){return a+b.split("").reverse().join("")});for(var k in this.p)u+="&"+k+"="+this.p[k];return u}clone(){}};var Bs=0;Bs=function(a,b="",c=""){a=new g.zs(a,!0);a.set("alr","yes");c&&(c=c.split("").reverse().join(""),a.set(b,c));return a};var x={signatureTimestamp:19999};var k=function(){var c={["X-Goog-Api-Key"]:"AIzaTestKeyForTheFakeBotGuard01"};return c};})(_yt_player);"#;
 
     #[test]
     fn the_script_is_found_and_patched() {
@@ -170,6 +192,9 @@ pub(crate) mod tests {
         assert_eq!(player_path("<html></html>"), None);
         assert_eq!(signature_timestamp(SYNTHETIC_PLAYER), Some(19999));
         assert_eq!(signature_timestamp("var a=1;"), None);
+        assert_eq!(botguard_key(SYNTHETIC_PLAYER).as_deref(), Some("AIzaTestKeyForTheFakeBotGuard01"));
+        assert_eq!(botguard_key(r#"c={"X-Goog-Api-Key":"AIzaSyAbcdefghijklmnopqrstuv"}"#).as_deref(), Some("AIzaSyAbcdefghijklmnopqrstuv"));
+        assert_eq!(botguard_key("var a=1;"), None);
         let patched = prepare(SYNTHETIC_PLAYER).unwrap();
         assert!(patched.contains("var window=globalThis;"));
         assert!(patched.ends_with(";g.__mf_bs=Bs;})(_yt_player);"), "{patched}");

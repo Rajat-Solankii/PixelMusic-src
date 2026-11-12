@@ -3,16 +3,14 @@ import QtQuick.Layouts
 import Md3
 import Materialfy.Core
 
-// Правая выдвижная панель: очередь / текст песни / устройства Connect.
+// Правая выдвижная панель: очередь / текст песни.
 Surface {
     id: root
 
     // Вкладки (Settings.rightPanelTab). Подпись — только у выбранной: три подписи в 340 px не помещаются.
     readonly property var tabs: [
         { key: "queue", text: I18n.t("Queue"), icon: "queue_music" },
-        { key: "lyrics", text: I18n.t("Song lyrics"), icon: "title" },
-        { key: "devices", text: I18n.t("Devices"), icon: "speaker_group" },
-        { key: "friends", text: I18n.t("Friends"), icon: "group" }
+        { key: "lyrics", text: I18n.t("Song lyrics"), icon: "title" }
     ]
     readonly property int tabIndex: Math.max(0, tabs.findIndex(t => t.key === Settings.rightPanelTab))
     readonly property string tab: tabs[tabIndex].key
@@ -52,24 +50,6 @@ Surface {
                 visible: root.tab === "lyrics" && Settings.rightPanelOpen
                 baseFontSize: 22
                 anchorPos: 0.3
-            }
-            // загружается при первом открытии вкладки
-            Loader {
-                anchors.fill: parent
-                active: root.tab === "devices" || item !== null
-                visible: root.tab === "devices"
-                sourceComponent: DevicePanel {
-                    shown: root.tab === "devices" && Settings.rightPanelOpen
-                }
-            }
-            // друзья и Jam: тоже при первом открытии; опрос активности — только пока вкладка видна
-            Loader {
-                anchors.fill: parent
-                active: root.tab === "friends" || item !== null
-                visible: root.tab === "friends"
-                sourceComponent: FriendsPanel {
-                    shown: root.tab === "friends" && Settings.rightPanelOpen
-                }
             }
         }
     }

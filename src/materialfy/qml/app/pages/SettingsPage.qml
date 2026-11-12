@@ -134,12 +134,6 @@ Page {
         fidelity: I18n.t("Fidelity"), neutral: I18n.t("Neutral"), monochrome: I18n.t("Monochrome")
     })
 
-    readonly property var bitrates: [
-        { value: 96, text: "96", hint: I18n.t("96 kbps — saves data") },
-        { value: 160, text: "160", hint: I18n.t("160 kbps — same as the regular Spotify app") },
-        { value: 320, text: "320", hint: I18n.t("320 kbps — the best quality Spotify serves. Lossless isn’t available") }
-    ]
-
     // ---- Прокрутка к разделам ----
     function cardFor(key) {
         switch (key) {
@@ -752,12 +746,13 @@ Page {
                 spacing: 12
                 Repeater {
                     model: [
-                        { key: "bluePurple", gradient: ["#8C6DFF", "#4A2BE0"] },
-                        { key: "babyPinkPurple", gradient: ["#FF9ED2", "#B666D2"] },
-                        { key: "graphiteGray", gradient: ["#8E8E93", "#636366"] },
-                        { key: "limeGreen", gradient: ["#7DC88F", "#4CAF50"] },
-                        { key: "limeLemon", gradient: ["#FFEB3B", "#FBC02D"] },
-                        { key: "orangeYellow", gradient: ["#FF9800", "#FF5722"] }
+                        // the logo itself in each colour (assets/logo, tools/pixelmusic_logo.py)
+                        { key: "bluePurple", file: "blue_purple" },
+                        { key: "babyPinkPurple", file: "baby_pink_purple" },
+                        { key: "graphiteGray", file: "graphite" },
+                        { key: "limeGreen", file: "lime_green" },
+                        { key: "limeLemon", file: "lime_lemon" },
+                        { key: "orangeYellow", file: "orange_yellow" }
                     ]
                     Rectangle {
                         required property var modelData
@@ -770,16 +765,13 @@ Page {
 
                         Behavior on border.width { NumberAnimation { duration: Theme.motion.effectsFast } }
 
-                        Rectangle {
+                        Image {
                             anchors.centerIn: parent
                             width: 40
                             height: 40
-                            radius: width / 2
-                            gradient: Gradient {
-                                orientation: Gradient.Horizontal
-                                GradientStop { position: 0; color: modelData.gradient[0] }
-                                GradientStop { position: 1; color: modelData.gradient[1] }
-                            }
+                            source: Qt.resolvedUrl("../../../assets/logo/" + modelData.file + ".svg")
+                            sourceSize: Qt.size(80, 80)
+                            smooth: true
                         }
 
                         Icon {
@@ -1483,7 +1475,7 @@ Page {
 
         SettingRow {
             title: I18n.t("Lyrics source label")
-            description: I18n.t("Shows the source badge (e.g. “Spotify · line by line”)")
+            description: I18n.t("Shows the source badge (e.g. “LRCLIB · line by line”)")
             Switch { checked: Settings.lyricsShowSource; onToggled: c => Settings.lyricsShowSource = c }
         }
 
@@ -1512,79 +1504,15 @@ Page {
         title: I18n.t("Playback")
         icon: "graphic_eq"
 
-        SettingsBanner {
-            kind: "info"
-            icon: "restart_alt"
-            shown: Settings.engineRestartPending === true
-            busy: Auth.playbackState === "connecting"
-            title: I18n.t("Audio restart needed")
-            text: I18n.t("New settings take effect after a restart; the track will resume from the same spot.")
-            actionText: I18n.t("Apply")
-            onAction: Settings.applyEngineSettings()
-        }
-
-        SettingRow {
-            title: I18n.t("Audio quality")
-            description: (page.bitrates.find(b => b.value === Settings.bitrate) ?? page.bitrates[1]).hint
-            ButtonGroup {
-                model: page.bitrates.map(b => I18n.t("{0} kbps", b.text))
-                autoSelect: false
-                size: page.compact ? "xs" : "s"
-                currentIndex: page.bitrates.findIndex(b => b.value === Settings.bitrate)
-                onActivated: i => Settings.bitrate = page.bitrates[i].value
-            }
-        }
         SettingRow {
             title: I18n.t("Volume normalization")
             description: I18n.t("Tracks play at the same loudness")
             Switch { checked: Settings.normalisation; onToggled: c => Settings.normalisation = c }
         }
         SettingRow {
-            title: I18n.t("Gapless playback")
-            description: I18n.t("The next track starts without silence — for live albums and mixes")
-            Switch { checked: Settings.gapless; onToggled: c => Settings.gapless = c }
-        }
-        SettingRow {
             title: I18n.t("Autoplay")
-            description: I18n.t("When an album or playlist ends, similar music plays")
+            description: I18n.t("When the queue runs out, similar songs keep playing")
             Switch { checked: Settings.autoplay; onToggled: c => Settings.autoplay = c }
-        }
-        SettingRow {
-            title: I18n.t("Crossfade")
-            enabled: Settings.gapless
-            opacity: enabled ? 1 : 0.5
-            description: !Settings.gapless ? I18n.t("Works together with “Gapless playback”")
-                : Settings.crossfade > 0 ? I18n.t("The end of a track fades out as the next one fades in")
-                : I18n.t("Off: tracks play back to back")
-            Slider {
-                wheelEnabled: false     // колесо прокручивает страницу, а не меняет настройку
-                width: 220
-                from: 0
-                to: 12
-                stepSize: 1
-                value: Settings.crossfade
-                valueText: v => Math.round(v) === 0 ? I18n.t("None") : I18n.t("{0} s", Math.round(v))
-                onMoved: v => Settings.crossfade = Math.round(v)
-            }
-        }
-        SettingRow {
-            title: I18n.t("Playback speed")
-            description: I18n.t("Pitch stays the same. Applies on this computer")
-            Slider {
-                wheelEnabled: false     // колесо прокручивает страницу, а не меняет настройку
-                width: 220
-                from: 0.5
-                to: 2
-                stepSize: 0.05
-                value: Settings.playbackSpeed
-                valueText: v => { const p = (Math.round(v * 100) / 100).toString().split("."); return p.length > 1 ? I18n.t("{0}.{1}×", p[0], p[1]) : p[0] + "×" }
-                onMoved: v => Settings.playbackSpeed = Math.round(v * 20) / 20
-            }
-        }
-        SettingRow {
-            title: I18n.t("DJ voice")
-            description: I18n.t("Spotify’s DJ talks between the songs it plays. Off: just the music")
-            Switch { checked: Settings.djVoice; onToggled: c => Settings.djVoice = c }
         }
         SettingRow {
             title: I18n.t("YouTube Music data saver")
@@ -1807,7 +1735,7 @@ Page {
         SettingRow {
             visible: (Settings.proxyMode || "off") !== "off"
             title: I18n.t("Covers bypass the proxy")
-            description: I18n.t("Load covers and pictures directly: faster on a slow proxy and saves its traffic. Spotify sees your real address for these images")
+            description: I18n.t("Load covers and pictures directly: faster on a slow proxy and saves its traffic. the image servers see your real address")
             Switch { checked: Settings.coversBypassProxy; onToggled: c => Settings.coversBypassProxy = c }
         }
 
@@ -1906,11 +1834,11 @@ Page {
         SettingRow {
             title: Updater.buildCommit !== "" ? I18n.t("Pixel Music {0}", Updater.appVersion) + " · " + Updater.buildCommit
                                               : I18n.t("Pixel Music {0}", Updater.appVersion)
-            description: I18n.t("An unofficial Spotify client in Material 3 Expressive style. Playback requires Spotify Premium; no lossless or offline downloads.")
+            description: I18n.t("A music player in Material 3 Expressive style: YouTube Music, lossless streams from Monochrome, JioSaavn and your own files.")
         }
         Label {
             Layout.fillWidth: true
-            text: I18n.t("Free software under GPL-3.0-or-later. Based on spotifast (crmne, MIT) and yamusic-md3 (yaskorinov, MIT); not affiliated with Spotify AB. Playback: librespot (MIT). Fonts: Google Sans (OFL), Material Symbols (Apache 2.0).")
+            text: I18n.t("Free software under GPL-3.0-or-later. Based on spotifast (crmne, MIT) and yamusic-md3 (yaskorinov, MIT); not affiliated with Google or YouTube. Fonts: Google Sans (OFL), Material Symbols (Apache 2.0).")
             type: "bodySmall"
             color: Theme.fgSurfaceVariant
             wrapMode: Text.WordWrap

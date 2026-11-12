@@ -172,15 +172,6 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "requestTrackDetails"]
         fn request_track_details(self: Pin<&mut Catalog>, track: &QMap_QString_QVariant);
-        /// Resolve duration for a track that's missing it (YouTube tracks from Quick Picks, etc.).
-        /// trackId can be a YouTube video ID or a youtube:track: URI.
-        #[qinvokable]
-        #[cxx_name = "resolveDuration"]
-        fn resolve_duration(self: Pin<&mut Catalog>, track_id: &QString, current_ms: i64);
-        /// Duration was resolved for a track.
-        #[qsignal]
-        #[cxx_name = "durationResolved"]
-        fn duration_resolved(self: Pin<&mut Catalog>, track_id: QString, duration_ms: i64);
     }
 
     impl cxx_qt::Threading for Catalog {}
@@ -879,47 +870,6 @@ impl qobject::Catalog {
                 };
                 catalog.track_details_ready(QString::from(track_id.as_str()), details);
             });
-        });
-    }
-
-    fn resolve_duration(self: Pin<&mut Self>, track_id: &QString, current_ms: i64) {
-        // Only resolve if duration is missing (0 or not set)
-        if current_ms > 0 {
-            return;
-        }
-        let track_id = track_id.to_string();
-        if track_id.is_empty() {
-            return;
-        }
-        // Extract video ID from youtube:track: URI or use as-is if it's already a video ID
-        let video_id = if track_id.starts_with("youtube:track:") {
-            track_id.strip_prefix("youtube:track:").unwrap_or(&track_id).to_owned()
-        } else if track_id.starts_with("youtube:") {
-            return; // Not a track URI, skip
-        } else {
-            // Spotify track - no resolution needed (they always have duration)
-            return;
-        };
-
-        let thread = self.qt_thread();
-        let youtube = ctx().services.youtube.clone();
-        
-        // Check if we already have a cached duration
-        if let Some(cached) = youtube.cached_duration(&video_id) {
-            let _ = thread.queue(move |catalog| {
-                catalog.duration_resolved(QString::from(track_id.as_str()), cached);
-            });
-            return;
-        }
-
-        // Resolve duration asynchronously
-        ctx().rt.spawn(async move {
-            let duration_ms = youtube.resolve_track_duration(&video_id).await;
-            if let Some(ms) = duration_ms {
-                let _ = thread.queue(move |catalog| {
-                    catalog.duration_resolved(QString::from(track_id.as_str()), ms);
-                });
-            }
         });
     }
 

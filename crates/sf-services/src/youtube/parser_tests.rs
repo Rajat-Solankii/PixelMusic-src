@@ -222,3 +222,31 @@ fn small_responses_are_read() {
     }}}}}]});
     assert_eq!(transcript(&cues).as_deref(), Some("[01:01.500]Hello"));
 }
+
+/// `music/get_queue` rows, plain and wrapped (a song that also has a music video), in the shape YouTube sends.
+pub(super) fn get_queue_response() -> Value {
+    let row = |id: &str, length: &str| {
+        json!({ "playlistPanelVideoRenderer": {
+            "videoId": id,
+            "title": { "runs": [{ "text": "Song" }] },
+            "lengthText": { "runs": [{ "text": length }], "accessibility": {} },
+        } })
+    };
+    json!({ "queueDatas": [
+        { "content": row("plain", "3:16") },
+        { "content": { "playlistPanelVideoWrapperRenderer": {
+            "primaryRenderer": row("wrapped", "1:02:03"),
+            "counterpart": [{ "counterpartRenderer": row("video", "4:00") }],
+        } } },
+        { "content": { "playlistPanelVideoRenderer": { "videoId": "nolength" } } },
+    ] })
+}
+
+#[test]
+fn get_queue_gives_each_songs_length() {
+    assert_eq!(
+        queue_lengths(&get_queue_response()),
+        [("plain".to_owned(), 196), ("wrapped".to_owned(), 3723)]
+    );
+    assert!(queue_lengths(&json!({})).is_empty());
+}

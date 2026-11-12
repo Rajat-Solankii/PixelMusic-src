@@ -239,9 +239,8 @@ Page {
                 showMore: (shelfData.items ?? []).length > 8
                 onActivated: (track, index) => {
                     Player.rememberTrack(track)
-                    Player.playUris(shelfData.items.map(t => t.uri), index)
+                    Player.playTracks(shelfData.items, index)
                 }
-                onShowMoreClicked: router.push("quickPicks", { title: shelfData.title })
                 onTrackMenuRequested: (track, position) => page.showMenu(track, position)
             }
         }
@@ -330,7 +329,7 @@ Page {
                         onActivated: {
                             // строка главной приходит из Web API, а не из каталога: без неё экран ждал бы звука
                             Player.rememberTrack(modelData)
-                            Player.playUris(tracksCol.tracks.map(t => t.uri), index)
+                            Player.playTracks(tracksCol.tracks, index)
                         }
                         onLikeClicked: Library.toggleLike(modelData)
                     }

@@ -12,6 +12,8 @@ ColumnLayout {
     property bool compact: false
     property string title: I18n.t("Quick picks")
     property bool showMore: false
+    // "Show more" opens the rest of the shelf in place (the first 8 songs otherwise)
+    property bool expanded: false
     
     signal activated(var track, int index)
     signal showMoreClicked()
@@ -36,7 +38,7 @@ ColumnLayout {
         Label {
             visible: root.showMore
             Layout.alignment: Qt.AlignRight
-            text: I18n.t("Show more")
+            text: root.expanded ? I18n.t("Show less") : I18n.t("Show more")
             type: "labelLarge"
             color: Theme.primary
             
@@ -51,7 +53,7 @@ ColumnLayout {
             }
             
             TapHandler {
-                onTapped: root.showMoreClicked()
+                onTapped: { root.expanded = !root.expanded; root.showMoreClicked() }
             }
         }
     }
@@ -65,7 +67,7 @@ ColumnLayout {
         rowSpacing: 8
         
         Repeater {
-            model: root.tracks
+            model: root.showMore && !root.expanded ? root.tracks.slice(0, 8) : root.tracks
             
             Item {
                 id: trackItem
@@ -76,25 +78,7 @@ ColumnLayout {
                 readonly property string title: modelData.title ?? ""
                 readonly property string artists: modelData.artists ?? ""
                 readonly property string cover: modelData.cover ?? ""
-                property int durationMs: modelData.durationMs ?? 0
-                
-                // Duration resolution for tracks missing it (YouTube tracks)
-                property bool _durationResolutionRequested: false
-                onVisibleChanged: {
-                    if (visible && durationMs <= 0 && trackId !== "" && !_durationResolutionRequested) {
-                        _durationResolutionRequested = true
-                        Catalog.resolveDuration(trackId, durationMs)
-                    }
-                }
-                Connections {
-                    target: Catalog
-                    ignoreUnknownSignals: true
-                    function onDurationResolved(resolvedTrackId, resolvedMs) {
-                        if (resolvedTrackId === trackItem.trackId && durationMs <= 0 && resolvedMs > 0) {
-                            trackItem.durationMs = resolvedMs
-                        }
-                    }
-                }
+                readonly property int durationMs: modelData.durationMs ?? 0
                 readonly property bool current: trackId !== "" && trackId === Player.trackId
                 readonly property bool playing: current && Player.playing
                 
@@ -212,16 +196,10 @@ ColumnLayout {
                         }
                     }
                     
-                    // Duration - shows formatted time or "--:--" if not yet resolved
+                    // the backend fills lengths in; unknown — nothing
                     Label {
                         id: durationLabel
-                        text: {
-                            if (trackItem.durationMs > 0)
-                                return root._formatTime(trackItem.durationMs)
-                            if (trackItem._durationResolutionRequested)
-                                return "--:--"  // Resolving...
-                            return "--:--"  // No duration available
-                        }
+                        text: trackItem.durationMs > 0 ? root._formatTime(trackItem.durationMs) : ""
                         type: "bodySmall"
                         color: Theme.fgSurfaceVariant
                         horizontalAlignment: Text.AlignRight

@@ -265,6 +265,9 @@ pub enum PlayerEvent {
     TrackEnded(TrackEnded),
     /// короткое сообщение пользователю («Очередь очищена», «Pixel 9 не ответил»)
     Notice(String),
+    /// YouTube list about to run out with Autoplay on: the services append this song's radio
+    /// (`PlayerHandle::autoplay`).
+    AutoplayWanted(Box<md3_model::TrackItem>),
 }
 
 pub struct PlayerSubscription {

@@ -1,6 +1,7 @@
 //! InnerTube HTTP client (port of soundwave1 `InnerTube.kt`): client presets, request context, SAPISIDHASH
 //! signing, retries and the anonymous visitor id.
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -14,9 +15,6 @@ pub(crate) const USER_AGENT_WEB: &str =
 const REFERER: &str = "https://music.youtube.com/";
 /// BotGuard's challenge service (`potoken.rs`).
 const BOTGUARD_BASE: &str = "https://www.youtube.com/api/jnn/v1/";
-/// The public key the web client sends to BotGuard's service.
-/// Loaded from `BOTGUARD_API_KEY` env var at runtime; falls back to this default.
-const BOTGUARD_API_KEY_DEFAULT: &str = "REPLACE_WITH_YOUR_API_KEY";
 const MAX_ATTEMPTS: u32 = 4;
 const RETRY_DELAY: Duration = Duration::from_millis(800);
 
@@ -51,7 +49,7 @@ pub const WEB_REMIX: ClientPreset = ClientPreset {
     android_sdk_version: None,
 };
 
-/// Unauthenticated stream resolution (no PoToken needed).
+/// Stream resolution with direct URLs and no PO token. It takes no browser cookies (`login_supported: false`).
 pub const ANDROID_VR: ClientPreset = ClientPreset {
     name: "ANDROID_VR",
     version: "1.61.48",
@@ -65,10 +63,10 @@ pub const ANDROID_VR: ClientPreset = ClientPreset {
     android_sdk_version: Some("32"),
 };
 
-/// `ANDROID_VR` as the signed-in user (the cookie and its SAPISIDHASH, like the web client): what the anonymous
-/// one is refused with "Sign in to confirm you're not a bot" or an age wall, the account may still play, with
-/// direct URLs and no PoToken.
-pub const ANDROID_VR_USER: ClientPreset = ClientPreset { login_supported: true, ..ANDROID_VR };
+/// `ANDROID_VR` for a signed-in user, asked with `Login::Required`: the client refuses browser cookies (HTTP 400),
+/// so it goes without them (and without `onBehalfOfUser`, answered 401 without the cookie) but with the account's own
+/// visitor id: YouTube sees the account's device rather than a fresh anonymous one.
+pub const ANDROID_VR_USER: ClientPreset = ANDROID_VR;
 
 /// Transcripts.
 pub const WEB: ClientPreset = ClientPreset {
@@ -91,7 +89,8 @@ pub enum Login {
     Never,
     /// as the user when signed in, anonymous otherwise (browse, search)
     IfSignedIn,
-    /// fails with `NotSignedIn` without an account (library, mutations)
+    /// fails with `NotSignedIn` without an account (library, mutations); a client without cookie support then
+    /// goes with the account's visitor id only
     Required,
 }
 
@@ -110,8 +109,10 @@ pub struct InnerTube {
     botguard_base: String,
     retry_delay: Duration,
     session: RwLock<Session>,
-    /// held while the visitor id is fetched; true once tried
-    visitor_tried: tokio::sync::Mutex<bool>,
+    /// held while the visitor id is fetched; the identity generation it was last tried for
+    visitor_tried: tokio::sync::Mutex<Option<u64>>,
+    /// bumped on every change of identity
+    generation: AtomicU64,
 }
 
 impl InnerTube {
@@ -123,7 +124,8 @@ impl InnerTube {
             botguard_base: BOTGUARD_BASE.to_owned(),
             retry_delay: RETRY_DELAY,
             session: RwLock::new(Session { account: None, visitor_data: None, gl: "US".to_owned(), hl: "en".to_owned() }),
-            visitor_tried: tokio::sync::Mutex::new(false),
+            visitor_tried: tokio::sync::Mutex::new(None),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -151,9 +153,17 @@ impl InnerTube {
         self.session.write().unwrap_or_else(|lock| lock.into_inner())
     }
 
-    /// Sign in (`Some`) or out (`None`).
-    pub fn set_account(&self, account: Option<YouTubeAccount>) {
-        self.session_mut().account = account;
+    /// Sign in (`Some`) or out (`None`). True when the identity changed (another cookie, or signed in/out): the
+    /// anonymous visitor id is then dropped too, so the next identity does not inherit the previous one's.
+    pub fn set_account(&self, account: Option<YouTubeAccount>) -> bool {
+        let mut session = self.session_mut();
+        let changed = session.account.as_ref().map(|old| &old.cookie) != account.as_ref().map(|new| &new.cookie);
+        session.account = account;
+        if changed {
+            session.visitor_data = None;
+            self.generation.fetch_add(1, Ordering::SeqCst);
+        }
+        changed
     }
 
     pub fn account(&self) -> Option<YouTubeAccount> {
@@ -175,28 +185,34 @@ impl InnerTube {
         self.http.client().map_err(YouTubeError::Unavailable)
     }
 
-    /// The visitor id sent with requests: the account's own, else the anonymous one (fetched once).
-    async fn visitor_data(&self) -> Option<String> {
+    /// The visitor id sent with requests: the account's own when sent as the user, else the anonymous one
+    /// (fetched once per identity). An anonymous request never carries the account's id: that ties the anonymous
+    /// client to the account and earns it a bot check.
+    async fn visitor_data(&self, as_user: bool) -> Option<String> {
         {
             let session = self.session();
-            let known = session.account.as_ref().and_then(|account| account.visitor_data.clone()).or(session.visitor_data.clone());
-            if known.is_some() {
-                return known;
+            let own = session.account.as_ref().filter(|_| as_user).and_then(|account| account.visitor_data.clone());
+            if let Some(known) = own.or(session.visitor_data.clone()) {
+                return Some(known);
             }
         }
         let mut tried = self.visitor_tried.lock().await;
         if let Some(known) = self.session().visitor_data.clone() {
             return Some(known);
         }
-        if *tried {
+        let generation = self.generation.load(Ordering::SeqCst);
+        if *tried == Some(generation) {
             return None;
         }
-        *tried = true;
+        *tried = Some(generation);
         let fetched = self.fetch_visitor_data().await;
         if fetched.is_none() {
             tracing::debug!("YouTube Music visitor id is unavailable; continuing without it");
         }
-        self.session_mut().visitor_data = fetched.clone();
+        // signed in or out meanwhile: the id would belong to the old identity
+        if self.generation.load(Ordering::SeqCst) == generation {
+            self.session_mut().visitor_data = fetched.clone();
+        }
         fetched
     }
 
@@ -231,15 +247,14 @@ impl InnerTube {
         response.text().await.map_err(|error| YouTubeError::Network(error.without_url().to_string()))
     }
 
-    /// `POST` to BotGuard's service (`Create`, `GenerateIT`), JSON+protobuf in and out.
-    pub(crate) async fn botguard(&self, method: &str, body: Value) -> Result<Value> {
+    /// `POST` to BotGuard's service (`Create`, `GenerateIT`), JSON+protobuf in and out; `key` is the player
+    /// script's public API key for that service (`cipher::botguard_key`).
+    pub(crate) async fn botguard(&self, method: &str, body: Value, key: &str) -> Result<Value> {
         let response = self
             .http_client()?
             .post(format!("{}{method}", self.botguard_base))
             .header(reqwest::header::CONTENT_TYPE, "application/json+protobuf")
-            .header("x-goog-api-key",
-                std::env::var("BOTGUARD_API_KEY")
-                    .unwrap_or_else(|_| BOTGUARD_API_KEY_DEFAULT.to_string()))
+            .header("x-goog-api-key", key)
             .header("x-user-agent", "grpc-web-javascript/0.1")
             .header(reqwest::header::USER_AGENT, USER_AGENT_WEB)
             .body(body.to_string())
@@ -300,15 +315,19 @@ impl InnerTube {
         login: Login,
         query: &[(&str, &str)],
     ) -> Result<Value> {
-        let account = match login {
+        let user = match login {
             Login::Never => None,
-            Login::IfSignedIn | Login::Required => self.account().filter(|_| preset.login_supported),
+            Login::IfSignedIn => self.account().filter(|_| preset.login_supported),
+            Login::Required => self.account(),
         };
-        if login == Login::Required && account.is_none() {
+        if login == Login::Required && user.is_none() {
             return Err(YouTubeError::NotSignedIn);
         }
-        let visitor_data = self.visitor_data().await;
-        let on_behalf_of = account.as_ref().and_then(|account| account.data_sync_id.as_deref());
+        // a client without cookie support still goes with the account's visitor id; `onBehalfOfUser` without the
+        // cookie is answered 401
+        let account = user.as_ref().filter(|_| preset.login_supported);
+        let visitor_data = self.visitor_data(user.is_some()).await;
+        let on_behalf_of = account.and_then(|account| account.data_sync_id.as_deref());
         body["context"] = self.context(preset, visitor_data.as_deref(), on_behalf_of);
 
         let url = format!("{}{endpoint}", self.api_base);

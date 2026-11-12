@@ -27,6 +27,7 @@ cp -R "$ROOT/src/materialfy/qml" "$APP/Contents/MacOS/qml"
 find "$APP/Contents/MacOS/qml" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$APP/Contents/MacOS/assets"
 cp -R "$ROOT/src/materialfy/assets/fonts" "$APP/Contents/MacOS/assets/fonts"
+cp -R "$ROOT/src/materialfy/assets/logo" "$APP/Contents/MacOS/assets/logo"
 find "$ROOT/src/materialfy/assets" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \) \
     -exec cp {} "$APP/Contents/MacOS/assets/" \;
 

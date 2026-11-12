@@ -83,6 +83,8 @@ pub struct WaveService {
     /// группа «Любой трек»: выбранные через поиск, новые первыми (SettingKey::RadioSeeds)
     any: Mutex<Vec<RadioSeed>>,
     settings: Arc<SettingsStore>,
+    /// YouTube autoplay's running radio
+    yt_autoplay: tokio::sync::Mutex<yt::AutoplayRadio>,
     /// себя — для задач, запущенных из &self
     me: Weak<WaveService>,
 }
@@ -107,6 +109,7 @@ impl WaveService {
             generation: AtomicU64::new(0),
             any: Mutex::new(any),
             settings,
+            yt_autoplay: Default::default(),
             me: me.clone(),
         });
         rt.spawn(listen(Arc::downgrade(&service)));
@@ -512,6 +515,10 @@ async fn listen(weak: Weak<WaveService>) {
                 | Err(broadcast::error::RecvError::Lagged(_)) => {
                     let Some(me) = weak.upgrade() else { break };
                     me.follow_player();
+                }
+                Ok(PlayerEvent::AutoplayWanted(track)) => {
+                    let Some(me) = weak.upgrade() else { break };
+                    me.yt_autoplay(*track);
                 }
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Closed) => break,

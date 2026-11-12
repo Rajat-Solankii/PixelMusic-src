@@ -1093,6 +1093,25 @@ fn panel_track(renderer: &Value) -> Option<TrackItem> {
     ))
 }
 
+/// `music/get_queue` (`{"videoIds": [...]}`): each row's video id and length in seconds. A song that also has a
+/// music video comes wrapped (`playlistPanelVideoWrapperRenderer.primaryRenderer`); rows without a length are left out.
+pub fn queue_lengths(response: &Value) -> Vec<(String, i64)> {
+    arr(&response["queueDatas"])
+        .iter()
+        .filter_map(|data| {
+            let content = &data["content"];
+            let renderer = or(
+                &content["playlistPanelVideoRenderer"],
+                &content["playlistPanelVideoWrapperRenderer"]["primaryRenderer"]["playlistPanelVideoRenderer"],
+            );
+            let video_id = non_blank(text(&renderer["videoId"]).to_owned())?;
+            let length = &renderer["lengthText"];
+            let seconds = parse_time(text(or(&length["runs"][0]["text"], &length["simpleText"])))?;
+            (seconds > 0).then_some((video_id, seconds))
+        })
+        .collect()
+}
+
 /// Returns the next page token and optionally automix playlist ID and params.
 pub type AutomixInfo = Option<(String, Option<String>)>;
 

@@ -205,8 +205,13 @@ impl Decoder {
         }
     }
 
-    /// Moves to `ms`; the next chunk starts there (within a packet).
+    /// Moves to `ms`; the next chunk starts there (within a packet). Past the end it goes to the last moment: the
+    /// track's length shown may be another copy's (a lossless copy can be shorter than the YouTube song).
     pub fn seek(&mut self, ms: u64) -> Result<u64, String> {
+        let ms = match self.duration_ms {
+            Some(duration) if duration > 0 => ms.min(duration - 1),
+            _ => ms,
+        };
         let time = Time::new(ms / 1000, (ms % 1000) as f64 / 1000.0);
         let seeked = self
             .format
@@ -280,6 +285,55 @@ pub(crate) mod tests {
             Decoder::open(Box::new(std::io::Cursor::new(lossless_fixture("tone_44k_stereo.flac"))), "audio/flac").unwrap();
         let landed = decoder.seek(500).unwrap();
         assert!(landed.abs_diff(500) < 100, "landed at {landed}");
+        // past the end (the length shown was another copy's): the song ends instead of failing
+        assert!(decoder.seek(5_000).unwrap() >= 990);
+        assert!(decode_all(&mut decoder).len() / 2 <= 441);
+    }
+
+    /// A Monochrome FLAC (no seek table) fetched by ranges from a server that, like Monochrome's at times, stops
+    /// sending in the middle of an answer: a seek far ahead lands and the song keeps playing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_downloading_flac_keeps_playing_after_a_far_seek() {
+        use crate::engine::youtube::download::{self, DownloadSpec, tests::{Mode, serve}};
+        let body = lossless_fixture("sweep_20s_noseektable.flac");
+        let length = body.len() as u64;
+        let (url, _) = serve(body, Mode::Stalls(24 * 1024)).await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        // chunks small next to the file, as 4 MiB are next to a 30 MB song
+        let spec = DownloadSpec {
+            chunk_bytes: 64 * 1024,
+            idle_timeout: std::time::Duration::from_millis(200),
+            ..DownloadSpec::new(&url, "test-agent", Some(length))
+        };
+        let mut reader = download::start(client, &tokio::runtime::Handle::current(), spec);
+        reader.set_timeout(std::time::Duration::from_secs(5));
+        let started = std::time::Instant::now();
+        let (landed, after, position) = tokio::task::spawn_blocking(move || {
+            let mut decoder = Decoder::open(Box::new(reader), "audio/flac").unwrap();
+            assert_eq!(decoder.duration_ms(), Some(20_000));
+            for _ in 0..4 {
+                decoder.next_chunk().unwrap().expect("audio before the seek");
+            }
+            let landed = decoder.seek(16_000).unwrap();
+            // three seconds of audio after the seek
+            let mut after = Vec::new();
+            while after.len() < 3 * 44_100 * 2 {
+                match decoder.next_chunk().unwrap() {
+                    Some(chunk) => after.extend(chunk),
+                    None => break,
+                }
+            }
+            (landed, after, decoder.position_ms())
+        })
+        .await
+        .unwrap();
+        assert!(landed.abs_diff(16_000) < 100, "landed at {landed}");
+        assert!(after.len() >= 3 * 44_100 * 2, "only {} samples after the seek", after.len());
+        assert!((18_900..=19_200).contains(&position), "position {position}");
+        // it is sound, not silence
+        let middle = &after[44_100..88_200];
+        assert!(middle.iter().map(|sample| sample * sample).sum::<f64>() / middle.len() as f64 > 0.01);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
     }
 
     #[test]
