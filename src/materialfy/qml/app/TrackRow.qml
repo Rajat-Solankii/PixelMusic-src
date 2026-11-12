@@ -258,6 +258,18 @@ Item {
                     color: Theme.surfaceContainerHighest
                     Label { anchors.centerIn: parent; text: "E"; type: "labelSmall"; color: Theme.fgSurfaceVariant }
                 }
+                // saved for playing offline (Downloads); "downloading" while it is in the queue
+                Icon {
+                    readonly property bool downloaded: Downloads.revision >= 0 && root.uri.startsWith("youtube:track:")
+                                                       && Downloads.isDownloaded(root.uri)
+                    readonly property bool pending: Downloads.revision >= 0 && root.uri.startsWith("youtube:track:")
+                                                    && !downloaded && Downloads.isPending(root.uri)
+                    visible: downloaded || pending
+                    name: downloaded ? "download_done" : "downloading"
+                    size: 16
+                    color: downloaded ? Theme.primary : Theme.fgSurfaceVariant
+                    Accessible.name: downloaded ? I18n.t("Downloaded") : I18n.t("Downloading")
+                }
                 Item { Layout.fillWidth: true }
             }
             ArtistLinks {

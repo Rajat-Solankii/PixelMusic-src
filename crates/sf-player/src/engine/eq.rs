@@ -228,6 +228,22 @@ pub struct Preset {
 /// are scenario presets of this app's, shown behind a separator.
 pub const WINAMP_PRESET_COUNT: usize = 18;
 
+/// The preset with this name (as stored in the eqPreset setting).
+pub fn preset(name: &str) -> Option<&'static Preset> {
+    PRESETS.iter().find(|preset| preset.name == name)
+}
+
+impl EqSettings {
+    /// Settings from their stored form (mf_platform eqEnabled, eqPreamp, eqBands, audioBalance, monoAudio).
+    pub fn from_stored(on: bool, preamp_db: f64, bands_db: &[f64], balance: f64, mono: bool) -> Self {
+        let mut bands = [0.0f32; 10];
+        for (band, db) in bands.iter_mut().zip(bands_db) {
+            *band = *db as f32;
+        }
+        Self { on, preamp_db: preamp_db as f32, bands_db: bands, balance: balance as f32, mono }.clamped()
+    }
+}
+
 pub const PRESETS: &[Preset] = &[
     Preset {
         name: "Flat",
@@ -580,6 +596,15 @@ mod tests {
 
     fn rms(samples: &[f64]) -> f64 {
         (samples.iter().map(|s| s * s).sum::<f64>() / samples.len() as f64).sqrt()
+    }
+
+    #[test]
+    fn stored_settings_and_preset_lookup() {
+        assert_eq!(preset("Flat").map(|p| p.bands_db), Some([0.0; 10]));
+        assert_eq!(preset("nope"), None);
+        let s = EqSettings::from_stored(true, 20.0, &[3.0, -30.0], 0.5, true);
+        assert_eq!((s.on, s.preamp_db, s.balance, s.mono), (true, 12.0, 0.5, true));
+        assert_eq!(s.bands_db[..3], [3.0, -12.0, 0.0]);
     }
 
     #[test]

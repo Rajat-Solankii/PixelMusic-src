@@ -12,13 +12,19 @@
 #include "materialfy/src/bridges/crash_report.cxxqt.h"
 #include "materialfy/src/bridges/data.cxxqt.h"
 #include "materialfy/src/bridges/devices.cxxqt.h"
+#include "materialfy/src/bridges/downloads.cxxqt.h"
+#include "materialfy/src/bridges/extras.cxxqt.h"
 #include "materialfy/src/bridges/home.cxxqt.h"
+#include "materialfy/src/bridges/lanjam.cxxqt.h"
+#include "materialfy/src/bridges/lastfm.cxxqt.h"
 #include "materialfy/src/bridges/library.cxxqt.h"
+#include "materialfy/src/bridges/local_files.cxxqt.h"
 #include "materialfy/src/bridges/lyrics.cxxqt.h"
 #include "materialfy/src/bridges/player.cxxqt.h"
 #include "materialfy/src/bridges/radio.cxxqt.h"
 #include "materialfy/src/bridges/releases.cxxqt.h"
 #include "materialfy/src/bridges/settings.cxxqt.h"
+#include "materialfy/src/bridges/smart_mix.cxxqt.h"
 #include "materialfy/src/bridges/social.cxxqt.h"
 #include "materialfy/src/bridges/theme.cxxqt.h"
 #include "materialfy/src/bridges/translations.cxxqt.h"
@@ -53,6 +59,8 @@ register_qml_types()
   singleton<IconMetrics>("IconMetrics");
   singleton<Auth>("Auth");
   singleton<Library>("Library");
+  singleton<LocalFiles>("LocalFiles");
+  singleton<Downloads>("Downloads");
   singleton<Player>("Player");
   singleton<Devices>("Devices");
   singleton<Radio>("Radio");
@@ -64,6 +72,10 @@ register_qml_types()
   singleton<CrashReport>("CrashReport");
   singleton<Lyrics>("Lyrics");
   singleton<Updater>("Updater");
+  singleton<LastFm>("LastFm");
+  singleton<SmartMix>("SmartMix");
+  singleton<LanJam>("LanJam");
+  singleton<Extras>("Extras");
   singleton<WindowShell>("WindowShell");
 
   qmlRegisterType<TrackFilter>(URI, 1, 0, "TrackFilter");

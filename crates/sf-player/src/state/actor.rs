@@ -6,14 +6,16 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use md3_model::QueueRow;
-use md3_model::{PlayContext, QueueSection, TrackItem};
+use md3_model::{DeviceItem, PlayContext, QueueSection, TrackItem};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use super::backend::{LocalEngine, WebBackend};
 use super::core::{ApiCall, ApiReply, Core, Effect};
 use super::diff;
 use super::session::SessionData;
-use crate::engine::{EngineConfig, EngineEvent, LoadSpec};
+use super::youtube::{YtEffect, YtLane, YtLink, YtMsg};
+use crate::engine::youtube::{YtCommand, is_lane_track};
+use crate::engine::{EngineConfig, EngineEvent, LoadSpec, Playback};
 #[cfg(test)]
 use crate::QueueChange;
 use crate::{LocalPlayback, PlayerEvent, PlayerSnapshot, Repeat, Target, codec_label};
@@ -42,12 +44,16 @@ pub(crate) enum Command {
     /// Строка для оптимистичной сверки: списки присылают только URI.
     Remember(Box<TrackItem>),
     PlayEpisode { uri: String, position_ms: i64 },
+    /// more tracks for the playing YouTube context (a radio filling in after its first song)
+    ExtendContext { context_uri: String, items: Vec<TrackItem> },
     PlayIndex(usize),
     PlayQueueRow(u64),
     AddToQueue(Vec<TrackItem>),
     AddUriToQueue(String),
     InsertManual { item: Box<TrackItem>, at: usize },
     MoveManual { from: usize, to: usize },
+    /// reorder the rest of the playing context (indices within that section; only the YouTube lane)
+    MoveContext { from: usize, to: usize },
     ClearManualQueue,
     RefreshQueue,
     TogglePlay,
@@ -82,6 +88,7 @@ pub(crate) enum Msg {
     Local(LocalMsg),
     Cover { url: String, result: Result<PathBuf, String> },
     Restore(Option<SessionData>),
+    YouTube(YtMsg),
     Shutdown(std::sync::mpsc::Sender<()>),
 }
 
@@ -110,6 +117,14 @@ pub(crate) struct Actor {
     level: f64,
     restored: bool,
     pending: Vec<PlayerEvent>,
+    /// YouTube Music: its own queue and player beside `Core`
+    youtube: YtLane,
+    yt: Option<YtLink>,
+    /// the librespot load that was current when YouTube took over: a new one means Spotify plays again
+    yt_spotify_sequence: u64,
+    /// the cover `Core` asked for last (shown again when the lane stops)
+    core_cover: String,
+    yt_was_active: bool,
 }
 
 impl Actor {
@@ -148,6 +163,11 @@ impl Actor {
             level: 0.0,
             restored: false,
             pending: Vec::new(),
+            youtube: YtLane::default(),
+            yt: None,
+            yt_spotify_sequence: 0,
+            core_cover: String::new(),
+            yt_was_active: false,
         }
     }
 
@@ -189,13 +209,16 @@ impl Actor {
         if self.levels_active() {
             return LEVEL_FRAME;
         }
-        if self.core.animating() {
+        if self.core.animating() || (self.youtube.is_active() && (self.youtube.playing() || self.youtube.loading())) {
             return FRAME;
         }
         self.core.next_deadline().saturating_duration_since(Instant::now()).clamp(Duration::from_millis(10), IDLE)
     }
 
     fn levels_active(&self) -> bool {
+        if self.youtube.is_active() {
+            return self.core.levels_wanted && self.yt.is_some() && self.published.playing;
+        }
         self.core.levels_wanted && self.engine.is_some() && self.core.local.is_active() && self.published.playing
     }
 
@@ -203,7 +226,14 @@ impl Actor {
     pub fn step(&mut self) {
         self.core.tick();
         self.run_effects();
-        self.level = if self.levels_active() { self.engine.as_ref().map_or(0.0, |engine| engine.level()) } else { 0.0 };
+        self.run_youtube_effects();
+        self.level = if !self.levels_active() {
+            0.0
+        } else if self.youtube.is_active() {
+            self.yt.as_ref().map_or(0.0, |yt| yt.engine.level())
+        } else {
+            self.engine.as_ref().map_or(0.0, |engine| engine.level())
+        };
         self.publish();
     }
 
@@ -211,7 +241,16 @@ impl Actor {
         match message {
             Msg::Command(command) => self.command(command),
             Msg::Engine(event) => match *event {
-                EngineEvent::State(state) => self.core.handle_local(state),
+                EngineEvent::State(state) => {
+                    // Spotify started a new track here (a Connect command, autoplay): it takes over
+                    if self.youtube.is_active()
+                        && state.playback == Playback::Playing
+                        && state.track_sequence != self.yt_spotify_sequence
+                    {
+                        self.youtube.stop();
+                    }
+                    self.core.handle_local(state);
+                }
                 EngineEvent::SessionEnded => {
                     let mut state = self.core.local.clone();
                     state.connected = false;
@@ -241,6 +280,7 @@ impl Actor {
                 }
                 self.core.poll_remote_soon();
             }
+            Msg::YouTube(message) => self.youtube_message(message),
             Msg::Shutdown(_) => {}
         }
     }
@@ -270,6 +310,9 @@ impl Actor {
     }
 
     fn command(&mut self, command: Command) {
+        let Some(command) = self.youtube_command(command) else {
+            return;
+        };
         let core = &mut self.core;
         match command {
             Command::PlayItems { items, row, context } => core.play_items(items, row, context),
@@ -278,6 +321,8 @@ impl Actor {
             Command::PlayUris { uris, index, context } => core.play_uris(uris, index, context),
             Command::Remember(item) => core.remember(&item),
             Command::PlayEpisode { uri, position_ms } => core.play_episode(uri, position_ms),
+            // the YouTube lane takes these; Spotify contexts are not extended
+            Command::ExtendContext { .. } => {}
             Command::PlayIndex(index) => {
                 // индекс строки Player.queue: 0 — текущая
                 let rows = core.queue_rows();
@@ -308,6 +353,7 @@ impl Actor {
             Command::AddUriToQueue(uri) => core.add_to_queue(uri, String::new()),
             Command::InsertManual { item, at } => core.insert_manual(vec![*item], at),
             Command::MoveManual { from, to } => core.move_manual(from, to),
+            Command::MoveContext { .. } => {}
             Command::ClearManualQueue => core.clear_queue(),
             Command::RefreshQueue => core.refresh_queue(true),
             Command::TogglePlay => core.toggle_play(),
@@ -365,19 +411,11 @@ impl Actor {
                 Effect::Api(call) => self.api(call),
                 Effect::Notice(text) => self.pending.push(PlayerEvent::Notice(text)),
                 Effect::Reconnect => (self.reconnect)(self.core.volume),
-                Effect::Cover(url) if url.is_empty() => {
-                    self.cover_url.clear();
-                    self.cover_file.clear();
-                }
-                Effect::Cover(url) if url == self.cover_url && !self.cover_file.is_empty() => {}
                 Effect::Cover(url) => {
-                    self.cover_url = url.clone();
-                    let backend = self.backend.clone();
-                    let tx = self.tx.clone();
-                    tokio::spawn(async move {
-                        let result = backend.fetch_cover(url.clone()).await;
-                        let _ = tx.send(Msg::Cover { url, result });
-                    });
+                    self.core_cover = url.clone();
+                    if !self.youtube.is_active() {
+                        self.cover(url);
+                    }
                 }
                 Effect::Save(data) => {
                     if let Some(path) = self.session_file.clone() {
@@ -392,6 +430,24 @@ impl Actor {
                 Effect::Ended(ended) => self.pending.push(PlayerEvent::TrackEnded((*ended).into())),
             }
         }
+    }
+
+    fn cover(&mut self, url: String) {
+        if url.is_empty() {
+            self.cover_url.clear();
+            self.cover_file.clear();
+            return;
+        }
+        if url == self.cover_url && !self.cover_file.is_empty() {
+            return;
+        }
+        self.cover_url = url.clone();
+        let backend = self.backend.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = backend.fetch_cover(url.clone()).await;
+            let _ = tx.send(Msg::Cover { url, result });
+        });
     }
 
     pub(crate) fn api(&mut self, call: ApiCall) {
@@ -415,6 +471,9 @@ impl Actor {
     }
 
     pub fn build(&mut self) -> PlayerSnapshot {
+        if self.youtube.is_active() {
+            return self.build_youtube();
+        }
         let core = &mut self.core;
         let now = core.now_playing();
         let rows = core.queue_rows();
@@ -551,7 +610,312 @@ impl Actor {
                 tracing::warn!("player session not saved: {error:#}");
             }
         }
+        self.youtube.stop();
+        self.run_youtube_effects();
+        self.yt = None;
         self.engine = None;
+    }
+}
+
+/// The YouTube lane: commands for YouTube tracks go to it, transport goes to it while it is active, and any
+/// Spotify play stops it.
+impl Actor {
+    fn youtube_message(&mut self, message: YtMsg) {
+        match message {
+            YtMsg::Enable(link) => {
+                link.engine.send(YtCommand::Volume(self.core.volume));
+                link.engine.set_levels_wanted(self.core.levels_wanted);
+                self.yt = Some(link);
+            }
+            YtMsg::Resolved { seq, result } => self.youtube.resolved(seq, result),
+            YtMsg::Event { seq, event } => self.youtube.event(seq, event),
+        }
+    }
+
+    /// YouTube starts playing: Spotify pauses here or on the remote device.
+    fn youtube_takes_over(&mut self) -> bool {
+        if self.yt.is_none() {
+            self.pending.push(PlayerEvent::Notice(mf_i18n::t("YouTube playback isn't available")));
+            return false;
+        }
+        self.core.pause();
+        self.yt_spotify_sequence = self.core.local.track_sequence;
+        true
+    }
+
+    /// Spotify and YouTube songs never share a queue.
+    fn mixed_queue_notice(&mut self) {
+        self.pending.push(PlayerEvent::Notice(mf_i18n::t("Spotify and YouTube songs can't share a queue")));
+    }
+
+    /// Handles what belongs to the lane; returns the command for `Core` otherwise.
+    fn youtube_command(&mut self, command: Command) -> Option<Command> {
+        let active = self.youtube.is_active();
+        match command {
+            Command::PlayItems { items, row, context } if items.get(row).is_some_and(|item| is_lane_track(&item.uri)) => {
+                if self.youtube_takes_over() {
+                    self.youtube.play_items(items, row, context);
+                }
+                None
+            }
+            Command::ShuffleFrom { items, context }
+                if items.iter().find(|item| item.available).is_some_and(|item| is_lane_track(&item.uri)) =>
+            {
+                if self.youtube_takes_over() {
+                    self.youtube.shuffle_from(items, context);
+                }
+                None
+            }
+            Command::PlayUris { uris, index, context } if uris.get(index).is_some_and(|uri| is_lane_track(uri)) => {
+                if self.youtube_takes_over() {
+                    self.youtube.play_uris(uris, index, context);
+                }
+                None
+            }
+            Command::PlayContext { context, .. }
+                if context.context_uri.as_deref().is_some_and(|uri| uri.starts_with("youtube:")) =>
+            {
+                // YouTube contexts are expanded into tracks by the services (Phase 4)
+                tracing::debug!("youtube context {:?} is not played by uri", context.context_uri);
+                None
+            }
+            Command::Remember(item) if is_lane_track(&item.uri) => None,
+            Command::ExtendContext { context_uri, items } => {
+                self.youtube.extend_context(&context_uri, items);
+                None
+            }
+            command @ (Command::PlayItems { .. }
+            | Command::ShuffleFrom { .. }
+            | Command::PlayContext { .. }
+            | Command::PlayUris { .. }
+            | Command::PlayEpisode { .. }
+            | Command::TransferHere(_)
+            | Command::TransferTo(..)) => {
+                self.youtube.stop();
+                Some(command)
+            }
+            Command::AddToQueue(items) => {
+                let (youtube, spotify): (Vec<TrackItem>, Vec<TrackItem>) =
+                    items.into_iter().partition(|item| is_lane_track(&item.uri));
+                let (ours, theirs) = if active { (youtube, spotify) } else { (spotify, youtube) };
+                if !theirs.is_empty() {
+                    self.mixed_queue_notice();
+                }
+                if active {
+                    self.youtube.add(ours);
+                    None
+                } else {
+                    (!ours.is_empty()).then_some(Command::AddToQueue(ours))
+                }
+            }
+            Command::AddUriToQueue(uri) if active || is_lane_track(&uri) => {
+                if active && is_lane_track(&uri) {
+                    let id = crate::engine::youtube::lane_track_id(&uri).unwrap_or_default().to_owned();
+                    self.youtube.add(vec![TrackItem { track_id: id, uri, available: true, ..Default::default() }]);
+                } else {
+                    self.mixed_queue_notice();
+                }
+                None
+            }
+            Command::InsertManual { item, at } if active || is_lane_track(&item.uri) => {
+                if active && is_lane_track(&item.uri) {
+                    self.youtube.insert_manual(*item, at);
+                } else {
+                    self.mixed_queue_notice();
+                }
+                None
+            }
+            Command::SetVolume(value) => {
+                if let Some(yt) = &self.yt {
+                    yt.engine.send(YtCommand::Volume(crate::volume_to_u16(value)));
+                }
+                Some(Command::SetVolume(value))
+            }
+            Command::SetLevelsWanted(value) => {
+                if let Some(yt) = &self.yt {
+                    yt.engine.set_levels_wanted(value);
+                }
+                Some(Command::SetLevelsWanted(value))
+            }
+            command if !active => Some(command),
+            Command::PlayIndex(index) => {
+                self.youtube.play_index(index);
+                None
+            }
+            Command::PlayQueueRow(uid) => {
+                self.youtube.play_row(uid);
+                None
+            }
+            Command::MoveManual { from, to } => {
+                self.youtube.move_manual(from, to);
+                None
+            }
+            Command::MoveContext { from, to } => {
+                self.youtube.move_context(from, to);
+                None
+            }
+            Command::ClearManualQueue => {
+                self.youtube.clear_manual();
+                None
+            }
+            Command::RefreshQueue => None,
+            Command::TogglePlay => {
+                self.youtube.toggle();
+                None
+            }
+            Command::Play => {
+                self.youtube.play();
+                None
+            }
+            Command::Pause | Command::Stop => {
+                self.youtube.pause();
+                None
+            }
+            Command::Next => {
+                self.youtube.next();
+                None
+            }
+            Command::Previous => {
+                self.youtube.previous();
+                None
+            }
+            Command::Seek(fraction) => {
+                let position = (fraction.clamp(0.0, 1.0) * self.youtube.duration_ms() as f64).round() as u64;
+                self.youtube.seek(position);
+                None
+            }
+            Command::SeekMs(ms) => {
+                self.youtube.seek(ms.max(0) as u64);
+                None
+            }
+            Command::SeekRelative(delta) => {
+                self.youtube.seek_relative(delta);
+                None
+            }
+            Command::CycleRepeat => {
+                let repeat = self.youtube.repeat().cycled();
+                self.youtube.set_repeat(repeat);
+                None
+            }
+            Command::SetRepeat(repeat) => {
+                self.youtube.set_repeat(repeat);
+                None
+            }
+            Command::SetShuffle(value) => {
+                self.youtube.set_shuffle(value);
+                None
+            }
+            command => Some(command),
+        }
+    }
+
+    fn run_youtube_effects(&mut self) {
+        for effect in self.youtube.take_effects() {
+            match effect {
+                YtEffect::Resolve { seq, request } => match &self.yt {
+                    Some(yt) => {
+                        let source = yt.source.clone();
+                        let tx = self.tx.clone();
+                        tokio::spawn(async move {
+                            let result = source.resolve_track(request).await;
+                            let _ = tx.send(Msg::YouTube(YtMsg::Resolved { seq, result }));
+                        });
+                    }
+                    None => tracing::debug!("youtube is off, {} not resolved", request.video_id),
+                },
+                YtEffect::Prefetch(request) => {
+                    if let Some(yt) = &self.yt {
+                        tokio::spawn(yt.source.prefetch_track(request));
+                    }
+                }
+                YtEffect::Invalidate(video_id) => {
+                    if let Some(yt) = &self.yt {
+                        yt.source.invalidate(&video_id);
+                    }
+                }
+                YtEffect::Engine(command) => match &self.yt {
+                    Some(yt) => yt.engine.send(command),
+                    None => tracing::debug!("youtube is off, command {command:?} skipped"),
+                },
+                YtEffect::Cover(url) => {
+                    if self.youtube.is_active() {
+                        self.cover(url);
+                    }
+                }
+                YtEffect::Started(started) => self.pending.push(PlayerEvent::TrackStarted((*started).into())),
+                YtEffect::Ended(ended) => self.pending.push(PlayerEvent::TrackEnded((*ended).into())),
+            }
+        }
+        // the lane stopped: the Spotify track's cover again
+        let active = self.youtube.is_active();
+        if self.yt_was_active && !active {
+            self.cover(self.core_cover.clone());
+        }
+        self.yt_was_active = active;
+    }
+
+    /// The snapshot while the lane plays: everything from the lane, the device is this computer.
+    fn build_youtube(&mut self) -> PlayerSnapshot {
+        let lane = &self.youtube;
+        let core = &self.core;
+        let rows = lane.rows();
+        let queue = if rows.as_slice() == self.published.queue.as_slice() {
+            self.published.queue.clone()
+        } else {
+            Arc::new(rows)
+        };
+        let context_remaining = queue.iter().filter(|row| row.section == QueueSection::Context).count() as i32;
+        let manual_count = lane.manual_count() as i32;
+        let volume = crate::volume_from_u16(core.volume);
+        let name = if core.local_device_name.is_empty() {
+            mf_i18n::t("This computer")
+        } else {
+            core.local_device_name.clone()
+        };
+        let device = DeviceItem {
+            id: core.local_device_id.clone().unwrap_or_default(),
+            name,
+            kind: "computer".into(),
+            is_active: true,
+            is_this_computer: true,
+            is_restricted: false,
+            supports_volume: true,
+            volume: (volume * 100.0).round() as i32,
+            source: "youtube".into(),
+        };
+        PlayerSnapshot {
+            track: lane.track().cloned(),
+            codec: lane.stream().map(|stream| stream.quality_label()).unwrap_or_default(),
+            cover_file: self.cover_file.clone(),
+            playing: lane.playing(),
+            buffering: lane.loading(),
+            narrating: false,
+            position_ms: lane.position_ms() as i64,
+            duration_ms: lane.duration_ms() as i64,
+            volume,
+            shuffle: lane.shuffle(),
+            repeat: lane.repeat(),
+            current_index: if queue.first().is_some_and(|row| row.section == QueueSection::Current) { 0 } else { -1 },
+            error_text: lane.error().to_owned(),
+            direction: lane.direction(),
+            level: self.level,
+            levels_wanted: core.levels_wanted,
+            context: lane.context().clone(),
+            played_seconds: lane.played_seconds(),
+            device: Some(device),
+            target: Target::Local,
+            is_local: true,
+            local: core.local_playback.clone(),
+            can_control: true,
+            can_set_volume: true,
+            transferring: false,
+            device_lost: false,
+            context_remaining,
+            manual_count,
+            can_clear_queue: manual_count > 0,
+            queue_reorderable: true,
+            queue,
+        }
     }
 }
 

@@ -125,6 +125,11 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "playFrom"]
         unsafe fn play_from(self: Pin<&mut Player>, model: *mut QObject, row: i32);
+        /// Search: the row's song plays now and its YouTube Music radio follows it in the queue (not the other
+        /// results), as in the Android app.
+        #[qinvokable]
+        #[cxx_name = "playRadioFrom"]
+        unsafe fn play_radio_from(self: Pin<&mut Player>, model: *mut QObject, row: i32);
         /// «Перемешать»: включить shuffle и начать со случайного трека модели.
         #[qinvokable]
         #[cxx_name = "shuffleFrom"]
@@ -198,6 +203,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "moveManual"]
         fn move_manual(self: &Player, from: i32, to: i32);
+        /// Reorder within "Next from …" (indices within the context section; YouTube lane only).
+        #[qinvokable]
+        #[cxx_name = "moveContext"]
+        fn move_context(self: &Player, from: i32, to: i32);
         #[qinvokable]
         #[cxx_name = "clearManualQueue"]
         fn clear_manual_queue(self: &Player);
@@ -346,6 +355,55 @@ fn remember_track(uri: &str) {
     }
 }
 
+/// What to do with the songs of a YouTube Music album or playlist once they are read.
+enum YtContextAction {
+    Play { offset: Option<String>, shuffle: bool },
+    Queue,
+}
+
+/// The player cannot open a `youtube:` context itself (no Spotify Connect behind it): its songs are read here
+/// (the library's cached rows, else the catalog: a whole album, a playlist's first page) and played as a list.
+fn youtube_context(uri: String, action: YtContextAction) {
+    let services = &ctx().services;
+    let (library, catalog, player) = (services.library.clone(), services.catalog.clone(), services.player.clone());
+    ctx().rt.spawn(async move {
+        let kind = sf_api::util::uri_kind(&uri).unwrap_or_default().to_owned();
+        let tracks = match kind.as_str() {
+            "album" => catalog.album(&uri).await.map(|page| page.tracks),
+            "track" => catalog.track(&uri).await.map(|track| vec![track]),
+            "playlist" => {
+                let id = md3_model::PlaylistId::from_uri_or_id(&uri);
+                match library.playlist_tracks(&id).filter(|tracks| !tracks.is_empty()) {
+                    Some(tracks) => Ok(tracks),
+                    None => catalog
+                        .youtube_playlist(&uri)
+                        .await
+                        .map(|page| page.tracks.into_iter().map(|row| row.track).collect()),
+                }
+            }
+            _ => return tracing::debug!("youtube context {uri}: nothing to play"),
+        };
+        let tracks: Vec<TrackItem> = match tracks {
+            Ok(tracks) => tracks.into_iter().filter(|track| track.available).collect(),
+            Err(error) => return tracing::warn!("youtube context {uri}: {error}"),
+        };
+        if tracks.is_empty() {
+            return;
+        }
+        let context = PlayContext::with_uri(&kind, uri);
+        match action {
+            YtContextAction::Queue => player.add_to_queue(tracks),
+            YtContextAction::Play { shuffle: true, .. } => player.shuffle_from(tracks, context),
+            YtContextAction::Play { offset, shuffle: false } => {
+                let row = offset
+                    .and_then(|offset| tracks.iter().position(|track| track.play_uri() == offset || track.uri == offset))
+                    .unwrap_or(0);
+                player.play_items(tracks, row, context);
+            }
+        }
+    });
+}
+
 /// {type, uri, title, cover} — карточка «Играет из …»; {} — контекста нет.
 fn context_map(context: &PlayContext) -> QVariantMap {
     let mut map = QVariantMap::default();
@@ -480,6 +538,12 @@ impl qobject::Player {
         }
     }
 
+    unsafe fn play_radio_from(self: Pin<&mut Self>, model: *mut cxx_qt::QObject, row: i32) {
+        let Some((items, _)) = (unsafe { crate::models::tracks_from_model(model) }) else { return };
+        let Some(track) = usize::try_from(row).ok().and_then(|row| items.into_iter().nth(row)) else { return };
+        ctx().services.wave.play_track_radio(track);
+    }
+
     unsafe fn shuffle_from(mut self: Pin<&mut Self>, model: *mut cxx_qt::QObject) {
         let Some((items, context)) = (unsafe { crate::models::tracks_from_model(model) }) else { return };
         if items.is_empty() {
@@ -581,6 +645,9 @@ impl qobject::Player {
         }
         let kind = sf_api::util::uri_kind(&uri).unwrap_or_default().to_owned();
         let offset = offset_uri.to_string();
+        if uri.starts_with("youtube:") {
+            return youtube_context(uri, YtContextAction::Play { offset: (!offset.is_empty()).then_some(offset), shuffle: false });
+        }
         remember_track(&offset);
         let context = PlayContext::with_uri(&kind, uri);
         ctx().services.player.play_context(context, (!offset.is_empty()).then_some(offset), None);
@@ -590,6 +657,9 @@ impl qobject::Player {
         let uri = uri.to_string();
         if uri.is_empty() {
             return;
+        }
+        if uri.starts_with("youtube:") {
+            return youtube_context(uri, YtContextAction::Play { offset: None, shuffle: true });
         }
         let kind = sf_api::util::uri_kind(&uri).unwrap_or_default().to_owned();
         ctx().services.player.play_context(PlayContext::with_uri(&kind, uri), None, Some(true));
@@ -623,7 +693,11 @@ impl qobject::Player {
     }
 
     fn add_uri_to_queue(&self, uri: &QString) {
-        ctx().services.player.add_uri_to_queue(uri.to_string());
+        let uri = uri.to_string();
+        if uri.starts_with("youtube:") {
+            return youtube_context(uri, YtContextAction::Queue);
+        }
+        ctx().services.player.add_uri_to_queue(uri);
     }
 
     fn insert_manual(&self, track: &QVariantMap, at: i32) {
@@ -635,6 +709,12 @@ impl qobject::Player {
     fn move_manual(&self, from: i32, to: i32) {
         if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
             ctx().services.player.move_manual(from, to);
+        }
+    }
+
+    fn move_context(&self, from: i32, to: i32) {
+        if let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) {
+            ctx().services.player.move_context(from, to);
         }
     }
 

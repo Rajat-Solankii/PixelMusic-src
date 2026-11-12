@@ -2537,6 +2537,297 @@ mod actor {
         assert!(events.iter().any(|event| matches!(event, PlayerEvent::Notice(text) if text.contains("Choose a device"))));
         let _ = rig.tx.send(Msg::Restore(None));
     }
+    // ---- YouTube: its own lane beside Core, over a fake stream source and a recording player ----
+
+    use crate::engine::youtube::{StreamSource, YtCommand, YtEvent, YtStream};
+    use crate::state::youtube::{YtEngine, YtLink, YtMsg};
+    use md3_model::TrackItem;
+
+    #[derive(Default)]
+    struct FakeSource {
+        resolved: Mutex<Vec<String>>,
+        invalidated: Mutex<Vec<String>>,
+    }
+
+    impl StreamSource for FakeSource {
+        fn resolve(&self, video_id: String) -> crate::engine::youtube::BoxFuture<Result<YtStream, String>> {
+            self.resolved.lock().unwrap().push(video_id.clone());
+            Box::pin(async move {
+                if video_id == "broken" {
+                    return Err("This song can't be played.".to_owned());
+                }
+                Ok(YtStream {
+                    url: format!("https://example.invalid/{video_id}"),
+                    codecs: "mp4a.40.2".into(),
+                    bitrate: 128_000,
+                    duration_ms: 200_000,
+                    title: format!("Title {video_id}"),
+                    author: "Author".into(),
+                    video_id,
+                    ..Default::default()
+                })
+            })
+        }
+
+        fn invalidate(&self, video_id: &str) {
+            self.invalidated.lock().unwrap().push(video_id.to_owned());
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeYt {
+        commands: Mutex<Vec<YtCommand>>,
+    }
+
+    impl YtEngine for FakeYt {
+        fn send(&self, command: YtCommand) {
+            self.commands.lock().unwrap().push(command);
+        }
+
+        fn level(&self) -> f64 {
+            0.25
+        }
+    }
+
+    impl FakeYt {
+        fn take(&self) -> Vec<YtCommand> {
+            std::mem::take(&mut *self.commands.lock().unwrap())
+        }
+
+        /// The sequence number of the last load.
+        fn last_load(&self) -> Option<u64> {
+            self.commands.lock().unwrap().iter().rev().find_map(|command| match command {
+                YtCommand::Load { seq, .. } => Some(*seq),
+                _ => None,
+            })
+        }
+    }
+
+    fn yt(id: &str) -> TrackItem {
+        TrackItem {
+            track_id: id.into(),
+            uri: format!("youtube:track:{id}"),
+            title: id.to_uppercase(),
+            duration_ms: 200_000,
+            available: true,
+            ..Default::default()
+        }
+    }
+
+    impl Rig {
+        async fn youtube(&mut self) -> (Arc<FakeSource>, Arc<FakeYt>) {
+            let source = Arc::new(FakeSource::default());
+            let player = Arc::new(FakeYt::default());
+            let link = YtLink { source: source.clone(), engine: player.clone() };
+            self.send(Msg::YouTube(YtMsg::Enable(link))).await;
+            (source, player)
+        }
+
+        /// One more round: the resolve answers come back through the channel.
+        async fn settle(&mut self) -> Vec<PlayerEvent> {
+            self.send(Msg::Command(Command::SetAppActive(true))).await
+        }
+
+        fn track_uri(&self) -> Option<String> {
+            self.snapshot.borrow().track.as_ref().map(|track| track.uri.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn youtube_tracks_play_in_their_own_lane_and_pause_spotify() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        rig.playing("spotify:track:a", 1).await;
+        let (source, player) = rig.youtube().await;
+        // the starting volume reaches the YouTube player
+        assert!(matches!(player.take().as_slice(), [YtCommand::Volume(_)]));
+        rig.engine.commands.lock().unwrap().clear();
+
+        rig.send(Msg::Command(Command::PlayItems {
+            items: vec![yt("v1"), yt("v2")],
+            row: 0,
+            context: PlayContext::new("playlist"),
+        }))
+        .await;
+        rig.settle().await;
+        // Spotify paused here, the lane resolved and loaded the first video
+        assert_eq!(rig.engine.commands.lock().unwrap().as_slice(), [PlayerCommand::Toggle]);
+        assert_eq!(source.resolved.lock().unwrap().as_slice(), ["v1"]);
+        let seq = player.last_load().expect("the stream is loaded");
+        assert!(player.take().iter().any(|command| matches!(command, YtCommand::Load { play: true, position_ms: 0, .. })));
+        let snapshot = rig.snapshot.borrow().clone();
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:v1"));
+        assert!(snapshot.buffering && snapshot.is_local && snapshot.target == crate::Target::Local);
+
+        let events = rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Playing { position_ms: 0 } })).await;
+        let snapshot = rig.snapshot.borrow().clone();
+        assert!(snapshot.playing && !snapshot.buffering);
+        assert_eq!(snapshot.codec, "AAC 128");
+        assert_eq!(snapshot.duration_ms, 200_000);
+        assert!(snapshot.device.as_ref().is_some_and(|device| device.is_this_computer));
+        assert_eq!(uris(&snapshot.queue), [
+            (md3_model::QueueSection::Current, "youtube:track:v1".to_owned()),
+            (md3_model::QueueSection::Context, "youtube:track:v2".to_owned()),
+        ]);
+        // the bridge's model follows the lane's rows
+        assert_eq!(rig.model, *snapshot.queue);
+        assert!(events.iter().any(|event| matches!(event, PlayerEvent::TrackStarted(started) if started.track.uri == "youtube:track:v1")));
+    }
+
+    #[tokio::test]
+    async fn transport_goes_to_the_lane_and_old_loads_are_ignored() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        let (_source, player) = rig.youtube().await;
+        rig.send(Msg::Command(Command::PlayItems {
+            items: vec![yt("v1"), yt("v2")],
+            row: 0,
+            context: PlayContext::new("playlist"),
+        }))
+        .await;
+        rig.settle().await;
+        let first = player.last_load().unwrap();
+        rig.send(Msg::YouTube(YtMsg::Event { seq: first, event: YtEvent::Playing { position_ms: 0 } })).await;
+        player.take();
+        rig.engine.commands.lock().unwrap().clear();
+
+        rig.send(Msg::Command(Command::TogglePlay)).await;
+        rig.send(Msg::Command(Command::SetVolume(0.5))).await;
+        let commands = player.take();
+        assert_eq!(commands[0], YtCommand::Pause);
+        assert!(commands.contains(&YtCommand::Volume(crate::volume_to_u16(0.5))));
+        assert!(!rig.snapshot.borrow().playing);
+        // librespot heard nothing but the volume
+        assert!(rig.engine.commands.lock().unwrap().iter().all(|command| matches!(command, PlayerCommand::Volume(_) | PlayerCommand::VolumePreview(_))));
+
+        let events = rig.send(Msg::Command(Command::Next)).await;
+        rig.settle().await;
+        assert!(events.iter().any(|event| matches!(event, PlayerEvent::TrackEnded(ended) if !ended.natural)));
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:v2"));
+        let second = player.last_load().unwrap();
+        assert!(second > first);
+        // the first video's late end must not skip the second
+        rig.send(Msg::YouTube(YtMsg::Event { seq: first, event: YtEvent::Ended })).await;
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:v2"));
+        rig.send(Msg::YouTube(YtMsg::Event { seq: second, event: YtEvent::Ended })).await;
+        // the end of the list: the last track stays, stopped
+        let snapshot = rig.snapshot.borrow().clone();
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:v2"));
+        assert!(!snapshot.playing);
+    }
+
+    #[tokio::test]
+    async fn a_spotify_play_stops_the_lane() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        let (_source, player) = rig.youtube().await;
+        rig.send(Msg::Command(Command::PlayUris {
+            uris: vec!["youtube:track:v1".into()],
+            index: 0,
+            context: PlayContext::new("history"),
+        }))
+        .await;
+        rig.settle().await;
+        let seq = player.last_load().unwrap();
+        rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Playing { position_ms: 0 } })).await;
+        // a URI-only track got its title from the stream
+        assert_eq!(rig.snapshot.borrow().track.as_ref().map(|track| track.title.clone()).as_deref(), Some("Title v1"));
+        player.take();
+
+        let events = rig.send(Msg::Command(Command::PlayItems {
+            items: vec![super::named("spotify:track:s", "S")],
+            row: 0,
+            context: PlayContext::new("search"),
+        }))
+        .await;
+        assert_eq!(player.take(), [YtCommand::Stop]);
+        assert!(events.iter().any(|event| matches!(event, PlayerEvent::TrackEnded(ended) if ended.track.uri == "youtube:track:v1")));
+        assert_ne!(rig.track_uri().as_deref(), Some("youtube:track:v1"));
+    }
+
+    #[tokio::test]
+    async fn a_new_spotify_track_here_stops_the_lane() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        rig.playing("spotify:track:a", 1).await;
+        let (_source, player) = rig.youtube().await;
+        rig.send(Msg::Command(Command::PlayItems { items: vec![yt("v1")], row: 0, context: PlayContext::new("search") }))
+            .await;
+        rig.settle().await;
+        player.take();
+        // the paused Spotify track reporting again changes nothing; a new load (Connect, autoplay) takes over
+        rig.playing("spotify:track:a", 1).await;
+        assert!(player.take().is_empty());
+        rig.playing("spotify:track:b", 2).await;
+        assert_eq!(player.take(), [YtCommand::Stop]);
+        assert_eq!(rig.track_uri().as_deref(), Some("spotify:track:b"));
+    }
+
+    #[tokio::test]
+    async fn youtube_errors_and_missing_player_reach_the_user() {
+        let mut rig = Rig::new();
+        let events = rig.send(Msg::Command(Command::PlayItems {
+            items: vec![yt("v1")],
+            row: 0,
+            context: PlayContext::new("search"),
+        }))
+        .await;
+        assert!(events.iter().any(|event| matches!(event, PlayerEvent::Notice(text) if text.contains("YouTube playback"))));
+        assert!(rig.track_uri().is_none());
+
+        let (source, player) = rig.youtube().await;
+        let mut events = rig
+            .send(Msg::Command(Command::PlayItems { items: vec![yt("broken")], row: 0, context: PlayContext::new("search") }))
+            .await;
+        events.extend(rig.settle().await);
+        assert_eq!(rig.snapshot.borrow().error_text, "This song can't be played.");
+        assert!(events.iter().any(|event| matches!(event, PlayerEvent::ErrorChanged)));
+        assert!(player.last_load().is_none());
+
+        // a player error retries once with a fresh URL
+        rig.send(Msg::Command(Command::PlayItems { items: vec![yt("v1")], row: 0, context: PlayContext::new("search") }))
+            .await;
+        rig.settle().await;
+        let seq = player.last_load().unwrap();
+        rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Error("HTTP 403".into()) })).await;
+        rig.settle().await;
+        assert_eq!(source.invalidated.lock().unwrap().as_slice(), ["v1"]);
+        assert!(player.last_load().unwrap() > seq);
+        assert!(rig.snapshot.borrow().error_text.is_empty());
+        // the retried load failing too is the listener's: the player's own text, no third attempt
+        let retried = player.last_load().unwrap();
+        let text = "YouTube didn't send this song's audio. Try again in a moment.";
+        rig.send(Msg::YouTube(YtMsg::Event { seq: retried, event: YtEvent::Error(text.into()) })).await;
+        rig.settle().await;
+        assert_eq!(rig.snapshot.borrow().error_text, text);
+        assert_eq!(player.last_load(), Some(retried));
+        assert_eq!(source.invalidated.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn spotify_and_youtube_songs_do_not_share_a_queue() {
+        let mut rig = Rig::new();
+        rig.ready().await;
+        let (_source, player) = rig.youtube().await;
+        rig.send(Msg::Command(Command::PlayItems { items: vec![yt("v1")], row: 0, context: PlayContext::new("search") }))
+            .await;
+        rig.settle().await;
+        let seq = player.last_load().unwrap();
+        rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Playing { position_ms: 0 } })).await;
+        let events = rig
+            .send(Msg::Command(Command::AddToQueue(vec![yt("q1"), super::named("spotify:track:s", "S")])))
+            .await;
+        assert!(events.iter().any(|event| matches!(event, PlayerEvent::Notice(text) if text.contains("share a queue"))));
+        let snapshot = rig.snapshot.borrow().clone();
+        assert_eq!(snapshot.manual_count, 1);
+        assert!(snapshot.can_clear_queue && snapshot.queue_reorderable);
+        assert_eq!(rig.model, *snapshot.queue);
+        assert!(!rig.engine.commands.lock().unwrap().iter().any(|command| matches!(command, PlayerCommand::AddToQueue(_))));
+
+        rig.send(Msg::Command(Command::Next)).await;
+        rig.settle().await;
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:q1"));
+    }
 }
 
 /// Пауза, пока грузится следующий трек, — пауза: строка показывает загрузку, а не «играет».

@@ -19,6 +19,8 @@ pub mod session_reads;
 pub mod sink;
 pub mod stretch;
 pub mod vis;
+/// YouTube Music playback beside librespot: ranged download, symphonia AAC decode, own player thread
+pub mod youtube;
 pub mod zeroconf;
 
 pub use player::{

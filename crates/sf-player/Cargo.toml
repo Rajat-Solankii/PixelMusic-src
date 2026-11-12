@@ -34,6 +34,7 @@ librespot-connect.workspace = true
 librespot-metadata.workspace = true
 librespot-protocol.workspace = true
 rodio.workspace = true
+symphonia.workspace = true
 fastframe-audio.workspace = true
 mdns-sd.workspace = true
 aes.workspace = true

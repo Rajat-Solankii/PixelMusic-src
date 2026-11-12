@@ -11,3 +11,5 @@ pub mod map;
 pub mod session;
 #[cfg(test)]
 mod tests;
+/// YouTube Music: the actor's own lane beside `Core`
+pub(crate) mod youtube;

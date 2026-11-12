@@ -310,7 +310,9 @@ Item {
         const L = lines
 
         // Подсветка и заливка идут ровно по синхронизированной позиции: активна всегда строго одна текущая строка
-        const at = pos
+        // untimed lyrics (YouTube Music, kind "plain": every line at t = 0): no line is current, the column stays put
+        const plain = Lyrics.kind === "plain"
+        const at = plain ? -1 : pos
         let i = activeIndex
         if (i >= L.length || (i >= 0 && L[i].t > at) || i < -1) {
             let lo = 0, hi = L.length - 1
@@ -327,7 +329,7 @@ Item {
             activeIndex = i
 
         // Упреждение прокрутки и подготовки входящей строки: колонка и масштаб начинают движение чуть заранее
-        const atScroll = pos + scrollAheadMs / 1000
+        const atScroll = plain ? -1 : pos + scrollAheadMs / 1000
         let si = _targetScrollIndex
         if (si >= L.length || (si >= 0 && L[si].t > atScroll) || si < -1) {
             let lo = 0, hi = L.length - 1
@@ -517,7 +519,9 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 4
-        text: Lyrics.kind === "word" ? I18n.t("{0} · word by word", Lyrics.source) : I18n.t("{0} · line by line", Lyrics.source)
+        text: Lyrics.kind === "word" ? I18n.t("{0} · word by word", Lyrics.source)
+            : Lyrics.kind === "plain" ? I18n.t("{0} · not synced", Lyrics.source)
+            : I18n.t("{0} · line by line", Lyrics.source)
         type: "labelSmall"
         color: Theme.fgSurfaceVariant
         opacity: 0.6

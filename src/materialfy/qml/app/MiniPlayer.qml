@@ -382,6 +382,18 @@ Item {
             Player.addUriToQueue("spotify:" + m[1] + ":" + m[2])
             return true
         }
+        // YouTube / YouTube Music: youtube: URIs, watch / shorts / youtu.be songs, playlist links
+        const t = text.trim()
+        let y = /^youtube:(track|album|playlist):([A-Za-z0-9_-]+)/.exec(t)
+        let uri = y ? "youtube:" + y[1] + ":" + y[2] : ""
+        if (uri === "" && (y = /(?:youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/watch\?(?:[^#]*&)?v=)([A-Za-z0-9_-]+)/.exec(t)))
+            uri = "youtube:track:" + y[1]
+        if (uri === "" && (y = /youtube\.com\/playlist\?(?:[^#]*&)?list=([A-Za-z0-9_-]+)/.exec(t)))
+            uri = "youtube:playlist:" + y[1]
+        if (uri !== "") {
+            Player.addUriToQueue(uri)
+            return true
+        }
         return false
     }
 

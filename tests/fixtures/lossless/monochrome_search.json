@@ -1,0 +1,9 @@
+{
+  "tracks": [
+    { "id": 111, "title": "Bohemian Rhapsody (Live Aid)", "artistNames": ["Queen"], "albumTitle": "Live Aid", "duration": 354000 },
+    { "trackId": "222", "title": "Bohemian Rhapsody", "artistNames": ["Panic! At The Disco"], "albumTitle": "Suicide Squad", "duration": 222000 },
+    { "id": 333, "title": "Bohemian Rhapsody", "artistNames": ["Queen"], "albumTitle": "A Night at the Opera", "duration": 355, "playable": false },
+    { "id": "444", "title": "Bohemian Rhapsody - Remastered 2011", "artistNames": ["Queen"], "albumTitle": "A Night At The Opera (2011 Remaster)", "duration": 354947, "playable": true },
+    { "title": "No id at all", "artistNames": ["Queen"], "duration": 100000 }
+  ]
+}

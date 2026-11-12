@@ -62,6 +62,9 @@ Item {
         if (_episode)
             return []
         const out = [{ id: "radio:track", text: I18n.t("Track radio"), icon: "radio" }]
+        // YouTube Music radio starts from a song only
+        if ((track.uri ?? "").startsWith("youtube:"))
+            return out
         if (_refs.length === 1)
             out.push({ id: "radio:artist:" + _refs[0].id, text: I18n.t("Artist radio"), icon: "person" })
         else if (_refs.length > 1)
@@ -124,12 +127,22 @@ Item {
             if (root.playlistId !== "" && typeof track.pos === "number")
                 items.push({ id: "removefromplaylist", text: I18n.t("Remove from this playlist"), icon: "remove_circle" })
             if (hasAlbum) {
-                const saved = Library.savedRevision >= 0 && Library.isSaved("spotify:album:" + track.albumId)
+                const saved = Library.savedRevision >= 0 && Library.isSaved(((track.uri ?? "").startsWith("youtube:") ? "youtube:album:" : "spotify:album:") + track.albumId)
                 items.push({ id: "save", text: saved ? I18n.t("Remove album from library") : I18n.t("Save album"), icon: saved ? "library_add_check" : "library_add" })
             }
         } else {
             const saved = Library.savedRevision >= 0 && Library.isSaved(track.uri ?? "")
             items.push({ id: "save", text: saved ? I18n.t("Remove episode from library") : I18n.t("Save episode"), icon: saved ? "library_add_check" : "library_add" })
+        }
+        // YouTube Music songs can be saved for playing offline (Downloads)
+        const uri = track.uri ?? ""
+        if (Downloads.revision >= 0 && Downloads.canDownload(uri)) {
+            if (Downloads.isDownloaded(uri))
+                items.push({ id: "download:remove", text: I18n.t("Remove download"), icon: "delete" })
+            else if (Downloads.isPending(uri))
+                items.push({ id: "download:cancel", text: I18n.t("Cancel download"), icon: "close" })
+            else
+                items.push({ id: "download:add", text: I18n.t("Download"), icon: "download" })
         }
         items.push({ id: "share", text: I18n.t("Share"), icon: "share", submenu: _shareItems() })
         if (!_episode && _id !== "" && !_mini)
@@ -155,6 +168,12 @@ Item {
                 root._miniAction(id)
             else if (id === "info")
                 infoDialog.open(root.track)
+            else if (id === "download:add")
+                Downloads.download(root.track)
+            else if (id === "download:remove")
+                Downloads.remove(root.track.uri ?? "")
+            else if (id === "download:cancel")
+                Downloads.cancel(root.track.uri ?? "")
             else
                 root.triggered(id, root.track, item)
         }

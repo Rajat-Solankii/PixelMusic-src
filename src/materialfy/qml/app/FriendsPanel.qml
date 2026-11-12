@@ -52,6 +52,11 @@ SmoothFlickable {
             Layout.fillWidth: true
         }
 
+        // Same-Wi-Fi Jam: no account needed, so it shows signed out too
+        LanJamCard {
+            Layout.fillWidth: true
+        }
+
         // Шапка «Активность друзей»
         RowLayout {
             visible: root.signedIn

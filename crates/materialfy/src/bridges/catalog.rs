@@ -301,6 +301,17 @@ fn signed_in() -> bool {
     ctx().services.auth.is_signed_in()
 }
 
+/// Album / artist page id: a bare YouTube Music browse id (QML passes `albumId` / artist ref ids as they are)
+/// becomes its `youtube:` URI, which the catalog service routes to YouTube; a Spotify id stays as it is.
+fn page_id(kind: &str, id: String) -> String {
+    sf_api::link::youtube_page_uri(kind, &id).unwrap_or(id)
+}
+
+/// YouTube Music pages load without an account; Spotify pages need the Spotify sign-in.
+fn can_load(id: &str) -> bool {
+    id.starts_with("youtube:") || signed_in()
+}
+
 impl qobject::Catalog {
     fn search_tracks_ptr(&self) -> *mut cxx_qt::QObject {
         model_ptr(&self.search_tracks)
@@ -330,7 +341,8 @@ impl qobject::Catalog {
 
     fn open_artist(self: Pin<&mut Self>, artist_id: &QString) {
         if !artist_id.is_empty() {
-            self.navigate("artist", props(&[("artistId", Value::from(artist_id.to_string()))]));
+            let id = page_id("artist", artist_id.to_string());
+            self.navigate("artist", props(&[("artistId", Value::from(id))]));
         }
     }
 
@@ -342,7 +354,7 @@ impl qobject::Catalog {
         if album_id.is_empty() {
             return;
         }
-        let mut pairs = vec![("albumId", Value::from(album_id.to_string()))];
+        let mut pairs = vec![("albumId", Value::from(page_id("album", album_id.to_string())))];
         if !track_id.is_empty() {
             pairs.push(("trackId", Value::from(track_id.to_string())));
         }
@@ -428,6 +440,9 @@ impl qobject::Catalog {
             self.navigate("liked", QVariantMap::default());
             return true;
         }
+        if let Some(uri) = sf_api::link::parse_youtube(text) {
+            return self.open_youtube_uri(uri);
+        }
         if text.starts_with("spotify:station:") {
             let Some(seed) = sf_api::util::station_seed(text) else { return false };
             self.navigate("radio", props(&[("seed", Value::from(seed))]));
@@ -465,13 +480,34 @@ impl qobject::Catalog {
         true
     }
 
+    /// `youtube:<kind>:<id>` (from `sf_api::link::parse_youtube`) → its page; a song opens its album.
+    fn open_youtube_uri(mut self: Pin<&mut Self>, uri: String) -> bool {
+        let Some(kind) = sf_api::util::uri_kind(&uri) else { return false };
+        match kind {
+            "artist" => self.open_artist(&QString::from(uri.as_str())),
+            "album" => self.open_album(&QString::from(uri.as_str())),
+            "playlist" => {
+                let pairs = [
+                    ("playlistId", Value::from(uri.clone())),
+                    ("playlistTitle", Value::from("")),
+                    ("cover", Value::from("")),
+                ];
+                self.navigate("playlist", props(&pairs));
+            }
+            "track" => self.as_mut().open_track(uri),
+            _ => return false,
+        }
+        true
+    }
+
     /// Ссылка на трек → его альбом с подсветкой трека (альбом узнаётся запросом).
+    /// track_id: a Spotify id or a `youtube:track:` URI (a YouTube song without an album is played instead).
     fn open_track(mut self: Pin<&mut Self>, track_id: String) {
         let thread = self.qt_thread();
         let mut this = self.as_mut().rust_mut();
         this.nav += 1;
         let nav = this.nav;
-        if !signed_in() {
+        if !can_load(&track_id) {
             return;
         }
         let catalog = ctx().services.catalog.clone();
@@ -485,10 +521,16 @@ impl qobject::Catalog {
         if nav != self.nav {
             return;
         }
+        let youtube = track_id.starts_with("youtube:");
         match result {
             Ok(track) if !track.album_id.is_empty() => {
+                let album_id = if youtube { format!("youtube:album:{}", track.album_id) } else { track.album_id };
                 let track_id = if track.track_id.is_empty() { track_id } else { track.track_id };
-                self.open_album_at(&QString::from(track.album_id.as_str()), &QString::from(track_id.as_str()));
+                self.open_album_at(&QString::from(album_id.as_str()), &QString::from(track_id.as_str()));
+            }
+            Ok(track) if youtube => {
+                let context = PlayContext::new(md3_model::contexts::TRACKS);
+                ctx().services.player.play_items(vec![track], 0, context);
             }
             Ok(_) => tracing::warn!("track {track_id}: album unknown"),
             Err(error) => tracing::warn!("track {track_id}: {error}"),
@@ -498,11 +540,11 @@ impl qobject::Catalog {
     // --- страницы альбома, исполнителя, шоу, выпуска ---------------------------
 
     fn album(self: Pin<&mut Self>, album_id: &QString) -> *mut cxx_qt::QObject {
-        self.page::<AlbumData>(album_id.to_string())
+        self.page::<AlbumData>(page_id("album", album_id.to_string()))
     }
 
     fn artist(self: Pin<&mut Self>, artist_id: &QString) -> *mut cxx_qt::QObject {
-        self.page::<ArtistData>(artist_id.to_string())
+        self.page::<ArtistData>(page_id("artist", artist_id.to_string()))
     }
 
     fn show(self: Pin<&mut Self>, show_id: &QString) -> *mut cxx_qt::QObject {
@@ -531,7 +573,7 @@ impl qobject::Catalog {
         let again = entry.load != 0;
         entry.load = load;
         entry.stale = false;
-        if !signed_in() {
+        if !can_load(&id) {
             data.fail(&mf_i18n::t(NOT_SIGNED_IN));
             return ptr;
         }
@@ -615,15 +657,24 @@ impl qobject::Catalog {
         if query.is_empty() {
             return self.clear();
         }
-        if !signed_in() {
-            self.as_mut().set_state("error");
-            return self.search_changed();
-        }
+        // Spotify sign-in is gone: search goes to YouTube Music (works without an account too)
         self.as_mut().set_state("loading");
         self.as_mut().search_changed();
         let catalog = ctx().services.catalog.clone();
+        // with "JioSaavn streams" on, its songs follow the catalogue's tracks (they play through the YouTube lane)
+        let saavn = (ctx().services.settings.get_bool(mf_platform::SettingKey::JioSaavnStreams)
+            && matches!(kind, SearchKind::All | SearchKind::Tracks))
+        .then(|| ctx().services.streams.saavn().clone());
         ctx().rt.spawn(async move {
-            let result = catalog.search(&query, kind).await;
+            let saavn_tracks = async {
+                let Some(saavn) = saavn else { return Vec::new() };
+                saavn.search_tracks(&query).await.unwrap_or_else(|error| {
+                    tracing::debug!("jiosaavn search: {error}");
+                    Vec::new()
+                })
+            };
+            let (result, saavn_tracks) = tokio::join!(catalog.search_youtube(&query, kind), saavn_tracks);
+            let result = sf_services::sources::with_saavn_tracks(result, saavn_tracks);
             let _ = thread.queue(move |catalog| catalog.search_done(generation, result));
         });
     }
@@ -714,7 +765,9 @@ impl qobject::Catalog {
         let uri = json_str(&track, "uri");
         let track_id = json_str(&track, "trackId");
         let episode = track.get("isEpisode").and_then(Value::as_bool).unwrap_or(false);
-        let url = if !uri.is_empty() {
+        let url = if uri.starts_with("youtube:") {
+            sf_api::link::youtube_url(&uri).unwrap_or_default()
+        } else if !uri.is_empty() {
             sf_api::util::open_spotify_url(&uri).unwrap_or_default()
         } else if !track_id.is_empty() {
             format!("https://open.spotify.com/{}/{track_id}", if episode { "episode" } else { "track" })
@@ -728,11 +781,16 @@ impl qobject::Catalog {
         if artist_id.is_empty() {
             return QString::default();
         }
+        if let Some(uri) = sf_api::link::youtube_page_uri("artist", &artist_id.to_string()) {
+            return QString::from(sf_api::link::youtube_url(&uri).unwrap_or_default().as_str());
+        }
         QString::from(format!("https://open.spotify.com/artist/{artist_id}").as_str())
     }
 
     fn uri_url(&self, uri: &QString) -> QString {
-        QString::from(sf_api::util::open_spotify_url(&uri.to_string()).unwrap_or_default().as_str())
+        let uri = uri.to_string();
+        let url = if uri.starts_with("youtube:") { sf_api::link::youtube_url(&uri) } else { sf_api::util::open_spotify_url(&uri) };
+        QString::from(url.unwrap_or_default().as_str())
     }
 
     fn request_track_details(self: Pin<&mut Self>, track: &QVariantMap) {

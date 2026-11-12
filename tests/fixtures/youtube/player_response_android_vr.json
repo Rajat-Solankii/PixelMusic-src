@@ -1,0 +1,58 @@
+{
+  "responseContext": { "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D" },
+  "playabilityStatus": {
+    "status": "OK"
+  },
+  "videoDetails": {
+    "videoId": "fJ9rUzIMcZQ",
+    "title": "Bohemian Rhapsody",
+    "lengthSeconds": "355",
+    "author": "Queen",
+    "channelId": "UCiMhD4jzUqG-IgPzUmmytRQ",
+    "viewCount": "1200000000",
+    "thumbnail": {
+      "thumbnails": [
+        { "url": "https://i.ytimg.com/vi/fJ9rUzIMcZQ/hqdefault.jpg", "width": 480, "height": 360 }
+      ]
+    }
+  },
+  "playerConfig": {
+    "audioConfig": {
+      "loudnessDb": -3.2,
+      "perceptualLoudnessDb": -4.1
+    }
+  },
+  "streamingData": {
+    "expiresInSeconds": 21540,
+    "adaptiveFormats": [
+      {
+        "itag": 251,
+        "mimeType": "audio/webm; codecs=\"opus\"",
+        "bitrate": 154238,
+        "averageBitrate": 131234,
+        "contentLength": "5829104",
+        "quality": "tiny",
+        "audioQuality": "AUDIO_QUALITY_MEDIUM",
+        "approxDurationMs": "355000",
+        "audioSampleRate": 48000,
+        "audioChannels": 2,
+        "loudnessDb": -3.2,
+        "url": "https://rr1---sn-4g5ednls.googlevideo.com/videoplayback?expire=1710003600&ei=test_ei&ip=0.0.0.0&id=fJ9rUzIMcZQ&itag=251&source=youtube&requiressl=yes&ratebypass=yes&live=0&sgoap=gir%3Dyes%3Bitag%3D140&fexp=test&c=ANDROID_VR&cver=1.61.48"
+      },
+      {
+        "itag": 140,
+        "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"",
+        "bitrate": 129482,
+        "averageBitrate": 128000,
+        "contentLength": "5690120",
+        "quality": "tiny",
+        "audioQuality": "AUDIO_QUALITY_MEDIUM",
+        "approxDurationMs": "355000",
+        "audioSampleRate": 44100,
+        "audioChannels": 2,
+        "loudnessDb": -3.2,
+        "url": "https://rr1---sn-4g5ednls.googlevideo.com/videoplayback?expire=1710003600&ei=test_ei&ip=0.0.0.0&id=fJ9rUzIMcZQ&itag=140&source=youtube&requiressl=yes&ratebypass=yes&c=ANDROID_VR&cver=1.61.48"
+      }
+    ]
+  }
+}

@@ -26,6 +26,14 @@ jiff.workspace = true
 rand.workspace = true
 fastrand.workspace = true
 reqwest.workspace = true
+regex.workspace = true
+base64.workspace = true
+des.workspace = true
+ecb.workspace = true
+unicode-normalization.workspace = true
+md-5.workspace = true
+symphonia.workspace = true
+rquickjs.workspace = true
 
 [target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
 fastframe-now-playing.workspace = true

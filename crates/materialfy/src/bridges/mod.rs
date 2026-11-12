@@ -6,13 +6,23 @@ pub mod covers;
 pub mod crash_report;
 pub mod data;
 pub mod devices;
+/// downloaded YouTube Music songs and playlists (sf_services::downloads)
+pub mod downloads;
+/// sleep timer, equalizer, listening stats, backup and M3U export
+pub mod extras;
 pub mod home;
+/// same-Wi-Fi Jam (no account)
+pub mod lanjam;
+pub mod lastfm;
 pub mod library;
+pub mod local_files;
 pub mod lyrics;
 pub mod player;
 pub mod radio;
 pub mod releases;
 pub mod settings;
+/// Last.fm feed and Smart Mix (sf_services::lastfm_feed)
+pub mod smart_mix;
 pub mod social;
 pub mod theme;
 pub mod translations;

@@ -38,6 +38,8 @@ futures = "0.3.34"
 reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls-native-roots", "json", "gzip", "http2", "blocking", "socks", "system-proxy"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
 http = "1"
+# локальный DevTools-порт браузера при входе в YouTube Music (только ws://127.0.0.1)
+tokio-tungstenite = "0.28"
 
 # данные
 serde = { version = "1.0.229", features = ["derive"] }
@@ -47,6 +49,8 @@ jiff = "0.2"
 fastrand = "2.3"
 rand = "0.9"
 regex = "1.13"
+# the YouTube player script and BotGuard run in QuickJS (stream deciphering, PO tokens)
+rquickjs = "0.9"
 unicode-normalization = "0.1.25"
 percent-encoding = "2"
 urlencoding = "2"
@@ -66,6 +70,8 @@ sha2 = "0.10.9"
 md-5 = "0.10.6"
 aes = "0.8.4"
 ecb = { version = "0.1.2", features = ["alloc"] }
+# JioSaavn media URLs (DES-ECB)
+des = "0.8.1"
 ctr = "0.9"
 pbkdf2 = "0.12"
 base64 = "0.22.1"
@@ -79,6 +85,8 @@ librespot-metadata = { version = "0.8", default-features = false }
 librespot-protocol = { version = "0.8", default-features = false }
 # rodio даёт только микшер/очередь; устройство открывает fastframe-audio (cpal 0.18)
 rodio = { version = "0.21", default-features = false }
+# decoded in-process: YouTube and JioSaavn (AAC in MP4), Monochrome (FLAC), local files (also ALAC, WAV/PCM; mp3 and ogg come with librespot)
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "isomp4", "flac", "alac", "wav", "pcm"] }
 # fastframe: только эти два крейта, без egui. rev двигать вместе.
 fastframe-audio = { git = "https://github.com/dennisgr7/fastframe", rev = "f7dc6fbe938e8a953509d110cdba036f537e5b7e" }
 fastframe-now-playing = { git = "https://github.com/dennisgr7/fastframe", rev = "f7dc6fbe938e8a953509d110cdba036f537e5b7e" }

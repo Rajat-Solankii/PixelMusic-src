@@ -153,3 +153,24 @@ async fn applied_proxy_is_published_for_the_shell() {
     assert_eq!(f.settings.get_str(SettingKey::ProxyMode), "socks");
     let _ = std::fs::remove_dir_all(&f.dir);
 }
+
+/// Вход в Spotify убран: кнопки моста не открывают браузер и не меняют состояние.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spotify_sign_in_entry_points_do_nothing() {
+    let f = fixture();
+    let before = f.auth.snapshot();
+    assert_eq!(before.state, AuthState::SignedOut);
+    f.auth.start_login();
+    f.auth.start_web_login();
+    f.auth.authorize_playback();
+    f.auth.set_personal_client_id(Some("dummy-personal-client".into()));
+    f.auth.retry();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let after = f.auth.snapshot();
+    assert_eq!(after, before);
+    assert!(after.auth_url.is_empty());
+    assert_eq!(after.auth_port, 0);
+    assert!(!f.auth.is_signed_in());
+    assert!(f.settings.get_str(SettingKey::WebClientId).is_empty());
+    let _ = std::fs::remove_dir_all(&f.dir);
+}

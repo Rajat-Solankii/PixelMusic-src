@@ -17,15 +17,24 @@ use crate::AppRequest;
 /// не трогает (флаг перезапуска ведёт AuthService).
 pub fn spawn_settings_glue(rt: &Handle, settings: Arc<SettingsStore>, player: PlayerHandle) {
     apply_audio_fx(&settings);
+    apply_eq(&settings);
     let mut changes = settings.subscribe();
     rt.spawn(async move {
         loop {
             match changes.recv().await {
                 Ok(SettingKey::Autoplay) => player.set_autoplay(settings.get_bool(SettingKey::Autoplay)),
                 Ok(SettingKey::PlaybackSpeed | SettingKey::Crossfade | SettingKey::DjVoice) => apply_audio_fx(&settings),
+                Ok(
+                    SettingKey::EqEnabled
+                    | SettingKey::EqPreamp
+                    | SettingKey::EqBands
+                    | SettingKey::AudioBalance
+                    | SettingKey::MonoAudio,
+                ) => apply_eq(&settings),
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     player.set_autoplay(settings.get_bool(SettingKey::Autoplay));
                     apply_audio_fx(&settings);
+                    apply_eq(&settings);
                 }
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Closed) => return,
@@ -41,6 +50,35 @@ fn apply_audio_fx(settings: &SettingsStore) {
     let seconds = settings.get_int(SettingKey::Crossfade).clamp(0, mf_platform::settings::CROSSFADE_MAX_S) as u64;
     fx::set_crossfade(Duration::from_secs(seconds));
     fx::set_dj_voice(settings.get_bool(SettingKey::DjVoice));
+}
+
+/// The one equalizer of the app: the librespot engine (every restart) and the YouTube lane share it, so the
+/// Settings panel changes both at once.
+pub fn shared_eq() -> sf_player::engine::eq::SharedEq {
+    static EQ: std::sync::LazyLock<sf_player::engine::eq::SharedEq> =
+        std::sync::LazyLock::new(sf_player::engine::eq::shared);
+    Arc::clone(&EQ)
+}
+
+/// The stored equalizer settings, as the engine takes them.
+pub fn eq_settings(settings: &SettingsStore) -> sf_player::engine::eq::EqSettings {
+    let bands = mf_platform::settings::eq_bands_from_str(&settings.get_str(SettingKey::EqBands));
+    sf_player::engine::eq::EqSettings::from_stored(
+        settings.get_bool(SettingKey::EqEnabled),
+        settings.get_f64(SettingKey::EqPreamp),
+        &bands,
+        settings.get_f64(SettingKey::AudioBalance),
+        settings.get_bool(SettingKey::MonoAudio),
+    )
+}
+
+/// Equalizer settings → the shared equalizer (the audio threads pick the change up on their next packet).
+fn apply_eq(settings: &SettingsStore) {
+    let next = eq_settings(settings);
+    let eq = shared_eq();
+    if *eq.lock() != next {
+        *eq.lock() = next;
+    }
 }
 
 /// EngineConfig из настроек: имя устройства (DeviceName или DevicesService::default_device_name), битрейт,
@@ -70,7 +108,7 @@ pub fn engine_config(settings: &SettingsStore, proxy: ProxyConfig) -> EngineConf
         audio_cache_limit: Some(cache_mb * 1024 * 1024),
         buffer_ms: sf_player::engine::sink::DEFAULT_BUFFER_MS,
         tap: sf_player::engine::vis::AudioTap::new(),
-        eq: sf_player::engine::eq::shared(),
+        eq: shared_eq(),
         proxy,
     }
 }

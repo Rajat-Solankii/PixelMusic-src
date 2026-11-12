@@ -10,6 +10,8 @@ pub mod engine;
 pub mod handle;
 /// JSON pushes of the dealer (social-connect) for sf-services
 pub mod pushes;
+/// Sleep timer: fade out and pause after N minutes or at the end of the track.
+pub mod sleep;
 /// внутреннее «queue-state»
 pub mod state;
 

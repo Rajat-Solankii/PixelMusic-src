@@ -20,6 +20,9 @@ use crate::auth::AuthService;
 use crate::data::{album_overview, artist_overview, known, pathfinder, podcast_session, route};
 use crate::{ServiceError, lock};
 
+mod yt;
+pub(crate) use yt::service_error as yt_error;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SearchKind {
     #[default]
@@ -449,6 +452,9 @@ impl CatalogService {
     }
 
     pub async fn album(&self, album_id: &str) -> Result<AlbumPage, ServiceError> {
+        if let Some(id) = yt::youtube_id(album_id, "album") {
+            return self.yt_album(id).await;
+        }
         let key = format!("album:{album_id}");
         if let Some(Cached::Album(page)) = self.cached(&key) {
             return Ok(page);
@@ -523,6 +529,9 @@ impl CatalogService {
     }
 
     pub async fn artist(&self, artist_id: &str) -> Result<ArtistPage, ServiceError> {
+        if let Some(id) = yt::youtube_id(artist_id, "artist") {
+            return self.yt_artist(id).await;
+        }
         let key = format!("artist:{artist_id}");
         if let Some(Cached::Artist(page)) = self.cached(&key) {
             return Ok(page);
@@ -818,6 +827,9 @@ impl CatalogService {
     }
 
     pub async fn track(&self, track_id: &str) -> Result<TrackItem, ServiceError> {
+        if let Some(id) = yt::youtube_id(track_id, "track") {
+            return self.yt_track(id).await;
+        }
         let key = format!("track:{track_id}");
         if let Some(Cached::Track(item)) = self.cached(&key) {
             return Ok(item);
@@ -845,6 +857,9 @@ impl CatalogService {
     /// альбом недавно открывали) — разом, каждый не дольше DETAILS_DEADLINE. `album_id` — подсказка из строки
     /// трека (без неё альбом узнаётся из метаданных). Ошибка — только если не ответил никто.
     pub async fn track_details(&self, track_id: &str, album_id: &str) -> Result<TrackDetails, ServiceError> {
+        if sf_api::util::uri_provider(track_id) == Some("youtube") {
+            return Err(ServiceError::Other(mf_i18n::t("Song details aren't available for YouTube Music songs.")));
+        }
         let api = self.auth.api();
         let http = api.http();
         let session = route::account_session(&api, &self.player);

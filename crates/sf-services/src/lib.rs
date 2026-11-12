@@ -13,20 +13,37 @@ pub mod cover_fallback;
 /// внутреннее «services-core»
 pub mod data;
 pub mod devices;
+/// Downloaded YouTube Music songs and playlists (queue, files, index), played from disk by the lane
+pub mod downloads;
 /// внутреннее «services-extra»
 pub mod extra;
 pub mod glue;
 pub mod history;
 pub mod home;
+/// Same-Wi-Fi Jam (no account): HTTP server + UDP beacon, wire-compatible with the Kotlin apps
+pub mod lanjam;
+/// Last.fm scrobbling and "now playing" (session in the credential store, slot LastFm)
+pub mod lastfm;
+/// Last.fm feed (recent tracks, friends, top albums) and Smart Mix playlists
+pub mod lastfm_feed;
 pub mod library;
+/// Music files on this computer: folder scan, tags and covers, played through the YouTube lane
+pub mod local;
 pub mod lyrics;
 /// «Новинки»: «Радар новинок» и свежие релизы исполнителей
 pub mod releases;
 /// Friends (friend activity) and Jam through the session
 pub mod social;
+pub mod sources;
+/// Listening statistics (top tracks, artists, minutes per period) from a local listen log
+pub mod stats;
+/// Desktop extras: settings backup/restore and M3U playlist export
+pub mod transfer;
 /// auto-update from GitHub Releases
 pub mod update;
 pub mod wave;
+/// YouTube Music: InnerTube client, parsers, services, playlist import
+pub mod youtube;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -37,11 +54,15 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use mf_platform::{SettingKey, SettingsStore};
 
-pub use auth::{AuthEvent, AuthService, AuthSnapshot, AuthState, PlaybackAuthState, ProxyInput};
+pub use auth::{
+    AuthEvent, AuthService, AuthSnapshot, AuthState, PlaybackAuthState, ProxyInput, YouTubeAuthEvent, YouTubeAuthSnapshot,
+    YouTubeAuthState,
+};
 pub use sf_auth::{Grant, ManualProxy, ProxyConfig, ProxyMode};
 pub use catalog::{AlbumPage, ArtistPage, CatalogService, EpisodePage, SearchKind, SearchResults, ShowPage};
 pub use devices::{DevicesEvent, DevicesService, DevicesSnapshot};
 pub use history::{HistoryEvent, HistoryService, PlayRecord};
+pub use lastfm::{LastFmEvent, LastFmService, LastFmSnapshot};
 pub use home::{HomeService, HomeSnapshot};
 pub use library::{FeedbackKind, LibraryEvent, LibraryKind, LibraryService, PlaylistInfo};
 pub use lyrics::{LyricsService, LyricsSnapshot, LyricsStatus};
@@ -50,6 +71,7 @@ pub use releases::{NewRelease, ReleasesService, ReleasesSnapshot};
 pub use social::{FriendActivity, Jam, JamMember, SocialService, SocialSnapshot};
 pub use update::{UpdateService, UpdateSnapshot, UpdateState};
 pub use wave::{WaveService, WaveSnapshot};
+pub use youtube::{YouTubeError, YouTubeService};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
@@ -94,8 +116,27 @@ pub struct Services {
     pub devices: Arc<DevicesService>,
     /// friend activity and Jam
     pub social: Arc<SocialService>,
+    /// same-Wi-Fi Jam (no account), beside Spotify's Jam in `social`
+    pub lanjam: Arc<lanjam::LanJamService>,
     /// auto-update (checks start from the Updater bridge, not here)
     pub update: Arc<update::UpdateService>,
+    /// YouTube Music (anonymous until signed in through `auth`); the same Arc as `auth.youtube()`, which
+    /// library, catalog, home, wave, history and lyrics route `youtube:` items to
+    pub youtube: Arc<YouTubeService>,
+    /// music files on this computer (folders from the LocalFolders setting)
+    pub local: Arc<local::LocalFilesService>,
+    /// downloaded YouTube Music songs and playlists (folder and limit from Settings)
+    pub downloads: Arc<downloads::DownloadsService>,
+    /// the lane's stream chain (Monochrome → JioSaavn → YouTube): Settings' Monochrome check and JioSaavn search
+    pub streams: sources::SourceChain,
+    /// Last.fm scrobbling (the Settings card's bridge drives sign-in)
+    pub lastfm: Arc<LastFmService>,
+    /// Last.fm feed and Smart Mix (read calls with the account in `lastfm`)
+    pub lastfm_feed: Arc<lastfm_feed::LastFmFeedService>,
+    /// listening statistics (its own listen log, fed by the player)
+    pub stats: Arc<stats::StatsService>,
+    /// sleep timer over the player (both lanes)
+    pub sleep: sf_player::sleep::SleepTimerHandle,
     pub player: PlayerHandle,
     app_requests: broadcast::Sender<AppRequest>,
     media: Arc<Mutex<Option<glue::MediaStop>>>,
@@ -111,6 +152,37 @@ fn follow_covers_bypass(rt: &Handle, settings: &Arc<SettingsStore>, direct: Arc<
                 Ok(SettingKey::CoversBypassProxy) | Err(broadcast::error::RecvError::Lagged(_)) => {
                     direct.store(settings.get_bool(SettingKey::CoversBypassProxy), std::sync::atomic::Ordering::Relaxed);
                 }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// Settings "YouTube Music data saver", "lossless streams" and "JioSaavn streams" → `YouTubeService` and the
+/// source chain (applies to the next resolved stream).
+fn follow_youtube_data_saver(
+    rt: &Handle,
+    settings: &Arc<SettingsStore>,
+    youtube: Arc<YouTubeService>,
+    chain: sources::SourceChain,
+) {
+    let apply = move |settings: &SettingsStore| {
+        let data_saver = settings.get_bool(SettingKey::YouTubeDataSaver);
+        youtube.set_data_saver(data_saver);
+        chain.set_data_saver(data_saver);
+        chain.set_lossless(settings.get_bool(SettingKey::LosslessStreams));
+        chain.set_saavn(settings.get_bool(SettingKey::JioSaavnStreams));
+        chain.clear();
+    };
+    apply(settings.as_ref());
+    let settings = settings.clone();
+    let mut changes = settings.subscribe();
+    rt.spawn(async move {
+        loop {
+            match changes.recv().await {
+                Ok(SettingKey::YouTubeDataSaver | SettingKey::LosslessStreams | SettingKey::JioSaavnStreams)
+                | Err(broadcast::error::RecvError::Lagged(_)) => apply(settings.as_ref()),
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -140,6 +212,9 @@ impl Services {
         };
         let player = PlayerHandle::start(rt, config, api.clone()).map_err(|e| anyhow::anyhow!("player: {e}"))?;
         let store = sf_auth::Store::with_runtime(mf_platform::dirs::state_dir(), rt.clone());
+        // Last.fm keeps its session in the same credential store (slot LastFm); local playback is reported
+        let lastfm = LastFmService::new(rt.clone(), settings.clone(), http.clone(), store.clone());
+        lastfm.attach_player(player.clone());
         let auth = AuthService::new(rt.clone(), settings.clone(), api.clone(), http.clone(), player.clone(), store);
         let history = HistoryService::new(rt.clone(), auth.clone(), player.clone());
         let library =
@@ -170,8 +245,39 @@ impl Services {
             mf_lyrics::LyricsFetcher::with_source(mf_platform::dirs::cache_subdir("lyrics"), move || http.client())
         };
         let lyrics = LyricsService::new(rt.clone(), player.clone(), fetcher);
+        lyrics.set_youtube(auth.youtube());
         let devices = DevicesService::new(rt.clone(), auth.clone(), player.clone(), settings.clone());
         let social = SocialService::new(rt.clone(), auth.clone(), player.clone());
+        let lanjam = lanjam::LanJamService::new(rt.clone(), Arc::new(player.clone()), lanjam::NetConfig::system());
+        // owned by auth (built over the shared client: the same proxy as the Web API, changes apply at once);
+        // the account is restored into it by auth.start()
+        let youtube = auth.youtube();
+        // YouTube tracks play on this computer through their own output (settings read once at start)
+        let audio_device = settings.get_str(SettingKey::AudioDevice);
+        let output = sf_player::engine::youtube::YtOutput {
+            audio_device: (!audio_device.is_empty()).then_some(audio_device),
+            normalisation: settings.get_bool(SettingKey::Normalisation),
+            eq: glue::shared_eq(),
+            ..Default::default()
+        };
+        // YouTube tracks may play from another catalog's copy (Monochrome FLAC, JioSaavn AAC) when Settings allow
+        let streams = sources::SourceChain::new(youtube.clone(), http.clone());
+        // local files play through the same lane: their URIs are answered with the file, the rest by `streams`
+        let local = local::LocalFilesService::new(rt.clone());
+        let lane_source = local::LaneSource::new(local.clone(), Some(Arc::new(streams.clone())));
+        // downloaded songs play from their files (no network); downloads resolve through `streams`
+        let downloads = downloads::DownloadsService::new(
+            rt.clone(),
+            http.clone(),
+            Arc::new(streams.clone()),
+            mf_platform::dirs::app_data_dir().join("downloads.json"),
+            downloads::config_from_settings(&settings),
+        );
+        downloads::follow_settings(rt, &settings, downloads.clone());
+        let lane_source = downloads::OfflineSource::new(downloads.clone(), lane_source);
+        player.enable_youtube(lane_source, output, http.clone());
+        local::follow_folders_setting(rt, &settings, local.clone());
+        follow_youtube_data_saver(rt, &settings, youtube.clone(), streams.clone());
         glue::spawn_settings_glue(rt, settings.clone(), player.clone());
 
         let (app_requests, _) = broadcast::channel(16);
@@ -180,6 +286,30 @@ impl Services {
             glue::start_media_controls(rt, settings.clone(), player.clone(), app_requests.clone())
         } else {
             None
+        };
+
+        let stats = stats::StatsService::new(rt.clone(), &player);
+        let sleep = sf_player::sleep::SleepTimerHandle::spawn(rt, player.clone());
+        let lastfm_feed = {
+            let lastfm = lastfm.clone();
+            let account: lastfm_feed::AccountSource = Arc::new(move || {
+                let snapshot = lastfm.snapshot();
+                if snapshot.connected { (snapshot.api_key, snapshot.username) } else { Default::default() }
+            });
+            let (yt_search, spotify): (Arc<dyn lastfm_feed::TrackSearch>, Arc<dyn lastfm_feed::TrackSearch>) =
+                (youtube.clone(), catalog.clone());
+            // feed tiles without Last.fm art get their cover from YouTube Music
+            let covers: Arc<dyn lastfm_feed::CoverSearch> = youtube.clone();
+            lastfm_feed::LastFmFeedService::new(
+                rt.clone(),
+                http.clone(),
+                account,
+                Some(yt_search),
+                Some(spotify),
+                Some(player.clone()),
+                Some(covers),
+                Default::default(),
+            )
         };
 
         Ok(Services {
@@ -195,7 +325,16 @@ impl Services {
             history,
             devices,
             social,
+            lanjam,
             update,
+            youtube,
+            local,
+            downloads,
+            streams,
+            lastfm,
+            lastfm_feed,
+            stats,
+            sleep,
             player,
             app_requests,
             media: Arc::new(Mutex::new(media)),
@@ -209,8 +348,10 @@ impl Services {
     /// При выходе (из GUI-потока после exec): сохранить сессию и историю, остановить движок и медиаклавиши.
     /// Блокирует ≤ 2 с.
     pub fn shutdown(&self) {
+        self.lanjam.shutdown();
         self.player.shutdown();
         self.history.flush();
+        self.stats.flush();
         if let Some(stop) = lock(&self.media).take() {
             stop.stop(Duration::from_millis(500));
         }

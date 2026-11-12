@@ -124,6 +124,17 @@ pub enum SettingKey {
     Crossfade,
     /// the DJ's spoken lines between its tracks; changes on the fly
     DjVoice,
+    /// Last.fm: scrobble what plays on this PC (session in sf-auth, slot LastFm); changes on the fly
+    LastFmScrobble,
+    /// Last.fm: send "now playing" when a track starts; changes on the fly
+    LastFmNowPlaying,
+    /// YouTube Music: lower-bitrate audio (about 64 kbps) to save data; changes on the fly
+    YouTubeDataSaver,
+    /// YouTube Music tracks: play a lossless copy (FLAC from the free Monochrome server) when one matches;
+    /// changes on the fly
+    LosslessStreams,
+    /// YouTube Music tracks: play JioSaavn's AAC copy (320 kbps) when one matches; changes on the fly
+    JioSaavnStreams,
     // Spotify Connect и сеть
     /// имя Connect-устройства; "" — «Materialfy · <имя ПК>»
     DeviceName,
@@ -176,6 +187,26 @@ pub enum SettingKey {
     UpdateChannel,
     /// version the user chose to skip ("0.2.0"); "" — none
     SkippedVersion,
+    // Local files
+    /// music folders on this computer, one path per line ("" — none); sf_services::local
+    LocalFolders,
+    // Equalizer (sf_player::engine::eq::EqSettings); all change on the fly
+    EqEnabled,
+    /// -12..12 dB
+    EqPreamp,
+    /// ten band gains in dB, comma-separated ("" — flat); eq_bands_from_str / eq_bands_to_string
+    EqBands,
+    /// name of the preset the bands came from; "" — custom
+    EqPreset,
+    /// -1 (left) .. 1 (right); applies with the equalizer off too
+    AudioBalance,
+    /// mix both channels to mono; applies with the equalizer off too
+    MonoAudio,
+    // Downloads (sf_services::downloads)
+    /// folder for downloaded songs; "" — `app_data_dir()/downloads`
+    DownloadsFolder,
+    /// most space downloads may take, in MB; 0 — no limit
+    DownloadsLimitMb,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -195,7 +226,7 @@ pub enum SettingType {
 }
 
 impl SettingKey {
-    pub const ALL: [SettingKey; 90] = [
+    pub const ALL: [SettingKey; 104] = [
         SettingKey::ThemeMode,
         SettingKey::SchemeVariant,
         SettingKey::AccentFromCover,
@@ -257,6 +288,11 @@ impl SettingKey {
         SettingKey::PlaybackSpeed,
         SettingKey::Crossfade,
         SettingKey::DjVoice,
+        SettingKey::LastFmScrobble,
+        SettingKey::LastFmNowPlaying,
+        SettingKey::YouTubeDataSaver,
+        SettingKey::LosslessStreams,
+        SettingKey::JioSaavnStreams,
         SettingKey::DeviceName,
         SettingKey::WebClientId,
         SettingKey::ApiLimitTipDismissed,
@@ -286,6 +322,15 @@ impl SettingKey {
         SettingKey::AutoUpdateCheck,
         SettingKey::UpdateChannel,
         SettingKey::SkippedVersion,
+        SettingKey::LocalFolders,
+        SettingKey::EqEnabled,
+        SettingKey::EqPreamp,
+        SettingKey::EqBands,
+        SettingKey::EqPreset,
+        SettingKey::AudioBalance,
+        SettingKey::MonoAudio,
+        SettingKey::DownloadsFolder,
+        SettingKey::DownloadsLimitMb,
     ];
 
     /// Имя ключа в хранилище и в QML ("themeMode", …).
@@ -353,6 +398,11 @@ impl SettingKey {
             PlaybackSpeed => "playbackSpeed",
             Crossfade => "crossfade",
             DjVoice => "djVoice",
+            LastFmScrobble => "lastfmScrobble",
+            LastFmNowPlaying => "lastfmNowPlaying",
+            YouTubeDataSaver => "youtubeDataSaver",
+            LosslessStreams => "losslessStreams",
+            JioSaavnStreams => "jioSaavnStreams",
             DeviceName => "deviceName",
             WebClientId => "webClientId",
             ApiLimitTipDismissed => "apiLimitTipDismissed",
@@ -382,6 +432,15 @@ impl SettingKey {
             AutoUpdateCheck => "autoUpdateCheck",
             UpdateChannel => "updateChannel",
             SkippedVersion => "skippedVersion",
+            LocalFolders => "localFolders",
+            EqEnabled => "eqEnabled",
+            EqPreamp => "eqPreamp",
+            EqBands => "eqBands",
+            EqPreset => "eqPreset",
+            AudioBalance => "audioBalance",
+            MonoAudio => "monoAudio",
+            DownloadsFolder => "downloadsFolder",
+            DownloadsLimitMb => "downloadsLimitMb",
         }
     }
 
@@ -463,6 +522,11 @@ impl SettingKey {
             PlaybackSpeed => Float(1.0),
             Crossfade => Int(0),
             DjVoice => Bool(true),
+            LastFmScrobble => Bool(true),
+            LastFmNowPlaying => Bool(true),
+            YouTubeDataSaver => Bool(false),
+            LosslessStreams => Bool(false),
+            JioSaavnStreams => Bool(false),
             DeviceName => Str(String::new()),
             WebClientId => Str(String::new()),
             ApiLimitTipDismissed => Bool(false),
@@ -492,6 +556,15 @@ impl SettingKey {
             AutoUpdateCheck => Bool(true),
             UpdateChannel => Str("stable".into()),
             SkippedVersion => Str(String::new()),
+            LocalFolders => Str(String::new()),
+            EqEnabled => Bool(false),
+            EqPreamp => Float(0.0),
+            EqBands => Str(String::new()),
+            EqPreset => Str(String::new()),
+            AudioBalance => Float(0.0),
+            MonoAudio => Bool(false),
+            DownloadsFolder => Str(String::new()),
+            DownloadsLimitMb => Int(0),
         }
     }
 
@@ -624,6 +697,17 @@ impl SettingKey {
             (SettingKey::UpdateChannel, SettingValue::Str(channel)) => {
                 SettingValue::Str(if channel.trim().eq_ignore_ascii_case("beta") { "beta" } else { "stable" }.into())
             }
+            (SettingKey::EqPreamp, SettingValue::Float(db)) => {
+                SettingValue::Float(if db.is_finite() { db.clamp(-EQ_RANGE_DB, EQ_RANGE_DB) } else { 0.0 })
+            }
+            (SettingKey::AudioBalance, SettingValue::Float(b)) => {
+                SettingValue::Float(if b.is_finite() { b.clamp(-1.0, 1.0) } else { 0.0 })
+            }
+            (SettingKey::EqBands, SettingValue::Str(s)) => SettingValue::Str(if s.trim().is_empty() {
+                String::new()
+            } else {
+                eq_bands_to_string(&eq_bands_from_str(&s))
+            }),
             (_, value) => value,
         }
     }
@@ -631,6 +715,34 @@ impl SettingKey {
 
 /// Самый длинный кроссфейд, секунды.
 pub const CROSSFADE_MAX_S: i64 = 12;
+
+/// How far an equalizer band or the preamp goes either way, dB (sf_player::engine::eq::RANGE_DB).
+pub const EQ_RANGE_DB: f64 = 12.0;
+/// Number of equalizer bands.
+pub const EQ_BAND_COUNT: usize = 10;
+
+/// The ten band gains stored under [`SettingKey::EqBands`]; missing or broken entries are flat.
+pub fn eq_bands_from_str(s: &str) -> [f64; EQ_BAND_COUNT] {
+    let mut bands = [0.0; EQ_BAND_COUNT];
+    for (band, part) in bands.iter_mut().zip(s.split(',')) {
+        if let Ok(db) = part.trim().parse::<f64>()
+            && db.is_finite()
+        {
+            *band = (db.clamp(-EQ_RANGE_DB, EQ_RANGE_DB) * 10.0).round() / 10.0;
+        }
+    }
+    bands
+}
+
+/// The stored form of the band gains, one decimal each.
+pub fn eq_bands_to_string(bands: &[f64]) -> String {
+    bands
+        .iter()
+        .take(EQ_BAND_COUNT)
+        .map(|db| format!("{:.1}", if db.is_finite() { db.clamp(-EQ_RANGE_DB, EQ_RANGE_DB) } else { 0.0 }))
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 /// Битрейты librespot, кбит/с.
 pub const BITRATES: [i64; 3] = [96, 160, 320];
@@ -1242,7 +1354,9 @@ mod tests {
 
     #[test]
     fn schema() {
-        assert_eq!(SettingKey::ALL.len(), 90);
+        // every key once, under its own name (the array length itself is checked by the compiler)
+        let names: std::collections::HashSet<_> = SettingKey::ALL.iter().map(|key| key.name()).collect();
+        assert_eq!(names.len(), SettingKey::ALL.len());
         for key in SettingKey::ALL {
             assert_eq!(SettingKey::from_name(key.name()), Some(key));
             assert_eq!(key.default_value().value_type(), key.value_type());
@@ -1595,7 +1709,7 @@ mod tests {
             "librarySort", "homeHidden", "homeRadioHidden", "sidebarLibrary", "bitrate", "normalisation", "gapless", "autoplay", "volume", "audioDevice",
             "audioCache", "audioCacheMb", "playbackAuthorized", "deviceName", "webClientId", "apiLimitTipDismissed", "proxyMode", "proxyHost",
             "proxyPort", "proxyUsername", "coversBypassProxy", "pins", "hiddenTracks", "radioSeeds", "language", "uiScale", "autoUpdateCheck",
-            "updateChannel", "skippedVersion",
+            "updateChannel", "skippedVersion", "localFolders", "youtubeDataSaver", "lastfmScrobble", "lastfmNowPlaying",
         ] {
             assert!(names.contains(&name), "{name}");
         }
@@ -1657,5 +1771,21 @@ mod tests {
         assert!(store.set(SettingKey::WindowHeight, SettingValue::Int(900)));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[General]\nwindowHeight=900\n");
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn equalizer_settings_are_kept_in_range() {
+        let store = SettingsStore::in_memory();
+        assert!(!store.get_bool(SettingKey::EqEnabled));
+        assert_eq!(eq_bands_from_str(&store.get_str(SettingKey::EqBands)), [0.0; EQ_BAND_COUNT]);
+        assert!(store.set(SettingKey::EqPreamp, SettingValue::Float(30.0)));
+        assert_eq!(store.get_f64(SettingKey::EqPreamp), 12.0);
+        assert!(store.set(SettingKey::AudioBalance, SettingValue::Float(-3.0)));
+        assert_eq!(store.get_f64(SettingKey::AudioBalance), -1.0);
+        assert!(store.set(SettingKey::EqBands, SettingValue::Str("3, -20, x, 4.26".into())));
+        assert_eq!(store.get_str(SettingKey::EqBands), "3.0,-12.0,0.0,4.3,0.0,0.0,0.0,0.0,0.0,0.0");
+        let bands = eq_bands_from_str(&store.get_str(SettingKey::EqBands));
+        assert_eq!(bands[..4], [3.0, -12.0, 0.0, 4.3]);
+        assert_eq!(eq_bands_from_str(&eq_bands_to_string(&bands)), bands);
     }
 }

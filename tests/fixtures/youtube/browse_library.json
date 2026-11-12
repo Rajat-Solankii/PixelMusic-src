@@ -1,0 +1,68 @@
+{
+  "responseContext": {
+    "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D"
+  },
+  "contents": {
+    "singleColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "content": {
+              "sectionListRenderer": {
+                "contents": [
+                  {
+                    "gridRenderer": {
+                      "items": [
+                        {
+                          "musicTwoRowItemRenderer": {
+                            "title": { "runs": [{ "text": "Chill Lofi Beats" }] },
+                            "subtitle": { "runs": [{ "text": "Playlist • 45 songs" }] },
+                            "navigationEndpoint": {
+                              "browseEndpoint": {
+                                "browseId": "VLPL1234567890abcdef"
+                              }
+                            },
+                            "thumbnailRenderer": {
+                              "musicThumbnailRenderer": {
+                                "thumbnail": {
+                                  "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/cover1_small.jpg", "width": 226, "height": 226 },
+                                    { "url": "https://lh3.googleusercontent.com/cover1_large.jpg", "width": 544, "height": 544 }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "musicTwoRowItemRenderer": {
+                            "title": { "runs": [{ "text": "Synthwave Drive" }] },
+                            "subtitle": { "runs": [{ "text": "Playlist • 80 songs" }] },
+                            "navigationEndpoint": {
+                              "browseEndpoint": {
+                                "browseId": "VLPLsynthwave999xyz"
+                              }
+                            },
+                            "thumbnailRenderer": {
+                              "musicThumbnailRenderer": {
+                                "thumbnail": {
+                                  "thumbnails": [
+                                    { "url": "https://lh3.googleusercontent.com/synth_cover.jpg", "width": 544, "height": 544 }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

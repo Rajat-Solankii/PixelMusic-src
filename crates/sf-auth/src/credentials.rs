@@ -15,7 +15,9 @@ use librespot_core::authentication::Credentials;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::oauth::{DEFAULT_WEB_CLIENT_ID, StoredToken};
+use crate::oauth::StoredToken;
+use crate::lastfm::LastFmAccount;
+use crate::youtube::YouTubeAccount;
 
 /// Имя сервиса в хранилище ОС (Windows Credential Manager и т. п.).
 pub const SERVICE: &str = "materialfy";
@@ -29,11 +31,17 @@ pub enum Slot {
     Personal,
     Playback,
     Proxy,
+    #[serde(rename = "youtube")]
+    YouTube,
+    #[serde(rename = "lastfm")]
+    LastFm,
 }
 
 impl Slot {
+    pub const COUNT: usize = 6;
     pub const SPOTIFY: [Self; 3] = [Self::Shared, Self::Personal, Self::Playback];
-    pub const ALL: [Self; 4] = [Self::Shared, Self::Personal, Self::Playback, Self::Proxy];
+    pub const ALL: [Self; Self::COUNT] =
+        [Self::Shared, Self::Personal, Self::Playback, Self::Proxy, Self::YouTube, Self::LastFm];
 
     fn index(self) -> usize {
         self as usize
@@ -45,6 +53,8 @@ impl Slot {
             Self::Personal => "personal-web",
             Self::Playback => "playback",
             Self::Proxy => "proxy-password",
+            Self::YouTube => "youtube",
+            Self::LastFm => "lastfm",
         }
     }
 }
@@ -55,17 +65,23 @@ pub enum Grant {
     Web(StoredToken),
     Playback(Credentials),
     Proxy(ProxyPassword),
+    YouTube(YouTubeAccount),
+    LastFm(LastFmAccount),
 }
 
 impl Grant {
     fn valid_for(&self, slot: Slot) -> bool {
         match (slot, self) {
-            (Slot::Shared, Self::Web(token)) => token.client_id == DEFAULT_WEB_CLIENT_ID && !token.refresh_token.is_empty(),
-            (Slot::Personal, Self::Web(token)) => !token.client_id.is_empty() && !token.refresh_token.is_empty(),
+            (Slot::Shared | Slot::Personal, Self::Web(token)) => {
+                !token.client_id.is_empty() && !token.refresh_token.is_empty()
+            }
             (Slot::Playback, Self::Playback(credentials)) => {
                 credentials.username.as_deref().is_some_and(|name| !name.is_empty()) && !credentials.auth_data.is_empty()
             }
             (Slot::Proxy, Self::Proxy(password)) => password.valid(),
+            (Slot::YouTube, Self::YouTube(account)) => account.sapisid().is_some(),
+            // the keys alone are saved before the browser sign-in
+            (Slot::LastFm, Self::LastFm(account)) => account.has_keys(),
             _ => false,
         }
     }
@@ -240,7 +256,7 @@ type Job = Box<dyn FnOnce(&mut dyn ProtectedStore) + Send>;
 struct Inner {
     state_dir: PathBuf,
     profile: String,
-    generations: [AtomicU64; 4],
+    generations: [AtomicU64; Slot::COUNT],
     // только вокруг крошечных файлов-маркеров, никогда вокруг вызова хранилища ОС
     markers: Mutex<()>,
     jobs: mpsc::SyncSender<Job>,
@@ -506,6 +522,9 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
+    /// Client ID общего приложения в тестах (встроенных Client ID больше нет).
+    const DUMMY_SHARED_CLIENT: &str = "dummy-shared-client";
+
     #[derive(Default)]
     struct Fake {
         values: HashMap<String, Vec<u8>>,
@@ -623,10 +642,58 @@ mod tests {
         })
     }
 
+    fn youtube() -> Grant {
+        Grant::YouTube(YouTubeAccount::from_cookie_string("SAPISID=dummy-sapisid; SID=dummy-sid").unwrap())
+    }
+
+    #[tokio::test]
+    async fn youtube_sign_out_leaves_spotify_and_the_proxy_alone() {
+        let f = Fixture::new();
+        let spotify = web(DUMMY_SHARED_CLIENT);
+        f.store.lease(Slot::Shared).save(spotify.clone()).await.unwrap();
+        f.store.lease(Slot::YouTube).save(youtube()).await.unwrap();
+        assert_eq!(f.store.lease(Slot::YouTube).save(web(DUMMY_SHARED_CLIENT)).await, Err(Error::Invalid));
+        f.store.revoke(Slot::YouTube).unwrap();
+        f.store.lease(Slot::YouTube).delete().await.unwrap();
+        let restarted = f.restart();
+        assert!(restarted.lease(Slot::YouTube).load().await.unwrap().grant.is_none());
+        assert!(restarted.lease(Slot::Shared).load().await.unwrap().grant == Some(spotify));
+        // выход из Spotify не трогает YouTube
+        f.store.lease(Slot::YouTube).save(youtube()).await.unwrap();
+        f.store.revoke_spotify().unwrap();
+        assert!(f.restart().lease(Slot::YouTube).load().await.unwrap().grant == Some(youtube()));
+    }
+
+    fn lastfm() -> Grant {
+        let mut account = LastFmAccount::new("dummy-lastfm-key", "dummy-lastfm-secret");
+        account.session_key = "dummy-lastfm-session".into();
+        account.username = "dummy-listener".into();
+        Grant::LastFm(account)
+    }
+
+    #[tokio::test]
+    async fn lastfm_keeps_its_own_slot() {
+        let f = Fixture::new();
+        // keys only (before the browser sign-in) are a valid record; an empty secret is not
+        let keys = Grant::LastFm(LastFmAccount::new("dummy-lastfm-key", "dummy-lastfm-secret"));
+        f.store.lease(Slot::LastFm).save(keys.clone()).await.unwrap();
+        let empty = Grant::LastFm(LastFmAccount::new("dummy-lastfm-key", ""));
+        assert_eq!(f.store.lease(Slot::LastFm).save(empty).await, Err(Error::Invalid));
+        assert_eq!(f.store.lease(Slot::LastFm).save(youtube()).await, Err(Error::Invalid));
+        f.store.lease(Slot::LastFm).save(lastfm()).await.unwrap();
+        // signing out of Spotify or YouTube leaves Last.fm connected
+        f.store.revoke_spotify().unwrap();
+        f.store.revoke(Slot::YouTube).unwrap();
+        assert!(f.restart().lease(Slot::LastFm).load().await.unwrap().grant == Some(lastfm()));
+        f.store.revoke(Slot::LastFm).unwrap();
+        f.store.lease(Slot::LastFm).delete().await.unwrap();
+        assert!(f.restart().lease(Slot::LastFm).load().await.unwrap().grant.is_none());
+    }
+
     #[tokio::test]
     async fn a_recorded_credential_profile_keeps_grants_and_revocation_markers() {
         let fixture = Fixture::new();
-        let grant = web(DEFAULT_WEB_CLIENT_ID);
+        let grant = web(DUMMY_SHARED_CLIENT);
         fixture.store.lease(Slot::Shared).save(grant.clone()).await.unwrap();
         fixture.store.revoke(Slot::Playback).unwrap();
         // профиль, перенесённый в другой каталог, хранит идентичность исходного — гранты остаются доступны
@@ -642,7 +709,8 @@ mod tests {
     #[tokio::test]
     async fn all_grants_survive_restart_and_markers_hold_no_secrets() {
         let f = Fixture::new();
-        let grants = [web(DEFAULT_WEB_CLIENT_ID), web("dummy-personal-client"), playback(), proxy_password()];
+        let grants =
+            [web(DUMMY_SHARED_CLIENT), web("dummy-personal-client"), playback(), proxy_password(), youtube(), lastfm()];
         for (slot, grant) in Slot::ALL.into_iter().zip(grants.iter()) {
             f.store.lease(slot).save(grant.clone()).await.unwrap();
             let marker = std::fs::read_to_string(f.store.marker_path(slot)).unwrap();
@@ -654,7 +722,7 @@ mod tests {
             assert!(loaded.grant == Some(grant));
             assert_eq!(loaded.warning, None);
         }
-        assert_eq!(f.fake.lock().unwrap().values.len(), 4);
+        assert_eq!(f.fake.lock().unwrap().values.len(), Slot::COUNT);
         for slot in Slot::ALL {
             assert_eq!(restarted.lease(slot).slot(), slot);
         }
@@ -663,8 +731,8 @@ mod tests {
     #[tokio::test]
     async fn grants_must_match_their_slot() {
         let f = Fixture::new();
-        assert_eq!(f.store.lease(Slot::Shared).save(web("dummy-personal-client")).await, Err(Error::Invalid));
-        assert_eq!(f.store.lease(Slot::Playback).save(web(DEFAULT_WEB_CLIENT_ID)).await, Err(Error::Invalid));
+        assert_eq!(f.store.lease(Slot::Shared).save(web("")).await, Err(Error::Invalid));
+        assert_eq!(f.store.lease(Slot::Playback).save(web(DUMMY_SHARED_CLIENT)).await, Err(Error::Invalid));
         let broken = Grant::Proxy(ProxyPassword {
             host: "not a host".into(),
             port: 8080,
@@ -680,7 +748,7 @@ mod tests {
         let f = Fixture::new();
         let password = proxy_password();
         f.store.lease(Slot::Proxy).save(password.clone()).await.unwrap();
-        f.store.lease(Slot::Shared).save(web(DEFAULT_WEB_CLIENT_ID)).await.unwrap();
+        f.store.lease(Slot::Shared).save(web(DUMMY_SHARED_CLIENT)).await.unwrap();
         f.store.revoke_spotify().unwrap();
         let restarted = f.restart();
         assert!(restarted.lease(Slot::Proxy).load().await.unwrap().grant == Some(password));
@@ -714,7 +782,8 @@ mod tests {
         .unwrap();
         let store = Store::new(f.state.clone());
         assert_eq!(store.backend_name(), "keyring");
-        let grants = [web(DEFAULT_WEB_CLIENT_ID), web("dummy-personal-client"), playback(), proxy_password()];
+        let grants =
+            [web(DUMMY_SHARED_CLIENT), web("dummy-personal-client"), playback(), proxy_password(), youtube(), lastfm()];
         for (slot, grant) in Slot::ALL.into_iter().zip(grants.iter()) {
             store.lease(slot).save(grant.clone()).await.unwrap();
         }
@@ -724,6 +793,8 @@ mod tests {
         }
         store.revoke_spotify().unwrap();
         store.revoke(Slot::Proxy).unwrap();
+        store.revoke(Slot::YouTube).unwrap();
+        store.revoke(Slot::LastFm).unwrap();
         for slot in Slot::ALL {
             let lease = store.lease(slot);
             lease.delete().await.unwrap();
@@ -760,7 +831,7 @@ mod tests {
     async fn save_requires_read_back() {
         let f = Fixture::new();
         f.fake.lock().unwrap().discard_write = true;
-        assert_eq!(f.store.lease(Slot::Shared).save(web(DEFAULT_WEB_CLIENT_ID)).await, Err(Error::Verification));
+        assert_eq!(f.store.lease(Slot::Shared).save(web(DUMMY_SHARED_CLIENT)).await, Err(Error::Verification));
         assert!(!f.store.marker_path(Slot::Shared).exists());
     }
 
@@ -768,7 +839,7 @@ mod tests {
     async fn a_locked_store_reports_and_keeps_nothing() {
         let f = Fixture::new();
         f.fake.lock().unwrap().write_error = Some(Error::Locked);
-        assert_eq!(f.store.lease(Slot::Shared).save(web(DEFAULT_WEB_CLIENT_ID)).await, Err(Error::Locked));
+        assert_eq!(f.store.lease(Slot::Shared).save(web(DUMMY_SHARED_CLIENT)).await, Err(Error::Locked));
         f.fake.lock().unwrap().write_error = None;
         f.fake.lock().unwrap().read_error = Some(Error::Unavailable);
         assert!(matches!(f.store.lease(Slot::Shared).load().await, Err(Error::Unavailable)));
@@ -790,7 +861,7 @@ mod tests {
         }
         let lease = f.store.lease(Slot::Shared);
         let pending_lease = lease.clone();
-        let pending = tokio::spawn(async move { pending_lease.save(web(DEFAULT_WEB_CLIENT_ID)).await });
+        let pending = tokio::spawn(async move { pending_lease.save(web(DUMMY_SHARED_CLIENT)).await });
         entered_rx.await.unwrap();
         f.store.revoke_spotify().unwrap();
         assert!(!lease.current());
@@ -806,7 +877,7 @@ mod tests {
         let lease = f.store.lease(Slot::Shared);
         f.store.invalidate(Slot::Shared);
         assert!(!lease.current());
-        assert_eq!(lease.save(web(DEFAULT_WEB_CLIENT_ID)).await, Err(Error::Stale));
+        assert_eq!(lease.save(web(DUMMY_SHARED_CLIENT)).await, Err(Error::Stale));
         assert!(matches!(lease.load().await, Err(Error::Stale)));
         assert!(f.fake.lock().unwrap().values.is_empty());
     }
@@ -814,7 +885,7 @@ mod tests {
     #[tokio::test]
     async fn failed_native_deletion_remains_revoked_across_restart() {
         let f = Fixture::new();
-        f.store.lease(Slot::Shared).save(web(DEFAULT_WEB_CLIENT_ID)).await.unwrap();
+        f.store.lease(Slot::Shared).save(web(DUMMY_SHARED_CLIENT)).await.unwrap();
         f.fake.lock().unwrap().delete_error = Some(Error::Locked);
         f.store.revoke_spotify().unwrap();
         assert_eq!(f.store.lease(Slot::Shared).delete().await, Err(Error::Locked));
@@ -827,10 +898,10 @@ mod tests {
     #[tokio::test]
     async fn a_new_authorization_after_signout_is_restored() {
         let f = Fixture::new();
-        f.store.lease(Slot::Shared).save(web(DEFAULT_WEB_CLIENT_ID)).await.unwrap();
+        f.store.lease(Slot::Shared).save(web(DUMMY_SHARED_CLIENT)).await.unwrap();
         f.store.revoke_spotify().unwrap();
         f.store.lease(Slot::Shared).delete().await.unwrap();
-        let grant = web(DEFAULT_WEB_CLIENT_ID);
+        let grant = web(DUMMY_SHARED_CLIENT);
         f.store.lease(Slot::Shared).save(grant.clone()).await.unwrap();
         assert!(f.restart().lease(Slot::Shared).load().await.unwrap().grant == Some(grant));
     }
@@ -840,11 +911,11 @@ mod tests {
         let f = Fixture::new();
         let other = Fixture::new();
         let isolated = store_at(&other.state, &f.fake);
-        f.store.lease(Slot::Shared).save(web(DEFAULT_WEB_CLIENT_ID)).await.unwrap();
+        f.store.lease(Slot::Shared).save(web(DUMMY_SHARED_CLIENT)).await.unwrap();
         assert!(isolated.lease(Slot::Shared).load().await.unwrap().grant.is_none());
         for bytes in [
             b"not-json".to_vec(),
-            serde_json::to_vec(&Record { version: 2, slot: Slot::Shared, grant: web(DEFAULT_WEB_CLIENT_ID) }).unwrap(),
+            serde_json::to_vec(&Record { version: 2, slot: Slot::Shared, grant: web(DUMMY_SHARED_CLIENT) }).unwrap(),
             serde_json::to_vec(&Record { version: 1, slot: Slot::Playback, grant: playback() }).unwrap(),
         ] {
             f.fake.lock().unwrap().values.insert(f.store.lease(Slot::Shared).key(), bytes);

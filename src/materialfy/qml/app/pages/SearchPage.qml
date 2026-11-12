@@ -14,13 +14,13 @@ Page {
     property int filter: 0
     readonly property var filters: [
         { text: I18n.t("All"), type: "all" }, { text: I18n.t("Tracks"), type: "tracks" }, { text: I18n.t("Albums"), type: "albums" },
-        { text: I18n.t("Artists"), type: "artists" }, { text: I18n.t("Playlists"), type: "playlists" },
-        { text: I18n.t("Podcasts"), type: "shows" }, { text: I18n.t("Episodes"), type: "episodes" }
+        { text: I18n.t("Artists"), type: "artists" }, { text: I18n.t("Playlists"), type: "playlists" }
     ]
     function showFilter(type) { filter = Math.max(0, filters.findIndex(f => f.type === type)) }
     readonly property string type: filters[filter].type
     readonly property bool all: type === "all"
-    readonly property bool signedIn: Auth.state === "signedIn"
+    // search goes to YouTube Music and needs no account
+    readonly property bool signedIn: true
     // в старом бинарнике новых моделей поиска может ещё не быть
     readonly property var showsModel: Catalog.searchShows ?? null
     readonly property var episodesModel: Catalog.searchEpisodes ?? null
@@ -59,7 +59,7 @@ Page {
         Layout.alignment: Qt.AlignHCenter
         Layout.topMargin: 8
         implicitHeight: 56
-        placeholder: I18n.t("Track, album, artist, playlist or podcast")
+        placeholder: I18n.t("Song, album, artist or playlist")
         onTextChanged: debounce.restart()
         // Enter — искать сразу, не дожидаясь паузы ввода; Esc — очистить поле
         onAccepted: {
@@ -106,7 +106,7 @@ Page {
         text: !page.signedIn ? I18n.t("Search works through your Spotify account")
             : Catalog.searchState === "empty" ? I18n.t("Try different wording or another filter")
             : Catalog.searchState === "error" ? I18n.t("Check your connection and try again")
-            : I18n.t("Search for tracks, albums, artists, playlists and podcasts. You can also just paste an open.spotify.com link")
+            : I18n.t("Search YouTube Music for songs, albums, artists and playlists. You can also paste a YouTube Music link")
         actionText: !page.signedIn ? I18n.t("Sign in") : Catalog.searchState === "error" ? I18n.t("Retry") : ""
         actionIcon: !page.signedIn ? "login" : "refresh"
         onAction: {
@@ -226,7 +226,7 @@ Page {
                     available: model.available
                     liked: Library.likesRevision >= 0 && Library.isLiked(model.trackId)
                     current: model.trackId === Player.trackId
-                    onActivated: Player.playFrom(Catalog.searchTracks, index)
+                    onActivated: Player.playRadioFrom(Catalog.searchTracks, index)
                     onLikeClicked: Library.toggleLike(Catalog.searchTracks.get(index))
                     track: Catalog.searchTracks.get(index)
                 }
@@ -377,7 +377,7 @@ Page {
         else if (b.type === "show") Catalog.openShow(b.item.showId)
         else if (b.type === "track") {
             const row = Catalog.searchTracks.find("trackId", b.item.trackId)
-            if (row >= 0) Player.playFrom(Catalog.searchTracks, row)
+            if (row >= 0) Player.playRadioFrom(Catalog.searchTracks, row)
         }
     }
 }

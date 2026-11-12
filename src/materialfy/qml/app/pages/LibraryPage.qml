@@ -22,10 +22,13 @@ Item {
     property string owner: "all"              // all | mine | followed | collab
     property bool searchOpen: false
     property string query
-    readonly property bool signedIn: Auth.state === "signedIn"
+    readonly property bool spotifySignedIn: Auth.state === "signedIn"
+    // a YouTube Music account alone also fills the library (its rows come in Library.items too)
+    readonly property bool signedIn: spotifySignedIn || Auth.youtubeSignedIn
     readonly property bool inFolder: folderId !== ""
     readonly property bool grid: Settings.libraryView !== "list"
-    readonly property bool showLiked: kind === "playlists" && !inFolder && owner === "all" && query.trim() === ""
+    // «Любимые треки» — Spotify (YouTube Music Liked Music is a playlist row of its own)
+    readonly property bool showLiked: spotifySignedIn && kind === "playlists" && !inFolder && owner === "all" && query.trim() === ""
 
     readonly property var model: !signedIn ? null
         : inFolder ? Library.folderChildren(folderId)
@@ -300,6 +303,19 @@ Item {
                         Qt.callLater(() => libSearch.inputItem.forceActiveFocus())
                     else
                         page.query = ""
+                }
+            }
+            // «Импорт плейлиста»: ссылка YouTube / Spotify → песни YouTube Music (ImportPlaylistDialog в Main.qml)
+            Button {
+                visible: !page.inFolder
+                anchors.verticalCenter: parent.verticalCenter
+                style: "text"
+                icon: "download"
+                text: page.width < 760 ? "" : I18n.t("Import")
+                onClicked: {
+                    const w = page.Window.window
+                    if (w && typeof w.openImportDialog === "function")
+                        w.openImportDialog()
                 }
             }
             Button {
@@ -671,7 +687,7 @@ Item {
         visible: !page.signedIn
         icon: "library_music"
         title: I18n.t("Sign in to see your library")
-        text: I18n.t("Playlists, albums, artists and podcasts will load from your Spotify account")
+        text: I18n.t("Sign in to YouTube Music to load your playlists, albums and artists")
         actionText: I18n.t("Sign in")
         actionIcon: "login"
         onAction: page.router.reset("account")

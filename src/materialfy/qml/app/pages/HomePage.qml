@@ -13,13 +13,16 @@ Page {
     showHeader: false
 
     readonly property bool signedIn: Auth.state === "signedIn"
+    // YouTube Music shelves load signed out too (YouTube Music's anonymous home feed); signing in or out
+    // reloads them (HomeService watches the YouTube account)
+    readonly property bool youtubeHome: true
     readonly property bool compact: width < 760
     // Полки: Repeater по составу полок [{key, kind}] — он меняется, только если полки добавились, ушли
     // или переставились. Данные полки кладутся в её Loader на месте и только если изменились: обновление
     // «Недавно прослушанного» не пересоздаёт «Сделано для вас» и остальные плитки.
     property var shelfIds: []
     function _syncShelves() {
-        const list = signedIn ? (Home.shelves ?? []) : []
+        const list = (signedIn ? (Home.shelves ?? []) : []).concat(youtubeHome ? (Home.youtubeShelves ?? []) : [])
         const ids = list.map(s => ({ key: s.key ?? "", kind: s.kind ?? "" }))
         if (JSON.stringify(ids) !== JSON.stringify(shelfIds))
             shelfIds = ids
@@ -37,14 +40,22 @@ Page {
     Connections {
         target: Home
         function onShelvesChanged() { page._syncShelves() }
+        function onYoutubeShelvesChanged() { page._syncShelves() }
     }
     onSignedInChanged: _syncShelves()
 
-    onVisibleChanged: if (visible && signedIn) Home.refresh(false)
+    onVisibleChanged: {
+        if (visible && signedIn)
+            Home.refresh(false)
+        if (visible && youtubeHome)
+            Home.refreshYouTube(false)
+    }
     Component.onCompleted: {
         _syncShelves()
         if (signedIn)
             Home.refresh(false)
+        if (youtubeHome)
+            Home.refreshYouTube(false)
     }
     Connections {
         target: Auth
@@ -139,47 +150,15 @@ Page {
         }
     }
 
-    // ---- Сцена «Радио» ----
-    RadioOrbit {
-        id: orbit
-        // сцена «Радио» видна по умолчанию; в настройках её можно скрыть — страница «Радио» и
-        // «Радио по треку» остаются
-        visible: Settings.homeRadioHidden !== true
-        Layout.fillWidth: true
-        Layout.topMargin: 8
-        Layout.preferredHeight: implicitHeight
-        compact: page.compact
-        signedIn: page.signedIn
-        premium: Auth.premium
-        groups: page.signedIn ? Radio.seeds : []
-        selected: Radio.selected
-        locked: page.signedIn && Radio.locked
-        loading: Radio.loading
-        playing: Radio.active && Player.playing
-        errorText: Radio.errorText
-        onPicked: uri => Radio.select(uri)
-        onAddRequested: item => finder.open(item)
-        onPlayClicked: Radio.play()
-        onOpenList: page.router.push("radio", { seed: Radio.selected })
-        onSaveRequested: {
-            Radio.save()
-            page.notify(I18n.t("Saving station as a playlist…"))
-        }
-        onRefreshRequested: Radio.refresh()
-        onConnectRequested: page.router.reset(Auth.premium ? "playback" : "account")
-        onMoreRequested: page.router.reset("settings", { section: "playback" })
-        onLoginRequested: page.router.reset("account")
-    }
-
     // ---- Полки ----
     ColumnLayout {
         Layout.fillWidth: true
-        visible: page.signedIn
+        visible: page.signedIn || page.youtubeHome
         spacing: 12
 
         // Загрузка: заглушки без мерцания
         ColumnLayout {
-            visible: Home.loading && page.shelfIds.length === 0
+            visible: (Home.loading || (page.youtubeHome && Home.youtubeLoading)) && page.shelfIds.length === 0
             Layout.fillWidth: true
             spacing: 12
             SectionHeader { text: I18n.t("Quick access") }

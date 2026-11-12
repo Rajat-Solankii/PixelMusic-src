@@ -13,7 +13,9 @@ Item {
 
     required property var router
     property bool compact: false
-    readonly property bool signedIn: Auth.state === "signedIn"
+    readonly property bool spotifySignedIn: Auth.state === "signedIn"
+    // a YouTube Music account alone also opens the library (its playlists, albums and artists)
+    readonly property bool signedIn: spotifySignedIn || Auth.youtubeSignedIn
     signal newPlaylistRequested()
     // Шторка (узкое окно): в раскладке ширины не занимает, по openDrawer() выезжает поверх контента
     property bool drawer: false
@@ -94,9 +96,12 @@ Item {
     readonly property var sections: [
         { name: "home", icon: "home", text: I18n.t("Home") },
         { name: "search", icon: "search", text: I18n.t("Search") },
-        { name: "releases", icon: "new_releases", text: I18n.t("New releases") },
+        // "New releases" and "Liked Songs" read only from Spotify, whose sign-in is gone; YouTube Music likes
+        // are the "Liked Music" playlist under Playlists
+        { name: "smartmix", icon: "star", text: I18n.t("Smart Mix") },
         { name: "library", icon: "library_music", text: I18n.t("Library") },
-        { name: "liked", icon: "favorite", text: I18n.t("Liked Songs") }
+        { name: "local", icon: "folder_open", text: I18n.t("Local files") },
+        { name: "downloads", icon: "download_done", text: I18n.t("Downloads") }
     ]
 
     // Плейлисты и папки верхнего уровня rootlist (порядок Spotify; закреплённые — первыми, их ставит сервис).
@@ -314,7 +319,10 @@ Item {
                 icon: modelData.icon
                 text: modelData.text
                 // до входа разделы неактивны (38 %): смотреть в них нечего; «Главная» — с приглашением войти
-                enabled: root.signedIn || modelData.name === "home"
+                // «Локальные файлы» не требуют входа: файлы играют на этом компьютере
+                enabled: root.signedIn || modelData.name === "home" || modelData.name === "search"
+                         || modelData.name === "local" || modelData.name === "downloads"
+                         || modelData.name === "smartmix"   // Last.fm + YouTube Music, no Spotify sign-in needed
                 opacity: enabled ? 1 : Theme.stateLayer.disabledContent
                 // «Библиотека» не подсвечена, пока внутри открыта папка — её подсвечивает пункт папки
                 selected: root.router.rootName === modelData.name
@@ -351,7 +359,7 @@ Item {
                 icon: "add"
                 size: "xs"
                 iconColor: Theme.primary
-                enabled: root.signedIn
+                enabled: root.spotifySignedIn
                 onClicked: root.newPlaylistRequested()
                 // в режиме «Библиотека» список не плейлистов: кнопка «новый плейлист» тут не к месту
                 opacity: root.rail || root.libraryMode ? 0 : 1
@@ -517,8 +525,8 @@ Item {
                 x: 40 - root.margin - size / 2
                 anchors.verticalCenter: parent.verticalCenter
                 size: 40
-                name: root.signedIn ? (Auth.account.displayName ?? "") : ""
-                source: root.signedIn ? (Auth.account.avatar ?? "") : ""
+                name: root.signedIn ? (Auth.youtubeAccount.name ?? "") : ""
+                source: root.signedIn ? (Auth.youtubeAccount.avatar ?? "") : ""
             }
 
             Column {
@@ -530,17 +538,15 @@ Item {
                 Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsFast } }
                 Label {
                     width: parent.width
-                    text: root.signedIn ? (Auth.account.displayName ?? "") : I18n.t("Sign in")
+                    text: root.signedIn ? (Auth.youtubeAccount.name || I18n.t("YouTube Music")) : I18n.t("Sign in")
                     type: "titleSmall"
                     color: root.signedIn ? Theme.fgSurface : Theme.fgSecondaryContainer
                 }
                 Label {
                     width: parent.width
-                    text: root.signedIn ? (Auth.playbackState === "authorizing" ? I18n.t("Waiting for browser…")
-                                          : Auth.premium ? "Premium" : "Spotify Free")
-                        : Auth.state === "awaitingBrowser" ? I18n.t("Waiting for browser…")
-                        : Auth.state === "checking" || Auth.state === "connecting" ? I18n.t("Signing in…")
-                        : I18n.t("Spotify account")
+                    text: root.signedIn ? I18n.t("YouTube Music")
+                        : Auth.youtubeState === "awaitingBrowser" ? I18n.t("Waiting for browser…")
+                        : I18n.t("YouTube Music account")
                     type: "bodySmall"
                     color: Theme.fgSurfaceVariant
                 }

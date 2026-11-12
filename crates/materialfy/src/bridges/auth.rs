@@ -6,6 +6,7 @@ use std::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use sf_services::{AuthEvent, AuthSnapshot};
+use sf_services::auth::{YouTubeAuthEvent, YouTubeAuthSnapshot};
 
 use super::{Delivery, forward_events, forward_watch, to_qmap};
 use crate::context::ctx;
@@ -42,6 +43,14 @@ pub mod qobject {
         #[qproperty(QString, personal_redirect_uri, cxx_name = "personalRedirectUri", READ, CONSTANT)]
         /// токен общего Web API: "none" | "authorizing" | "ready" | "error"
         #[qproperty(QString, web_state, cxx_name = "webState", READ, NOTIFY = web_changed)]
+        /// YouTube Music sign-in, independent of Spotify:
+        /// "signedOut" | "checking" | "awaitingBrowser" | "verifying" | "signedIn"
+        #[qproperty(QString, youtube_state, cxx_name = "youtubeState", READ, NOTIFY = youtube_changed)]
+        #[qproperty(bool, youtube_signed_in, cxx_name = "youtubeSignedIn", READ, NOTIFY = youtube_changed)]
+        /// last YouTube Music failure (translated), "" when none
+        #[qproperty(QString, youtube_error, cxx_name = "youtubeError", READ, NOTIFY = youtube_changed)]
+        /// {name, email, avatar}; {} while signed out
+        #[qproperty(QMap_QString_QVariant, youtube_account, cxx_name = "youtubeAccount", READ, NOTIFY = youtube_changed)]
         type Auth = super::AuthRust;
 
         #[qsignal]
@@ -68,6 +77,16 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "webChanged"]
         fn web_changed(self: Pin<&mut Auth>);
+        #[qsignal]
+        #[cxx_name = "youtubeChanged"]
+        fn youtube_changed(self: Pin<&mut Auth>);
+        /// YouTube Music account connected (fresh sign-in or restored at startup)
+        #[qsignal]
+        #[cxx_name = "youtubeConnected"]
+        fn youtube_connected(self: Pin<&mut Auth>);
+        #[qsignal]
+        #[cxx_name = "youtubeDisconnected"]
+        fn youtube_disconnected(self: Pin<&mut Auth>);
         #[qsignal]
         #[cxx_name = "signedIn"]
         fn signed_in(self: Pin<&mut Auth>);
@@ -123,6 +142,24 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setPersonalClientId"]
         fn set_personal_client_id(self: &Auth, client_id: &QString);
+        /// «Sign in to YouTube Music»: Edge/Chrome window with its own profile; cookies are read when done.
+        #[qinvokable]
+        #[cxx_name = "startYouTubeLogin"]
+        fn start_youtube_login(self: &Auth);
+        #[qinvokable]
+        #[cxx_name = "cancelYouTubeLogin"]
+        fn cancel_youtube_login(self: &Auth);
+        /// Manual fallback: the `Cookie:` header of music.youtube.com. Returns the error text, "" when accepted
+        /// (the account is then checked in the background: youtubeState "verifying" → "signedIn").
+        #[qinvokable]
+        #[cxx_name = "youtubeSignInWithCookies"]
+        fn youtube_sign_in_with_cookies(self: &Auth, cookies: &QString) -> QString;
+        #[qinvokable]
+        #[cxx_name = "youtubeSignOut"]
+        fn youtube_sign_out(self: &Auth);
+        #[qinvokable]
+        #[cxx_name = "refreshYouTubeAccount"]
+        fn refresh_youtube_account(self: &Auth);
         #[qinvokable]
         #[cxx_name = "copyToClipboard"]
         fn copy_to_clipboard(self: &Auth, text: &QString);
@@ -149,6 +186,11 @@ pub struct AuthRust {
     personal_state: QString,
     personal_redirect_uri: QString,
     web_state: QString,
+    youtube: YouTubeAuthSnapshot,
+    youtube_state: QString,
+    youtube_signed_in: bool,
+    youtube_error: QString,
+    youtube_account: QVariantMap,
 }
 
 impl Default for AuthRust {
@@ -168,8 +210,14 @@ impl Default for AuthRust {
             premium: false,
             personal_client_id: QString::default(),
             personal_state: QString::default(),
-            personal_redirect_uri: QString::from(sf_services::Grant::shared_web_api().redirect_uri().as_str()),
+            // вход в Spotify убран: личного приложения нет
+            personal_redirect_uri: QString::default(),
             web_state: QString::default(),
+            youtube_state: QString::from(YouTubeAuthSnapshot::default().state.as_str()),
+            youtube: YouTubeAuthSnapshot::default(),
+            youtube_signed_in: false,
+            youtube_error: QString::default(),
+            youtube_account: QVariantMap::default(),
             snapshot,
         }
     }
@@ -219,6 +267,29 @@ impl qobject::Auth {
     fn set_personal_client_id(&self, client_id: &QString) {
         let id = client_id.to_string().trim().to_owned();
         ctx().services.auth.set_personal_client_id((!id.is_empty()).then_some(id));
+    }
+
+    fn start_youtube_login(&self) {
+        ctx().services.auth.start_youtube_login();
+    }
+
+    fn cancel_youtube_login(&self) {
+        ctx().services.auth.cancel_youtube_login();
+    }
+
+    fn youtube_sign_in_with_cookies(&self, cookies: &QString) -> QString {
+        match ctx().services.auth.youtube_sign_in_with_cookies(&cookies.to_string()) {
+            Ok(()) => QString::default(),
+            Err(text) => QString::from(text.as_str()),
+        }
+    }
+
+    fn youtube_sign_out(&self) {
+        ctx().services.auth.youtube_sign_out();
+    }
+
+    fn refresh_youtube_account(&self) {
+        ctx().services.auth.refresh_youtube_account();
     }
 
     fn copy_to_clipboard(&self, text: &QString) {
@@ -279,6 +350,42 @@ impl qobject::Auth {
         }
     }
 
+    /// YouTube Music snapshot → the youtube* properties (one signal for the group).
+    fn apply_youtube(mut self: Pin<&mut Self>, next: YouTubeAuthSnapshot) {
+        let prev = std::mem::replace(&mut self.as_mut().rust_mut().youtube, next.clone());
+        if prev == next {
+            return;
+        }
+        {
+            let mut this = self.as_mut().rust_mut();
+            this.youtube_state = QString::from(next.state.as_str());
+            this.youtube_signed_in = next.state == sf_services::auth::YouTubeAuthState::SignedIn;
+            this.youtube_error = QString::from(next.error_text.as_str());
+            this.youtube_account = match &next.account {
+                Some(account) => {
+                    let map = serde_json::json!({"name": account.name, "email": account.email, "avatar": account.avatar});
+                    map.as_object().map(crate::qt::json_to_qvariantmap).unwrap_or_default()
+                }
+                None => QVariantMap::default(),
+            };
+        }
+        self.youtube_changed();
+    }
+
+    fn on_youtube_snapshot(self: Pin<&mut Self>, snapshot: YouTubeAuthSnapshot) {
+        self.apply_youtube(snapshot);
+    }
+
+    fn on_youtube_event(mut self: Pin<&mut Self>, delivery: Delivery<YouTubeAuthEvent>) {
+        let snapshot = ctx().services.auth.youtube_snapshot();
+        self.as_mut().apply_youtube(snapshot);
+        match delivery {
+            Delivery::Event(YouTubeAuthEvent::SignedIn(_)) => self.youtube_connected(),
+            Delivery::Event(YouTubeAuthEvent::SignedOut) => self.youtube_disconnected(),
+            Delivery::Lagged => {}
+        }
+    }
+
     fn on_snapshot(self: Pin<&mut Self>, snapshot: AuthSnapshot) {
         self.apply(snapshot);
     }
@@ -305,5 +412,10 @@ impl cxx_qt::Initialize for qobject::Auth {
         self.as_mut().apply(snapshot);
         forward_watch(self.qt_thread(), watch, Self::on_snapshot);
         forward_events(self.qt_thread(), auth.subscribe(), Self::on_event);
+        let mut youtube = auth.watch_youtube();
+        let snapshot = youtube.borrow_and_update().clone();
+        self.as_mut().apply_youtube(snapshot);
+        forward_watch(self.qt_thread(), youtube, Self::on_youtube_snapshot);
+        forward_events(self.qt_thread(), auth.subscribe_youtube(), Self::on_youtube_event);
     }
 }

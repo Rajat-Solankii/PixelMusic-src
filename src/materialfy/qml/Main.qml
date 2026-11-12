@@ -323,6 +323,8 @@ Window {
                             library: Qt.resolvedUrl("app/pages/LibraryPage.qml"),
                             folder: Qt.resolvedUrl("app/pages/FolderPage.qml"),
                             liked: Qt.resolvedUrl("app/pages/LikedPage.qml"),
+                            local: Qt.resolvedUrl("app/pages/LocalFilesPage.qml"),
+                            downloads: Qt.resolvedUrl("app/pages/DownloadsPage.qml"),
                             playlist: Qt.resolvedUrl("app/pages/PlaylistPage.qml"),
                             album: Qt.resolvedUrl("app/pages/AlbumPage.qml"),
                             artist: Qt.resolvedUrl("app/pages/ArtistPage.qml"),
@@ -330,9 +332,12 @@ Window {
                             episode: Qt.resolvedUrl("app/pages/EpisodePage.qml"),
                             radio: Qt.resolvedUrl("app/pages/RadioPage.qml"),
                             releases: Qt.resolvedUrl("app/pages/ReleasesPage.qml"),
+                            smartmix: Qt.resolvedUrl("app/pages/SmartMixPage.qml"),
                             settings: Qt.resolvedUrl("app/pages/SettingsPage.qml"),
-                            account: Qt.resolvedUrl("app/pages/AccountPage.qml"),
-                            playback: Qt.resolvedUrl("app/pages/PlaybackSetupPage.qml")
+                            // Spotify sign-in is gone: "account" / "playback" open Settings (its first card is
+                            // the YouTube Music account)
+                            account: Qt.resolvedUrl("app/pages/SettingsPage.qml"),
+                            playback: Qt.resolvedUrl("app/pages/SettingsPage.qml")
                         })
                         anchors.fill: parent
                         // startPage=artist:<id> (album:, playlist:, show:, episode:) — страница с параметром. Каталог
@@ -615,6 +620,22 @@ Window {
         ignoreUnknownSignals: true
         function onNotice(text) { snackbar.show(text) }
     }
+    // sleep timer, backup/restore and M3U export (Extras)
+    Connections {
+        target: Extras
+        function onSleepFired() { snackbar.show(I18n.t("Sleep timer: playback paused")) }
+        function onTransferFinished(ok, message) { snackbar.show(message) }
+    }
+    // «Импорт плейлиста» (LibraryPage)
+    function openImportDialog() { importPlaylistDialog.open() }
+
+    // URI of something a track points at (its album, an artist): the track's own scheme, so a YouTube Music
+    // song leads to YouTube Music pages (youtube:album:…), a Spotify one to Spotify (spotify:album:…)
+    function uriOf(track, kind, id) {
+        const scheme = (track && (track.uri ?? "").startsWith("youtube:")) ? "youtube:" : "spotify:"
+        return scheme + kind + ":" + (id ?? "")
+    }
+
     // Snackbar для страниц: win.notify(текст[, действие, функция])
     function notify(text, actionText, onAction) {
         snackbar.show(text, actionText ?? "", onAction ?? null)
@@ -641,11 +662,11 @@ Window {
         if (win.mini && (id === "queue" || id === "sound" || id === "removefromplaylist"))
             win.expandFromMini()
         if (id === "radio:track") {
-            win.radioFrom("spotify:track:" + track.trackId, track.title ?? "")
+            win.radioFrom(track.uri || ("spotify:track:" + track.trackId), track.title ?? "")
         } else if (id.startsWith("radio:artist:")) {
             const artistId = id.slice("radio:artist:".length)
             const ref = (track.artistRefs ?? []).find(r => r.id === artistId)
-            win.radioFrom("spotify:artist:" + artistId, ref ? ref.name : (track.artists ?? ""))
+            win.radioFrom(win.uriOf(track, "artist", artistId), ref ? ref.name : (track.artists ?? ""))
         } else if (id === "addqueue") {
             Player.addToQueue(track)
             snackbar.show(I18n.t("Added to queue"))
@@ -654,7 +675,7 @@ Window {
         } else if (id === "like") {
             Library.toggleLike(track)
         } else if (id === "save") {
-            const uri = track.isEpisode ? (track.uri ?? "") : "spotify:album:" + (track.albumId ?? "")
+            const uri = track.isEpisode ? (track.uri ?? "") : win.uriOf(track, "album", track.albumId)
             const was = Library.isSaved(uri)
             Library.toggleSaved(uri)
             snackbar.show(was ? I18n.t("Removed from library") : I18n.t("Saved to library"))
@@ -713,6 +734,10 @@ Window {
     }
     NewPlaylistDialog {
         id: newPlaylistDialog
+        z: 2100
+    }
+    ImportPlaylistDialog {
+        id: importPlaylistDialog
         z: 2100
     }
     // общий Client ID упёрся в лимит: как подключить своё приложение

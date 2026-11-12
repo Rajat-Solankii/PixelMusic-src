@@ -9,6 +9,8 @@ use sf_api::ApiGateway;
 use tokio::runtime::Handle;
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::engine::youtube::player::{Notify, http_opener};
+use crate::engine::youtube::{StreamSource, YtOutput, YtPlayer};
 use crate::engine::{EngineConfig, Rootlist};
 use crate::state::actor::{Actor, Command, Msg, Reconnect, Restart};
 use crate::state::backend::{SpotifyBackend, WebBackend};
@@ -16,6 +18,7 @@ use crate::state::connect::{self, ConnectBackend};
 use crate::state::core::Core;
 use crate::state::host::EngineHost;
 use crate::state::session::SessionData;
+use crate::state::youtube::{YtEngine, YtLink, YtMsg};
 use crate::{
     Credentials, EngineStarted, LocalPlayback, PlayerConfig, PlayerError, PlayerEvent, PlayerSnapshot,
     PlayerSubscription, Repeat, Session,
@@ -127,6 +130,21 @@ impl PlayerHandle {
         self.inner.host.disconnect();
     }
 
+    /// YouTube Music playback on this computer: streams come from `source`, audio is downloaded over `http`
+    /// (the shared client: its proxy) and played on its own output beside librespot. Until this is called,
+    /// YouTube tracks are not played.
+    pub fn enable_youtube(&self, source: Arc<dyn StreamSource>, output: YtOutput, http: sf_api::Http) {
+        let notify: Notify = {
+            let tx = self.inner.tx.clone();
+            Arc::new(move |seq, event| {
+                let _ = tx.send(Msg::YouTube(YtMsg::Event { seq, event }));
+            })
+        };
+        let player = YtPlayer::spawn(output, http_opener(http, self.inner.rt.clone()), notify);
+        let engine: Arc<dyn YtEngine> = Arc::new(player);
+        let _ = self.inner.tx.send(Msg::YouTube(YtMsg::Enable(YtLink { source, engine })));
+    }
+
     pub fn local_playback(&self) -> LocalPlayback {
         self.inner.snapshot.borrow().local.clone()
     }
@@ -197,6 +215,12 @@ impl PlayerHandle {
         self.send(Command::PlayQueueRow(uid));
     }
 
+    /// More tracks for the playing YouTube context (`context_uri`), appended after its list; ignored once
+    /// something else plays.
+    pub fn extend_context(&self, context_uri: String, items: Vec<TrackItem>) {
+        self.send(Command::ExtendContext { context_uri, items });
+    }
+
     /// «В очередь»: после ручных, до контекста; двойной клик < 1,5 с — одна строка (п. 2).
     pub fn add_to_queue(&self, items: Vec<TrackItem>) {
         self.send(Command::AddToQueue(items));
@@ -216,6 +240,12 @@ impl PlayerHandle {
     /// `to` — итоговое место строки (как ListChange::Move: remove(from), insert(to)).
     pub fn move_manual(&self, from: usize, to: usize) {
         self.send(Command::MoveManual { from, to });
+    }
+
+    /// Reorder within the rest of the playing context ("Next from …"); same index rules as `move_manual`.
+    /// Only the YouTube lane can; elsewhere it's ignored.
+    pub fn move_context(&self, from: usize, to: usize) {
+        self.send(Command::MoveContext { from, to });
     }
 
     /// «Очистить» — только ручные строки (п. 7).

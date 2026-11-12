@@ -342,6 +342,18 @@ impl HistoryService {
         self.events.subscribe()
     }
 
+    /// The plays of this computer only, newest first (settings backup).
+    pub fn local_plays(&self) -> Vec<PlayRecord> {
+        lock(&self.state).journal.plays().to_vec()
+    }
+
+    /// Replace the plays of this computer (restored backup).
+    pub fn replace_local(&self, plays: Vec<PlayRecord>) {
+        lock(&self.state).journal.replace(plays);
+        self.save_later();
+        let _ = self.events.send(HistoryEvent::Changed);
+    }
+
     /// Сохранить на диск (выход).
     pub fn flush(&self) {
         lock(&self.state).journal.save(&self.path);
@@ -367,4 +379,14 @@ async fn session_recent(http: &sf_api::Http, session: &sf_player::Session) -> an
         Vec::new()
     });
     Ok(feed::recent_records(&recent, &cards))
+}
+
+impl HistoryService {
+    /// The YouTube Music account's listening history (`FEmusic_history`), grouped as YouTube groups it
+    /// ("Today", "Yesterday", …) into home shelves. Plays of YouTube songs in this app are also kept in the
+    /// local history (`note_played`), like Spotify ones.
+    pub async fn youtube_history(&self) -> Result<Vec<md3_model::HomeShelf>, crate::ServiceError> {
+        let page = self.auth.youtube().history().await.map_err(crate::catalog::yt_error)?;
+        Ok(page.shelves.iter().enumerate().map(|(index, shelf)| crate::home::home_shelf(index, shelf)).collect())
+    }
 }

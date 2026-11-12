@@ -19,12 +19,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-/// Идентичность десктоп-клиента Spotify — с ней стримит librespot.
-pub const PLAYBACK_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+/// Порт loopback входа воспроизведения (вход в Spotify убран из приложения; встроенных Client ID нет).
 pub const PLAYBACK_REDIRECT_PORT: u16 = 8898;
 
-/// Общее публичное приложение Web API (spotify-player, ncspot, Omarchy Spotify).
-pub const DEFAULT_WEB_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 pub const WEB_REDIRECT_PORT: u16 = 8989;
 
 pub const REDIRECT_PATH: &str = "/login";
@@ -69,22 +66,6 @@ pub struct Grant {
 }
 
 impl Grant {
-    pub fn playback() -> Self {
-        Self {
-            client_id: PLAYBACK_CLIENT_ID.to_string(),
-            redirect_port: PLAYBACK_REDIRECT_PORT,
-            scopes: PLAYBACK_SCOPES,
-        }
-    }
-
-    pub fn shared_web_api() -> Self {
-        Self {
-            client_id: DEFAULT_WEB_CLIENT_ID.to_string(),
-            redirect_port: WEB_REDIRECT_PORT,
-            scopes: WEB_SCOPES,
-        }
-    }
-
     pub fn personal_web_api(client_id: &str) -> Result<Self> {
         let client_id = client_id.trim();
         if client_id.is_empty() {
@@ -120,7 +101,7 @@ pub fn begin(grant: Grant) -> Flow {
     let verifier = random_token(48);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let state = random_token(18);
-    let show_dialog = if grant.client_id == PLAYBACK_CLIENT_ID {
+    let show_dialog = if grant.redirect_port == PLAYBACK_REDIRECT_PORT {
         "&show_dialog=true"
     } else {
         ""
@@ -403,11 +384,11 @@ impl StoredToken {
 
     // только для тестов; хранение — в credentials.rs
     #[cfg(test)]
-    pub fn migrate_legacy(legacy: &Path, shared: &Path, personal: &Path) -> Result<()> {
+    pub fn migrate_legacy(legacy: &Path, shared_client_id: &str, shared: &Path, personal: &Path) -> Result<()> {
         let Some(token) = Self::load(legacy) else {
             return Ok(());
         };
-        let target = if token.client_id == DEFAULT_WEB_CLIENT_ID {
+        let target = if token.client_id == shared_client_id {
             shared
         } else {
             personal
@@ -526,25 +507,29 @@ mod tests {
 
     #[test]
     fn begin_produces_valid_pkce_material() {
-        let flow = begin(Grant::shared_web_api());
+        let flow = begin(Grant::personal_web_api("dummy-shared-client").unwrap());
         assert!(flow.verifier.len() >= 43);
         assert!(flow.url.contains("code_challenge_method=S256"));
         assert!(flow.url.contains(&format!("state={}", flow.state)));
-        assert!(flow.url.contains(&format!("client_id={DEFAULT_WEB_CLIENT_ID}")));
+        assert!(flow.url.contains("client_id=dummy-shared-client"));
         assert!(flow.url.contains("8989"));
         assert!(!flow.url.contains("show_dialog=true"));
-        let playback = begin(Grant::playback());
-        assert!(playback.url.contains(&format!("client_id={PLAYBACK_CLIENT_ID}")));
+        let playback = begin(dummy_playback());
+        assert!(playback.url.contains("client_id=dummy-playback-client"));
         assert!(playback.url.contains("8898"));
         assert!(playback.url.contains("show_dialog=true"));
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(flow.verifier.as_bytes()));
         assert!(flow.url.contains(&format!("code_challenge={challenge}")));
     }
 
+    fn dummy_playback() -> Grant {
+        Grant { client_id: "dummy-playback-client".into(), redirect_port: PLAYBACK_REDIRECT_PORT, scopes: PLAYBACK_SCOPES }
+    }
+
     #[test]
     fn playback_scopes_conform_to_spotify_streaming_contract() {
         assert_eq!(PLAYBACK_SCOPES, &["streaming"]);
-        let playback = Grant::playback();
+        let playback = dummy_playback();
         assert_eq!(playback.scopes, vec!["streaming".to_string()]);
         assert_eq!(playback.redirect_uri(), "http://127.0.0.1:8898/login");
         let personal = Grant::personal_web_api("test-id").unwrap();
@@ -605,7 +590,7 @@ mod tests {
         let legacy = dir.join("legacy.json");
         let shared = dir.join("shared.json");
         let personal = dir.join("personal.json");
-        for (client_id, target) in [(DEFAULT_WEB_CLIENT_ID, &shared), ("personal-client", &personal)] {
+        for (client_id, target) in [("dummy-shared-client", &shared), ("personal-client", &personal)] {
             let token = StoredToken {
                 client_id: client_id.into(),
                 access_token: "access".into(),
@@ -614,7 +599,7 @@ mod tests {
                 ..StoredToken::default()
             };
             token.save(&legacy).unwrap();
-            StoredToken::migrate_legacy(&legacy, &shared, &personal).unwrap();
+            StoredToken::migrate_legacy(&legacy, "dummy-shared-client", &shared, &personal).unwrap();
             assert_eq!(StoredToken::load(target), Some(token));
             assert!(!legacy.exists());
         }

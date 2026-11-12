@@ -55,9 +55,9 @@ impl LyricsStatus {
 pub struct LyricsSnapshot {
     pub track_id: String,
     pub status: LyricsStatus,
-    /// "Spotify" | "NetEase" | "Musixmatch" | "LRCLIB"
+    /// "Spotify" | "NetEase" | "Musixmatch" | "LRCLIB" | "YouTube Music"
     pub source: String,
-    /// "word" | "line"
+    /// "word" | "line" | "plain" (YouTube Music: untimed lines)
     pub kind: String,
     pub lines: Arc<Vec<mf_lyrics::Line>>,
 }
@@ -68,6 +68,8 @@ pub struct LyricsService {
     fetcher: mf_lyrics::LyricsFetcher,
     snapshot: watch::Sender<LyricsSnapshot>,
     generation: AtomicU64,
+    /// YouTube Music lyrics, the last source for `youtube:track:` songs (`set_youtube`)
+    youtube: std::sync::OnceLock<Arc<crate::youtube::YouTubeService>>,
     me: Weak<LyricsService>,
 }
 
@@ -80,6 +82,7 @@ impl LyricsService {
             fetcher,
             snapshot: watch::channel(LyricsSnapshot::default()).0,
             generation: AtomicU64::new(0),
+            youtube: std::sync::OnceLock::new(),
             me: me.clone(),
         });
         let weak = Arc::downgrade(&service);
@@ -169,11 +172,37 @@ impl LyricsService {
         });
     }
 
+    /// Give the service YouTube Music (Services::start); without it YouTube songs use the other sources only.
+    pub fn set_youtube(&self, youtube: Arc<crate::youtube::YouTubeService>) {
+        let _ = self.youtube.set(youtube);
+    }
+
     /// Кэш → Spotify → остальные источники mf-lyrics.
     async fn fetch(&self, track: &TrackItem) -> LyricsResult {
         let query = query_for(track);
+        if let Some(video_id) = track.uri.strip_prefix("youtube:track:") {
+            return self.fetch_youtube(&query, video_id).await;
+        }
         let extra = spotify_json(self.player.clone(), track.play_uri());
         self.fetcher.fetch_cached(&query, Some(extra)).await
+    }
+
+    /// A YouTube song: the synced sources of mf-lyrics by title and artist (no Spotify), then YouTube Music's
+    /// own lyrics, which are plain text (kind "plain": lines without timing).
+    async fn fetch_youtube(&self, query: &mf_lyrics::LyricsQuery, video_id: &str) -> LyricsResult {
+        let found = self.fetcher.fetch_cached(query, None).await;
+        if found.ok {
+            return found;
+        }
+        let Some(youtube) = self.youtube.get() else { return found };
+        match youtube.lyrics(video_id).await {
+            Ok(Some(text)) => LyricsResult::found(YOUTUBE_SOURCE, "plain", plain_lines(&text)),
+            Ok(None) => found,
+            Err(error) => {
+                tracing::debug!("YouTube lyrics: {error:?}");
+                found
+            }
+        }
     }
 
     fn set(&self, track_id: String, status: LyricsStatus, result: Option<LyricsResult>) {
@@ -204,6 +233,18 @@ fn spotify_json(player: PlayerHandle, uri: String) -> ExtraLrc {
         }
         .boxed()
     })
+}
+
+const YOUTUBE_SOURCE: &str = "YouTube Music";
+
+/// Plain text as untimed lines (every `t`/`e` is 0); blank lines are kept as empty rows between verses.
+pub fn plain_lines(text: &str) -> Vec<mf_lyrics::Line> {
+    text.lines()
+        .map(|line| {
+            let word = mf_lyrics::Word { x: line.trim().to_owned(), s: 0.0, e: 0.0, p: None };
+            mf_lyrics::Line::words(0.0, 0.0, vec![word], false)
+        })
+        .collect()
 }
 
 /// Запрос mf-lyrics по треку (title/artist/album/duration).
@@ -242,5 +283,16 @@ mod tests {
         };
         let q = query_for(&track);
         assert_eq!((q.title.as_str(), q.artist.as_str(), q.album.as_str(), q.duration), ("Song", "A, B", "Al", 90.5));
+    }
+}
+
+#[cfg(test)]
+mod youtube_tests {
+    #[test]
+    fn plain_lyrics_become_untimed_lines() {
+        let lines = super::plain_lines("First line\n\n Second ");
+        assert_eq!(lines.len(), 3);
+        assert_eq!((lines[0].text(), lines[1].text(), lines[2].text()), ("First line".to_owned(), String::new(), "Second".to_owned()));
+        assert_eq!((lines[2].start(), lines[2].end()), (0.0, 0.0));
     }
 }

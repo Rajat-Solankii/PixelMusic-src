@@ -100,6 +100,13 @@ pub mod qobject {
         #[qproperty(f64, playback_speed, cxx_name = "playbackSpeed", READ, WRITE = set_playback_speed, NOTIFY = playback_speed_changed)]
         #[qproperty(i32, crossfade, READ, WRITE = set_crossfade, NOTIFY = crossfade_changed)]
         #[qproperty(bool, dj_voice, cxx_name = "djVoice", READ, WRITE = set_dj_voice, NOTIFY = dj_voice_changed)]
+        #[qproperty(bool, lastfm_scrobble, cxx_name = "lastfmScrobble", READ, WRITE = set_lastfm_scrobble, NOTIFY = lastfm_scrobble_changed)]
+        #[qproperty(bool, lastfm_now_playing, cxx_name = "lastfmNowPlaying", READ, WRITE = set_lastfm_now_playing, NOTIFY = lastfm_now_playing_changed)]
+        #[qproperty(bool, youtube_data_saver, cxx_name = "youtubeDataSaver", READ, WRITE = set_youtube_data_saver, NOTIFY = youtube_data_saver_changed)]
+        /// YouTube Music tracks from Monochrome's free FLAC copy when one matches
+        #[qproperty(bool, lossless_streams, cxx_name = "losslessStreams", READ, WRITE = set_lossless_streams, NOTIFY = lossless_streams_changed)]
+        /// YouTube Music tracks from JioSaavn's 320 kbps copy when one matches; JioSaavn songs in search
+        #[qproperty(bool, jiosaavn_streams, cxx_name = "jioSaavnStreams", READ, WRITE = set_jiosaavn_streams, NOTIFY = jiosaavn_streams_changed)]
         #[qproperty(QString, device_name, cxx_name = "deviceName", READ, WRITE = set_device_name, NOTIFY = device_name_changed)]
         #[qproperty(QString, web_client_id, cxx_name = "webClientId", READ, WRITE = set_web_client_id, NOTIFY = web_client_id_changed)]
         /// окно «Web API ограничен» с инструкцией больше не показывать
@@ -133,6 +140,8 @@ pub mod qobject {
         #[qproperty(QString, taskbar_positions, cxx_name = "taskbarPositions", READ, WRITE = set_taskbar_positions, NOTIFY = taskbar_positions_changed)]
         #[qproperty(QStringList, audio_devices, cxx_name = "audioDevices", READ, NOTIFY = audio_devices_changed)]
         #[qproperty(QMap_QString_QVariant, cache_usage, cxx_name = "cacheUsage", READ, NOTIFY = cache_usage_changed)]
+        /// checkMonochrome: "" (not checked) | "checking" | "ok" | "down"
+        #[qproperty(QString, monochrome_check, cxx_name = "monochromeCheck", READ, NOTIFY = monochrome_check_changed)]
         #[qproperty(bool, engine_restart_pending, cxx_name = "engineRestartPending", READ, NOTIFY = engine_restart_pending_changed)]
         #[qproperty(QString, proxy_state, cxx_name = "proxyState", READ, NOTIFY = proxy_state_changed)]
         #[qproperty(QString, proxy_error, cxx_name = "proxyError", READ, NOTIFY = proxy_state_changed)]
@@ -206,6 +215,11 @@ pub mod qobject {
         fn set_playback_speed(self: Pin<&mut Settings>, value: f64);
         fn set_crossfade(self: Pin<&mut Settings>, value: i32);
         fn set_dj_voice(self: Pin<&mut Settings>, value: bool);
+        fn set_lastfm_scrobble(self: Pin<&mut Settings>, value: bool);
+        fn set_lastfm_now_playing(self: Pin<&mut Settings>, value: bool);
+        fn set_youtube_data_saver(self: Pin<&mut Settings>, value: bool);
+        fn set_lossless_streams(self: Pin<&mut Settings>, value: bool);
+        fn set_jiosaavn_streams(self: Pin<&mut Settings>, value: bool);
         fn set_device_name(self: Pin<&mut Settings>, value: QString);
         fn set_web_client_id(self: Pin<&mut Settings>, value: QString);
         fn set_api_limit_tip_dismissed(self: Pin<&mut Settings>, value: bool);
@@ -410,6 +424,21 @@ pub mod qobject {
         #[cxx_name = "djVoiceChanged"]
         fn dj_voice_changed(self: Pin<&mut Settings>);
         #[qsignal]
+        #[cxx_name = "lastfmScrobbleChanged"]
+        fn lastfm_scrobble_changed(self: Pin<&mut Settings>);
+        #[qsignal]
+        #[cxx_name = "lastfmNowPlayingChanged"]
+        fn lastfm_now_playing_changed(self: Pin<&mut Settings>);
+        #[qsignal]
+        #[cxx_name = "youtubeDataSaverChanged"]
+        fn youtube_data_saver_changed(self: Pin<&mut Settings>);
+        #[qsignal]
+        #[cxx_name = "losslessStreamsChanged"]
+        fn lossless_streams_changed(self: Pin<&mut Settings>);
+        #[qsignal]
+        #[cxx_name = "jioSaavnStreamsChanged"]
+        fn jiosaavn_streams_changed(self: Pin<&mut Settings>);
+        #[qsignal]
         #[cxx_name = "deviceNameChanged"]
         fn device_name_changed(self: Pin<&mut Settings>);
         #[qsignal]
@@ -485,6 +514,9 @@ pub mod qobject {
         #[cxx_name = "cacheUsageChanged"]
         fn cache_usage_changed(self: Pin<&mut Settings>);
         #[qsignal]
+        #[cxx_name = "monochromeCheckChanged"]
+        fn monochrome_check_changed(self: Pin<&mut Settings>);
+        #[qsignal]
         #[cxx_name = "engineRestartPendingChanged"]
         fn engine_restart_pending_changed(self: Pin<&mut Settings>);
         #[qsignal]
@@ -522,6 +554,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "uiScaleAtLaunch"]
         fn ui_scale_at_launch(self: &Settings) -> i32;
+        /// Ask the Monochrome server whether it answers (sources::Monochrome::check); result in monochromeCheck.
+        #[qinvokable]
+        #[cxx_name = "checkMonochrome"]
+        fn check_monochrome(self: Pin<&mut Settings>);
         /// Применить прокси (пароль — в хранилище секретов, не в настройки).
         #[qinvokable]
         #[cxx_name = "applyProxy"]
@@ -591,6 +627,7 @@ macro_rules! settings {
             $( $rfield: $rty, )*
             audio_devices: QStringList,
             cache_usage: QVariantMap,
+            monochrome_check: QString,
             engine_restart_pending: bool,
             proxy_state: QString,
             proxy_error: QString,
@@ -607,6 +644,7 @@ macro_rules! settings {
                     $( $rfield: <$rty as Field>::load(store, SettingKey::$rkey), )*
                     audio_devices: QStringList::default(),
                     cache_usage: QVariantMap::default(),
+                    monochrome_check: QString::default(),
                     engine_restart_pending: false,
                     proxy_state: QString::default(),
                     proxy_error: QString::default(),
@@ -724,6 +762,11 @@ settings! {
     playback_speed: f64 = PlaybackSpeed, set_playback_speed, playback_speed_changed;
     crossfade: i32 = Crossfade, set_crossfade, crossfade_changed;
     dj_voice: bool = DjVoice, set_dj_voice, dj_voice_changed;
+    lastfm_scrobble: bool = LastFmScrobble, set_lastfm_scrobble, lastfm_scrobble_changed;
+    lastfm_now_playing: bool = LastFmNowPlaying, set_lastfm_now_playing, lastfm_now_playing_changed;
+    youtube_data_saver: bool = YouTubeDataSaver, set_youtube_data_saver, youtube_data_saver_changed;
+    lossless_streams: bool = LosslessStreams, set_lossless_streams, lossless_streams_changed;
+    jiosaavn_streams: bool = JioSaavnStreams, set_jiosaavn_streams, jiosaavn_streams_changed;
     device_name: QString = DeviceName, set_device_name, device_name_changed;
     web_client_id: QString = WebClientId, set_web_client_id, web_client_id_changed;
     api_limit_tip_dismissed: bool = ApiLimitTipDismissed, set_api_limit_tip_dismissed, api_limit_tip_dismissed_changed;
@@ -813,6 +856,30 @@ impl qobject::Settings {
 
     fn apply_engine_settings(self: Pin<&mut Self>) {
         ctx().services.auth.restart_engine();
+    }
+
+    fn check_monochrome(mut self: Pin<&mut Self>) {
+        self.as_mut().set_monochrome_check("checking");
+        let thread = self.qt_thread();
+        let monochrome = ctx().services.streams.monochrome().clone();
+        ctx().rt.spawn(async move {
+            let state = match monochrome.check().await {
+                Ok(()) => "ok",
+                Err(error) => {
+                    tracing::info!("monochrome check: {error}");
+                    "down"
+                }
+            };
+            let _ = thread.queue(move |settings| settings.set_monochrome_check(state));
+        });
+    }
+
+    fn set_monochrome_check(mut self: Pin<&mut Self>, state: &str) {
+        let state = QString::from(state);
+        if self.monochrome_check != state {
+            self.as_mut().rust_mut().monochrome_check = state;
+            self.monochrome_check_changed();
+        }
     }
 
     /// Reopen the app after a setting that Qt reads only at startup (the interface scale).

@@ -1,0 +1,52 @@
+{
+  "unauthorized_401": {
+    "error": {
+      "code": 401,
+      "message": "Request is missing required authentication credential. Expected OAuth 2 access token, login cookie or other valid credential.",
+      "status": "UNAUTHENTICATED"
+    }
+  },
+  "rate_limited_429": {
+    "error": {
+      "code": 429,
+      "message": "Too Many Requests",
+      "status": "RESOURCE_EXHAUSTED",
+      "details": [
+        {
+          "@type": "type.googleapis.com/google.rpc.RetryInfo",
+          "retryDelay": "60s"
+        }
+      ]
+    }
+  },
+  "unplayable_age_restricted": {
+    "responseContext": { "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D" },
+    "playabilityStatus": {
+      "status": "UNPLAYABLE",
+      "reason": "Sign in to confirm your age",
+      "errorScreen": {
+        "playerErrorMessageRenderer": {
+          "subreason": { "runs": [{ "text": "This video may be inappropriate for some users." }] }
+        }
+      }
+    }
+  },
+  "bot_challenge_login_required": {
+    "responseContext": { "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D" },
+    "playabilityStatus": {
+      "status": "LOGIN_REQUIRED",
+      "reason": "Our systems have detected unusual traffic from your computer network. Please sign in to confirm you are not a robot."
+    }
+  },
+  "playlist_private_or_deleted": {
+    "responseContext": { "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D" },
+    "alerts": [
+      {
+        "alertRenderer": {
+          "type": "ERROR",
+          "text": { "runs": [{ "text": "The playlist does not exist or is private." }] }
+        }
+      }
+    ]
+  }
+}

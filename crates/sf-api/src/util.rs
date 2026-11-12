@@ -10,6 +10,16 @@ pub fn uri_kind(uri: &str) -> Option<&str> {
     parts.next()
 }
 
+/// Which service a URI belongs to: `"youtube"` for `youtube:<kind>:<id>`, `"spotify"` for `spotify:…`,
+/// `None` for anything else (links, bare ids, empty strings).
+pub fn uri_provider(uri: &str) -> Option<&'static str> {
+    match uri.split_once(':')?.0 {
+        "youtube" => Some("youtube"),
+        "spotify" => Some("spotify"),
+        _ => None,
+    }
+}
+
 /// Станция Spotify по треку, плейлисту, альбому или исполнителю.
 pub fn station_uri(seed: &str) -> Option<String> {
     let kind = uri_kind(seed)?;
@@ -122,6 +132,20 @@ mod tests {
         assert_eq!(uri_id("spotify:track:abc"), Some("abc"));
         assert_eq!(uri_kind("spotify:playlist:x"), Some("playlist"));
         assert_eq!(open_spotify_url("spotify:album:z").as_deref(), Some("https://open.spotify.com/album/z"));
+    }
+
+    #[test]
+    fn providers_are_told_apart_by_the_scheme() {
+        assert_eq!(uri_provider("youtube:track:dQw4w9WgXcQ"), Some("youtube"));
+        assert_eq!(uri_provider("youtube:playlist:LM"), Some("youtube"));
+        assert_eq!(uri_provider("spotify:album:z"), Some("spotify"));
+        assert_eq!(uri_provider("spotify:user:me:collection"), Some("spotify"));
+        for other in ["", "youtube", "https://music.youtube.com/watch?v=x", "track:abc", "YouTube:track:x"] {
+            assert_eq!(uri_provider(other), None, "{other}");
+        }
+        // the existing helpers read youtube URIs the same way
+        assert_eq!(uri_kind("youtube:album:MPREb_x"), Some("album"));
+        assert_eq!(uri_id("youtube:album:MPREb_x"), Some("MPREb_x"));
     }
 
     #[test]

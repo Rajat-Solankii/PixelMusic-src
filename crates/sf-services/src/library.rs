@@ -27,6 +27,9 @@ use sf_player::engine::session_playlists::Change;
 use crate::history::HistoryService;
 use crate::lock;
 
+mod yt;
+pub use yt::ImportProgress;
+
 /// Страница Liked Songs у Web API.
 pub const CHUNK: usize = 50;
 
@@ -280,6 +283,9 @@ pub struct LibraryService {
     settings: Arc<SettingsStore>,
     events: broadcast::Sender<LibraryEvent>,
     state: Mutex<State>,
+    /// YouTube Music library (library/yt.rs)
+    yt: Mutex<yt::YtState>,
+    yt_import: Arc<tokio::sync::watch::Sender<ImportProgress>>,
     me: Weak<LibraryService>,
 }
 
@@ -694,9 +700,12 @@ impl LibraryService {
             settings,
             events: broadcast::channel(1024).0,
             state: Mutex::new(state),
+            yt: Mutex::default(),
+            yt_import: Arc::new(tokio::sync::watch::channel(ImportProgress::default()).0),
             me: me.clone(),
         });
         service.spawn_listeners();
+        service.spawn_yt_listener();
         service
     }
 
@@ -858,6 +867,7 @@ impl LibraryService {
     }
 
     pub fn refresh(&self) {
+        self.refresh_youtube();
         lock(&self.state).auto_retries = 0;
         self.load_all(true);
     }
@@ -1088,6 +1098,9 @@ impl LibraryService {
     }
     /// По id трека или URI (рыночные дубли одной записи — один лайк).
     pub fn is_liked(&self, track_id_or_uri: &str) -> bool {
+        if yt::is_youtube(track_id_or_uri) {
+            return self.yt_is_liked(track_id_or_uri);
+        }
         lock(&self.state).is_liked(&known::track_uri(track_id_or_uri))
     }
     pub fn likes_revision(&self) -> u64 {
@@ -1096,6 +1109,9 @@ impl LibraryService {
 
     /// Оптимистично: UI сразу, откат + Notice при ошибке.
     pub fn toggle_like(&self, track: TrackItem) {
+        if yt::is_youtube(&track.uri) {
+            return self.yt_toggle_like(track);
+        }
         if track.is_episode {
             self.toggle_saved(track.play_uri());
             return;
@@ -1164,6 +1180,9 @@ impl LibraryService {
 
     /// Локальный стоп-лист (HiddenTracks) + Feedback{Dislike}; если трек играет — next().
     pub fn dislike(&self, track: TrackItem) {
+        if yt::is_youtube(&track.uri) {
+            return self.yt_dislike(track);
+        }
         let uri = track.play_uri();
         let list = {
             let mut state = lock(&self.state);
@@ -1483,11 +1502,17 @@ impl LibraryService {
     /// Открыть плейлист (сессия librespot для чужих, Web API для своих) → PlaylistTracks.
     /// Без дублей: чтение уже идёт — не перезапускается; кэш уже показан — ни Reset, ни сети.
     pub fn load_playlist(&self, id: PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_open_playlist(id, false);
+        }
         self.open_playlist(id, false);
     }
 
     /// Явное обновление (кнопка «Обновить», перечитывание после правок): идущее чтение отменяется.
     pub fn refresh_playlist(&self, id: PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_open_playlist(id, true);
+        }
         self.open_playlist(id, true);
     }
 
@@ -1539,6 +1564,9 @@ impl LibraryService {
 
     /// Экран закрылся: отменить чтение, которое больше никому не нужно (записи и воспроизведение не трогает).
     pub fn cancel_playlist(&self, id: &PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_cancel_playlist(id);
+        }
         let mut state = lock(&self.state);
         let Some(page) = state.pages.get_mut(id) else { return };
         if page.pending_writes > 0 {
@@ -1565,6 +1593,9 @@ impl LibraryService {
     /// его кусками. События уходят в очередь под блокировкой состояния — чтение, начавшееся параллельно,
     /// допишет свои куски после, устаревший Reset не догонит свежие строки.
     pub fn replay_playlist(&self, id: &PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_replay_playlist(id);
+        }
         let state = lock(&self.state);
         let Some(page) = state.pages.get(id) else { return };
         if page.rows.is_empty() {
@@ -1768,13 +1799,22 @@ impl LibraryService {
     }
 
     pub fn playlist_tracks(&self, id: &PlaylistId) -> Option<Vec<TrackItem>> {
+        if id.is_youtube() {
+            return self.yt_playlist_tracks(id);
+        }
         lock(&self.state).pages.get(id).map(|page| page.rows.clone())
     }
     pub fn playlist_info(&self, id: &PlaylistId) -> Option<PlaylistInfo> {
+        if id.is_youtube() {
+            return self.yt_playlist_info(id);
+        }
         lock(&self.state).playlist_info(id.as_str())
     }
     /// Свой, совместный или по приглашению (rootlist).
     pub fn can_edit(&self, id: &PlaylistId) -> bool {
+        if id.is_youtube() {
+            return self.yt_can_edit(id);
+        }
         let state = lock(&self.state);
         state.header(id.as_str()).is_some_and(|header| state.can_edit_raw(&header))
     }
@@ -2061,21 +2101,34 @@ impl LibraryService {
     }
 
     pub fn add_to_playlist(&self, track: TrackItem, id: PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_add_tracks(id, vec![track.uri]);
+        }
         known::remember([&track]);
         let uri = track.play_uri();
         self.add_rows(id, vec![uri], None, Some(track), true);
     }
     /// Добавить в конец (AddTracksPanel); дубли разрешены.
     pub fn add_tracks(&self, id: PlaylistId, uris: Vec<String>) {
+        if id.is_youtube() {
+            return self.yt_add_tracks(id, uris);
+        }
         self.add_rows(id, uris, None, None, false);
     }
     /// Вставить на позицию (Web API `position`; «Вернуть» после удаления строк).
     pub fn insert_tracks(&self, id: PlaylistId, uris: Vec<String>, position: usize) {
+        if id.is_youtube() {
+            // YouTube Music adds at the end only
+            return self.yt_add_tracks(id, uris);
+        }
         self.add_rows(id, uris, Some(position), None, false);
     }
 
     /// (uri, позиция) — по snapshot_id. Web API снимает все вхождения URI — строки снимаются так же.
     pub fn remove_tracks(&self, id: PlaylistId, rows: Vec<(String, usize)>) {
+        if id.is_youtube() {
+            return self.yt_remove_tracks(id, rows);
+        }
         let mut uris: Vec<String> = Vec::new();
         for (uri, _) in rows {
             if !uri.is_empty() && !uris.contains(&uri) {
@@ -2118,6 +2171,9 @@ impl LibraryService {
     }
 
     pub fn move_tracks(&self, id: PlaylistId, from: usize, to: usize) {
+        if id.is_youtube() {
+            return self.yt_move_tracks(id, from, to);
+        }
         let len = lock(&self.state).pages.get(&id).map_or(0, |page| page.rows.len());
         if from == to || from >= len || to >= len {
             return;
@@ -2194,6 +2250,11 @@ impl LibraryService {
     }
 
     pub fn create_playlist(&self, title: String, track: Option<TrackItem>) {
+        // a YouTube song can only go to a YouTube Music playlist
+        if let Some(track) = track.as_ref().filter(|track| yt::is_youtube(&track.uri)) {
+            let title = if title.trim().is_empty() { mf_i18n::t("New playlist") } else { title.trim().to_owned() };
+            return self.create_youtube_playlist(title, vec![track.uri.clone()]);
+        }
         let title = if title.trim().is_empty() { mf_i18n::t("New playlist") } else { title.trim().to_owned() };
         let generation = self.generation();
         self.spawn(move |service| async move {
@@ -2226,6 +2287,10 @@ impl LibraryService {
 
     /// Создать из списка URI (очередь, радио).
     pub fn create_playlist_from(&self, title: String, uris: Vec<String>) {
+        if !uris.is_empty() && uris.iter().all(|uri| yt::is_youtube(uri)) {
+            let title = if title.trim().is_empty() { mf_i18n::t("New playlist") } else { title.trim().to_owned() };
+            return self.create_youtube_playlist(title, uris);
+        }
         let title = if title.trim().is_empty() { mf_i18n::t("New playlist") } else { title.trim().to_owned() };
         let generation = self.generation();
         self.spawn(move |service| async move {
@@ -2350,6 +2415,9 @@ impl LibraryService {
     }
 
     pub fn rename_playlist(&self, id: PlaylistId, title: String) {
+        if id.is_youtube() {
+            return self.yt_rename_playlist(id, title.trim().to_owned());
+        }
         let title = title.trim().to_owned();
         if title.is_empty() {
             self.notice(mf_i18n::t("The name can’t be empty"));
@@ -2358,6 +2426,9 @@ impl LibraryService {
         self.edit_details(id, Some(title), None, None);
     }
     pub fn set_description(&self, id: PlaylistId, text: String) {
+        if id.is_youtube() {
+            return self.notice(mf_i18n::t("This can't be changed for a YouTube Music playlist."));
+        }
         let text = text.trim().to_owned();
         if text.is_empty() {
             self.notice(mf_i18n::t("Spotify doesn’t allow clearing the description completely"));
@@ -2366,6 +2437,9 @@ impl LibraryService {
         self.edit_details(id, None, Some(text), None);
     }
     pub fn set_public(&self, id: PlaylistId, public: bool) {
+        if id.is_youtube() {
+            return self.notice(mf_i18n::t("This can't be changed for a YouTube Music playlist."));
+        }
         self.edit_details(id, None, None, Some(public));
     }
 
@@ -2373,6 +2447,9 @@ impl LibraryService {
     /// (локальная копия); картинка Spotify принимается, только когда её пиксели совпали с выбранной
     /// (до 3 перепроверок, как в spotifast).
     pub fn upload_cover(&self, id: PlaylistId, path: std::path::PathBuf) {
+        if id.is_youtube() {
+            return self.notice(mf_i18n::t("This can't be changed for a YouTube Music playlist."));
+        }
         let path = match path.to_str().and_then(|text| text.strip_prefix("file:///").or(text.strip_prefix("file://"))) {
             Some(rest) if cfg!(windows) => std::path::PathBuf::from(rest),
             Some(rest) => std::path::PathBuf::from(format!("/{}", rest.trim_start_matches('/'))),
@@ -2514,6 +2591,9 @@ impl LibraryService {
     }
 
     pub fn follow_playlist(&self, id: PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_follow_playlist(id);
+        }
         let uri = id.uri();
         {
             let mut state = lock(&self.state);
@@ -2564,6 +2644,9 @@ impl LibraryService {
 
     /// Отписаться (для своего — «удалить»).
     pub fn unfollow_playlist(&self, id: PlaylistId) {
+        if id.is_youtube() {
+            return self.yt_unfollow_playlist(id);
+        }
         let uri = id.uri();
         let (removed, own, events) = {
             let mut state = lock(&self.state);
@@ -2948,6 +3031,9 @@ impl LibraryService {
     }
     /// Альбом/шоу/выпуск/исполнитель (подписка) сохранён.
     pub fn is_saved(&self, uri: &str) -> bool {
+        if yt::is_youtube(uri) {
+            return self.yt_is_saved(uri);
+        }
         lock(&self.state).is_saved(uri)
     }
     pub fn saved_revision(&self) -> u64 {
@@ -2956,6 +3042,9 @@ impl LibraryService {
 
     /// Сохранить/удалить (альбом, шоу, выпуск) или подписаться/отписаться (исполнитель).
     pub fn toggle_saved(&self, uri: String) {
+        if yt::is_youtube(&uri) {
+            return self.yt_toggle_saved(uri);
+        }
         let kind = uri_kind(&uri).to_owned();
         match kind.as_str() {
             "playlist" => {
@@ -3159,6 +3248,7 @@ impl LibraryService {
                 })
                 .collect(),
         };
+        self.yt_entries(kind, owner, &state.pins, &mut entries);
         for entry in &mut entries {
             entry.covers.retain(|cover| !cover.is_empty());
         }

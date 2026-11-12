@@ -1050,7 +1050,7 @@ mod tests {
         let tokens = WebTokens::new(
             reqwest::Client::new(),
             StoredToken {
-                client_id: sf_auth::DEFAULT_WEB_CLIENT_ID.into(),
+                client_id: "dummy-shared-client".into(),
                 access_token: "dummy-access".into(),
                 refresh_token: "dummy-refresh".into(),
                 expires_at: u64::MAX,

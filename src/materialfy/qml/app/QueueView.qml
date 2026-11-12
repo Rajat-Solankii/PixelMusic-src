@@ -47,19 +47,26 @@ Item {
         target: root.queue
         function onCountChanged() { root.recount() }
         function onModelReset() { root.recount() }
+        function onRowsInserted() { root.recount() }
+        function onRowsRemoved() { root.recount() }
+        function onRowsMoved() { root.recount() }
     }
     // новый контекст — снова свёрнут
     readonly property string _contextUri: Player.contextUri
     on_ContextUriChanged: contextExpanded = false
 
-    // ---- Перестановка в «Далее в очереди» ----
+    // ---- Перестановка внутри секции («Далее в очереди» или «Далее из …») ----
+    // dragFrom/dragTo — индексы внутри секции dragSection
+    property string dragSection: ""
     property int dragFrom: -1
     property int dragTo: -1
     property real dragOffset: 0
     property bool shiftAnimated: true
+    readonly property int dragRows: dragSection === "manual" ? manualRows : dragSection === "context" ? contextShown : 0
 
-    function beginDrag(m) {
+    function beginDrag(section, m) {
         shiftAnimated = true
+        dragSection = section
         dragFrom = m
         dragTo = m
         dragOffset = 0
@@ -67,8 +74,8 @@ Item {
     function updateDrag(dy) {
         if (dragFrom < 0)
             return
-        dragOffset = Math.max(-dragFrom * rowHeight, Math.min((manualRows - 1 - dragFrom) * rowHeight, dy))
-        dragTo = Math.max(0, Math.min(manualRows - 1, dragFrom + Math.round(dragOffset / rowHeight)))
+        dragOffset = Math.max(-dragFrom * rowHeight, Math.min((dragRows - 1 - dragFrom) * rowHeight, dy))
+        dragTo = Math.max(0, Math.min(dragRows - 1, dragFrom + Math.round(dragOffset / rowHeight)))
     }
     function endDrag() {
         if (dragFrom < 0)
@@ -76,7 +83,10 @@ Item {
         if (dragTo !== dragFrom && Player.queueReorderable) {
             // строка стоит на новом месте, пока не придёт обновлённая модель
             dragOffset = (dragTo - dragFrom) * rowHeight
-            Player.moveManual(dragFrom, dragTo)
+            if (dragSection === "manual")
+                Player.moveManual(dragFrom, dragTo)
+            else
+                Player.moveContext(dragFrom, dragTo)
             settleTimer.restart()
         } else {
             _resetDrag()
@@ -87,14 +97,15 @@ Item {
             return
         settleTimer.stop()
         shiftAnimated = false
+        dragSection = ""
         dragFrom = -1
         dragTo = -1
         dragOffset = 0
         Qt.callLater(() => root.shiftAnimated = true)
     }
     Timer { id: settleTimer; interval: 600; onTriggered: root._resetDrag() }
-    function shiftFor(m) {
-        if (dragFrom < 0 || m < 0 || m === dragFrom)
+    function shiftFor(section, m) {
+        if (dragFrom < 0 || section !== dragSection || m < 0 || m === dragFrom)
             return 0
         if (dragFrom < dragTo && m > dragFrom && m <= dragTo)
             return -rowHeight
@@ -136,23 +147,24 @@ Item {
         }
         return null
     }
-    // позиция в «Далее в очереди» для точки списка; -1 — не цель
+    // позиция в «Далее в очереди» для точки списка: над ручными строками — на их место,
+    // над текущей — первой, над контекстом, пунктирной зоной или подвалом — после ручных строк
     function _dropIndexAt(x, y) {
         if (!Player.isLocal)
             return manualRows
         const p = list.mapToItem(list.contentItem, x, y)
         const i = list.indexAt(p.x, p.y)
         if (i < 0)
-            return dropZoneHover.containsDrag || Player.manualCount === 0 ? 0 : -1
+            return y < list.y ? 0 : manualRows
         const t = queue.get(i)
         if (t.section === "current")
             return 0
         if (t.section === "manual") {
             const item = list.itemAtIndex(i)
-            const below = item ? p.y - item.y > item.height / 2 : false
-            return i - manualStart + (below ? 1 : 0)
+            const within = item ? p.y - item.y - item.headerHeight : 0
+            return i - manualStart + (within > rowHeight / 2 ? 1 : 0)
         }
-        return -1
+        return manualRows
     }
 
     // ---- Пусто ----
@@ -213,57 +225,64 @@ Item {
         // без reuseItems: замер на живой очереди показал регрессию — при частых диффах плеера
         // переклейка данных на переиспользуемые делегаты дороже обновления биндингов на месте
 
-        section.property: "section"
-        section.criteria: ViewSection.FullString
-        section.delegate: Column {
-            id: sec
-            required property string section
-            width: list.width
-            spacing: 4
-
-            Item {
-                width: parent.width
-                height: sec.section === "context" && root.dropZoneShown ? zone.height + 8 : 0
-                visible: height > 0
-                QueueDropZone {
-                    id: zone
-                    y: 8
-                    width: parent.width
-                    active: dropZoneHover.containsDrag
-                }
-            }
-            QueueSectionHeader {
-                width: parent.width
-                title: sec.section === "current" ? I18n.t("Now playing")
-                     : sec.section === "manual" ? I18n.t("Next in queue")
-                     : Player.contextTitle !== "" ? I18n.t("Next from “{0}”", Player.contextTitle) : I18n.t("Next up")
-                count: sec.section === "manual" ? Player.manualCount : -1
-                actionIcon: sec.section === "manual" && Player.canClearQueue ? "clear_all" : ""
-                actionText: I18n.t("Clear")
-                note: sec.section === "manual" && Player.remote ? I18n.t("New tracks go to the end")
-                    : sec.section === "context" && root.dragFrom >= 0 ? I18n.t("Can't drop here") : ""
-                onAction: root.clearQueue()
-            }
-        }
-
+        // Заголовки секций и пунктирная зона — внутри делегата первой строки секции, а не section.delegate:
+        // ListView не переукладывал строки, когда строка меняла секцию на месте (клик по строке очереди,
+        // радио дописывает контекст) или менялась высота заголовка, и текущая строка уезжала на зону.
         delegate: Item {
             id: cell
             required property int index
             required property var model
             readonly property string sec: model.section
-            readonly property int m: sec === "manual" ? index - root.manualStart : -1
-            readonly property bool hidden: sec === "context" && index - root.contextStart >= root.contextShown
-            readonly property bool lifted: m >= 0 && m === root.dragFrom
+            readonly property int m: sec === "manual" ? index - root.manualStart
+                                   : sec === "context" ? index - root.contextStart : index
+            readonly property bool first: m === 0
+            readonly property bool hidden: sec === "context" && m >= root.contextShown
+            readonly property bool lifted: root.dragFrom >= 0 && root.dragSection === sec && m === root.dragFrom
+            readonly property bool movable: Player.queueReorderable && (sec === "manual" || sec === "context")
+            readonly property real headerHeight: head.active && head.item ? head.item.implicitHeight : 0
 
             width: ListView.view.width
-            height: hidden ? 0 : root.rowHeight
+            height: hidden ? 0 : headerHeight + root.rowHeight
             visible: !hidden
             z: lifted ? 10 : 0
+
+            Loader {
+                id: head
+                width: parent.width
+                active: cell.first && !cell.hidden
+                sourceComponent: Column {
+                    width: cell.width
+                    spacing: 4
+
+                    Item {
+                        width: parent.width
+                        height: cell.sec === "context" && root.dropZoneShown ? zone.height + 8 : 0
+                        visible: height > 0
+                        QueueDropZone {
+                            id: zone
+                            y: 8
+                            width: parent.width
+                            active: dropZoneHover.containsDrag
+                        }
+                    }
+                    QueueSectionHeader {
+                        width: parent.width
+                        title: cell.sec === "current" ? I18n.t("Now playing")
+                             : cell.sec === "manual" ? I18n.t("Next in queue")
+                             : Player.contextTitle !== "" ? I18n.t("Next from “{0}”", Player.contextTitle) : I18n.t("Next up")
+                        count: cell.sec === "manual" ? Player.manualCount : -1
+                        actionIcon: cell.sec === "manual" && Player.canClearQueue ? "clear_all" : ""
+                        actionText: I18n.t("Clear")
+                        note: cell.sec === "manual" && Player.remote ? I18n.t("New tracks go to the end") : ""
+                        onAction: root.clearQueue()
+                    }
+                }
+            }
 
             // место, куда встанет поднятая строка
             Rectangle {
                 visible: cell.lifted && root.dragTo !== root.dragFrom
-                y: (root.dragTo - root.dragFrom) * root.rowHeight
+                y: cell.headerHeight + (root.dragTo - root.dragFrom) * root.rowHeight
                 width: parent.width
                 height: root.rowHeight
                 radius: Theme.shape.large
@@ -277,33 +296,35 @@ Item {
                 width: parent.width
                 height: root.rowHeight
                 compact: root.compact
-                y: cell.lifted ? root.dragOffset : root.shiftFor(cell.m)
+                y: cell.headerHeight + (cell.lifted ? root.dragOffset : root.shiftFor(cell.sec, cell.m))
                 Behavior on y {
                     enabled: !row.dragging && root.shiftAnimated
                     NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized }
                 }
                 // свойства корня делегата трогают переходы ListView (add/displaced), поэтому приглушаем строку
-                opacity: root.dragFrom >= 0 && cell.sec === "context" ? 0.45 : 1
+                opacity: root.dragFrom >= 0 && cell.sec !== root.dragSection && cell.sec !== "current" ? 0.45 : 1
                 Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
                 scale: row.dragging ? 1.03 : 1
                 Behavior on scale { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
                 track: root.rowData(cell.index, cell.model.uid, cell.model.title)
                 current: cell.sec === "current"
-                draggable: cell.m >= 0 && Player.queueReorderable
-                dragging: cell.lifted && root.dragFrom >= 0
+                draggable: cell.movable
+                dragging: cell.lifted
                 activeFocusOnTab: true
                 onActivated: Player.playQueueRow(cell.model.uid)
-                onDragStarted: root.beginDrag(cell.m)
+                onDragStarted: root.beginDrag(cell.sec, cell.m)
                 onDragMoved: dy => root.updateDrag(dy)
                 onDragFinished: root.endDrag()
                 Keys.onPressed: e => {
-                    if (!(e.modifiers & Qt.ControlModifier) || cell.m < 0 || !Player.queueReorderable)
+                    if (!(e.modifiers & Qt.ControlModifier) || !cell.movable)
                         return
+                    const rows = cell.sec === "manual" ? root.manualRows : root.contextShown
+                    const move = (from, to) => cell.sec === "manual" ? Player.moveManual(from, to) : Player.moveContext(from, to)
                     if (e.key === Qt.Key_Up && cell.m > 0) {
-                        Player.moveManual(cell.m, cell.m - 1)
+                        move(cell.m, cell.m - 1)
                         e.accepted = true
-                    } else if (e.key === Qt.Key_Down && cell.m < root.manualRows - 1) {
-                        Player.moveManual(cell.m, cell.m + 1)
+                    } else if (e.key === Qt.Key_Down && cell.m < rows - 1) {
+                        move(cell.m, cell.m + 1)
                         e.accepted = true
                     }
                 }
@@ -338,9 +359,9 @@ Item {
             Item { width: 1; height: root.compact ? 16 : 24 }
         }
 
+        // без сдвига по y: абсолютный from уводил строку, если раскладка менялась во время перехода
         add: Transition {
             NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motion.effectsDefault }
-            NumberAnimation { property: "y"; from: Theme.reducedMotion ? 0 : 8; duration: Theme.motion.spatialFast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized }
         }
         remove: Transition {
             NumberAnimation { property: "opacity"; to: 0; duration: Theme.motion.effectsFast }

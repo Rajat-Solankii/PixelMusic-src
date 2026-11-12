@@ -28,6 +28,10 @@ use crate::library::{LibraryEvent, LibraryService};
 use crate::releases::ReleasesService;
 use crate::lock;
 
+mod yt;
+pub(crate) use yt::home_shelf;
+pub use yt::YouTubeHomeSnapshot;
+
 /// Не чаще раза в 10 минут без force.
 pub const REFRESH_EVERY: Duration = Duration::from_secs(600);
 const HISTORY_FOR_HOME: usize = 50;
@@ -88,6 +92,10 @@ pub struct HomeService {
     snapshot: watch::Sender<HomeSnapshot>,
     data: Mutex<HomeData>,
     generation: AtomicU64,
+    /// YouTube Music home (home/yt.rs)
+    yt_home: watch::Sender<YouTubeHomeSnapshot>,
+    yt_state: Mutex<yt::YtHome>,
+    yt_generation: AtomicU64,
     me: Weak<HomeService>,
 }
 
@@ -112,9 +120,13 @@ impl HomeService {
             snapshot: watch::channel(HomeSnapshot::default()).0,
             data: Mutex::new(HomeData::default()),
             generation: AtomicU64::new(0),
+            yt_home: watch::channel(YouTubeHomeSnapshot::default()).0,
+            yt_state: Mutex::default(),
+            yt_generation: AtomicU64::new(0),
             me: me.clone(),
         });
         rt.spawn(listen(Arc::downgrade(&service)));
+        service.spawn_yt_listener();
         service
     }
 

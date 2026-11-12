@@ -1,0 +1,26 @@
+{
+  "responseContext": { "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D" },
+  "playabilityStatus": { "status": "OK" },
+  "videoDetails": {
+    "videoId": "fJ9rUzIMcZQ",
+    "title": "Bohemian Rhapsody",
+    "lengthSeconds": "355",
+    "author": "Queen",
+    "channelId": "UCiMhD4jzUqG-IgPzUmmytRQ"
+  },
+  "streamingData": {
+    "expiresInSeconds": 21540,
+    "adaptiveFormats": [
+      {
+        "itag": 251,
+        "mimeType": "audio/webm; codecs=\"opus\"",
+        "bitrate": 154238,
+        "averageBitrate": 131234,
+        "quality": "tiny",
+        "audioQuality": "AUDIO_QUALITY_MEDIUM",
+        "approxDurationMs": "355000",
+        "signatureCipher": "s=mR3k...cipher_sig...&sp=sig&url=https%3A%2F%2Frr1---sn-4g5ednls.googlevideo.com%2Fvideoplayback%3Fexpire%3D1710003600%26itag%3D251"
+      }
+    ]
+  }
+}

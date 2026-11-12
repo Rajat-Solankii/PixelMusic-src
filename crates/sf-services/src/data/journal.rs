@@ -62,6 +62,14 @@ impl Journal {
         self.dirty = true;
     }
 
+    /// Replace every play (restored backup); newest first, at most [`KEPT`].
+    pub fn replace(&mut self, mut plays: Vec<PlayRecord>) {
+        plays.sort_by_key(|play| std::cmp::Reverse(seconds(play).unwrap_or(i64::MIN)));
+        plays.truncate(KEPT);
+        self.plays = plays;
+        self.dirty = true;
+    }
+
     pub fn clear(&mut self) {
         if !self.plays.is_empty() {
             self.plays.clear();

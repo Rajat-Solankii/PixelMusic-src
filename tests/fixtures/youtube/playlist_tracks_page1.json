@@ -1,0 +1,89 @@
+{
+  "responseContext": { "visitorData": "CgtWMTIzNDU2Nzg5MCiA9euyBg%3D%3D" },
+  "contents": {
+    "twoColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "content": {
+              "sectionListRenderer": {
+                "contents": [
+                  {
+                    "musicResponsiveHeaderRenderer": {
+                      "title": { "runs": [{ "text": "Chill Lofi Beats" }] },
+                      "straplineTextOne": { "runs": [{ "text": "Curator Alex" }] },
+                      "secondSubtitle": { "runs": [{ "text": "100 songs • 4 hours" }] },
+                      "thumbnail": {
+                        "musicThumbnailRenderer": {
+                          "thumbnail": {
+                            "thumbnails": [{ "url": "https://lh3.googleusercontent.com/cover1_large.jpg" }]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "secondaryContents": {
+        "sectionListRenderer": {
+          "contents": [
+            {
+              "musicPlaylistShelfRenderer": {
+                "playlistId": "PL1234567890abcdef",
+                "contents": [
+                  {
+                    "musicResponsiveListItemRenderer": {
+                      "playlistItemData": { "videoId": "vid_track_001", "playlistSetVideoId": "set_001" },
+                      "flexColumns": [
+                        {
+                          "musicResponsiveListItemFlexColumnRenderer": {
+                            "text": { "runs": [{ "text": "Midnight Rain" }] }
+                          }
+                        },
+                        {
+                          "musicResponsiveListItemFlexColumnRenderer": {
+                            "text": {
+                              "runs": [
+                                { "text": "Kavinsky", "navigationEndpoint": { "browseEndpoint": { "browseId": "UCkavinsky" } } },
+                                { "text": " • " },
+                                { "text": "Nightcall EP", "navigationEndpoint": { "browseEndpoint": { "browseId": "MPREb_album01" } } }
+                              ]
+                            }
+                          }
+                        }
+                      ],
+                      "fixedColumns": [
+                        {
+                          "musicResponsiveListItemFixedColumnRenderer": {
+                            "text": { "runs": [{ "text": "3:42" }] }
+                          }
+                        }
+                      ],
+                      "thumbnail": {
+                        "musicThumbnailRenderer": {
+                          "thumbnail": { "thumbnails": [{ "url": "https://lh3.googleusercontent.com/track001.jpg" }] }
+                        }
+                      }
+                    }
+                  }
+                ],
+                "continuations": [
+                  {
+                    "nextContinuationData": {
+                      "continuation": "4qmFsgK8ARIbVkxQTD...ctok_page2_token...==",
+                      "clickTrackingParams": "CAEQ8DUYACITCN..."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

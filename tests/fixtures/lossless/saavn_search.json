@@ -1,0 +1,29 @@
+{
+  "total": 4,
+  "start": 1,
+  "results": [
+    {
+      "id": "pro1", "title": "Kesariya", "type": "song", "image": "http://c.saavncdn.com/1/pro-150x150.jpg", "explicit_content": "0",
+      "more_info": { "album": "Brahmastra", "duration": "268", "encrypted_media_url": "iPPGVzyogeiPwpro65A0eUaQggN+8+J4iFnM6bpioJ8fcVI8pZF87pT4p7AxSE/F",
+        "artistMap": { "primary_artists": [{ "id": "1", "name": "Arijit Singh" }], "featured_artists": [], "artists": [{ "id": "1", "name": "Arijit Singh" }] },
+        "rights": { "code": "1", "cacheable": "false", "reason": "Pro Only" } }
+    },
+    {
+      "id": "cover", "title": "Kesariya", "type": "song", "image": "", "explicit_content": "0",
+      "more_info": { "album": "Covers", "duration": "268", "encrypted_media_url": "iPPGVzyogeiPwpro65A0eUaQggN+8+J4iFnM6bpioJ8fcVI8pZF87pT4p7AxSE/F",
+        "artistMap": { "primary_artists": [{ "id": "9", "name": "Someone Else" }], "featured_artists": "", "artists": [] } }
+    },
+    {
+      "id": "long", "title": "Kesariya", "type": "song", "image": "", "explicit_content": "0",
+      "more_info": { "album": "Brahmastra (Extended)", "duration": "400", "encrypted_media_url": "iPPGVzyogeiPwpro65A0eUaQggN+8+J4iFnM6bpioJ8fcVI8pZF87pT4p7AxSE/F",
+        "artistMap": { "primary_artists": [{ "id": "1", "name": "Arijit Singh" }], "featured_artists": [], "artists": [] } }
+    },
+    {
+      "id": "OqVAbcde", "title": "Kesariya (From &quot;Brahmastra&quot;)", "type": "song", "image": "http://c.saavncdn.com/430/Kesariya-150x150.jpg", "explicit_content": "0",
+      "more_info": { "album": "Kesariya (From &quot;Brahmastra&quot;)", "duration": "268",
+        "encrypted_media_url": "iPPGVzyogeiPwpro65A0eUaQggN+8+J4soHGLpOWVT6K6RkNB6mF8AT9ZQU9MUmbaWcMz14qsUwlaFcDXhieroPzFaL/aK97",
+        "artistMap": { "primary_artists": [{ "id": "2", "name": "Pritam" }], "featured_artists": [{ "id": "1", "name": "Arijit Singh" }, { "id": "3", "name": "Amitabh Bhattacharya" }], "artists": [] },
+        "rights": { "code": "0", "cacheable": "true", "reason": "" } }
+    }
+  ]
+}

@@ -1243,3 +1243,10 @@ mod tests {
         assert_eq!(back, release);
     }
 }
+
+impl ReleasesService {
+    /// New albums and singles on YouTube Music (`FEmusic_new_releases_albums`; works without an account).
+    pub async fn youtube_new_releases(&self) -> Result<Vec<AlbumItem>, crate::ServiceError> {
+        self.auth.youtube().new_releases().await.map_err(crate::catalog::yt_error)
+    }
+}

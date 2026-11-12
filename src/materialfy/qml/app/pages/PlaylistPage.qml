@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import Md3
 import Materialfy.Core
 import ".."
@@ -31,7 +32,7 @@ TrackListPage {
     readonly property bool canEdit: _rev >= 0 && playlistId !== "" && Library.canEdit(playlistId)
     readonly property bool own: (info.ownerId ?? "") !== "" && info.ownerId === myId
     readonly property bool collaborative: info.collaborative === true
-    readonly property string uri: (info.uri ?? "") !== "" ? info.uri : (playlistId !== "" ? "spotify:playlist:" + playlistId : "")
+    readonly property string uri: (info.uri ?? "") !== "" ? info.uri : (playlistId.startsWith("youtube:") ? playlistId : playlistId !== "" ? "spotify:playlist:" + playlistId : "")
     property bool panelOpen: false
     readonly property bool compactPanel: width < 760
 
@@ -241,6 +242,28 @@ TrackListPage {
                 }
             }
         }
+        // YouTube Music playlists: save the loaded songs for playing offline (Downloads)
+        IconButton {
+            visible: page.uri.startsWith("youtube:playlist:")
+            anchors.verticalCenter: parent.verticalCenter
+            readonly property bool downloaded: Downloads.revision >= 0 && Downloads.hasPlaylist(page.uri)
+            Accessible.name: downloaded ? I18n.t("Remove download") : I18n.t("Download")
+            icon: downloaded ? "download_done" : "download"
+            style: downloaded ? "tonal" : "standard"
+            size: "m"
+            checkable: true
+            autoToggle: false
+            checked: downloaded
+            onClicked: {
+                if (downloaded) {
+                    Downloads.removePlaylist(page.uri)
+                    page.notify(I18n.t("Removed the download of “{0}”", page.title))
+                } else {
+                    Downloads.downloadPlaylist(page.uri)
+                    page.notify(I18n.t("Downloading “{0}”", page.title))
+                }
+            }
+        }
         IconButton {
             icon: "share"
             size: "m"
@@ -336,6 +359,8 @@ TrackListPage {
         ]
         if (page.canEdit)
             items.push({ id: "edit", text: I18n.t("Edit playlist"), icon: "edit" })
+        items.push({ id: "m3u", text: I18n.t("Export as M3U"), icon: "save",
+                     enabled: !!page.model && page.model.count > 0 && !Extras.busy })
         if (page.own)
             items.push({ separator: true }, { id: "delete", text: I18n.t("Delete playlist"), icon: "delete" })
         else if (page.info.followed === true)
@@ -356,6 +381,11 @@ TrackListPage {
                 page.notify(was ? I18n.t("Unpinned") : I18n.t("Pinned — in this app only"))
             } else if (id === "edit") {
                 page.editing = true
+            } else if (id === "m3u") {
+                const folder = m3uDialog.currentFolder.toString()
+                if (folder !== "")
+                    m3uDialog.selectedFile = folder + "/" + Extras.m3uFileName(page.title)
+                m3uDialog.open()
             } else if (id === "delete" || id === "unfollow") {
                 Library.unfollowPlaylist(page.playlistId)
                 page.notify(id === "delete" ? I18n.t("Playlist deleted") : I18n.t("Unfollowed “{0}”", page.title),
@@ -364,6 +394,16 @@ TrackListPage {
                     page.router.back()
             }
         }
+    }
+
+    // M3U export (Extras; the result comes as a toast from Main.qml)
+    FileDialog {
+        id: m3uDialog
+        title: I18n.t("Export as M3U")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "m3u8"
+        nameFilters: [I18n.t("Playlists ({0})", "*.m3u8 *.m3u")]
+        onAccepted: Extras.exportPlaylistM3u(page.playlistId, page.title, selectedFile.toString())
     }
 
     AddTracksPanel {

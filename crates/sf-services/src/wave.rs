@@ -38,6 +38,8 @@ const TIMEOUT_TEXT: &str = "Spotify is taking too long to respond. Try again.";
 const NO_RADIO_TEXT: &str = "There’s no radio for this.";
 const EMPTY_TEXT: &str = "Spotify returned no tracks for this station.";
 
+mod yt;
+
 /// Снимок для моста Radio.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WaveSnapshot {
@@ -128,8 +130,20 @@ impl WaveService {
         }
     }
 
+    /// A YouTube song from a list (search): it plays now and its radio follows it in the queue. Anything else
+    /// plays alone.
+    pub fn play_track_radio(&self, track: md3_model::TrackItem) {
+        match yt::youtube_seed(&track.uri).map(str::to_owned) {
+            Some(video_id) => self.yt_play_track(video_id, track),
+            None => self.player.play_items(vec![track], 0, md3_model::PlayContext::default()),
+        }
+    }
+
     /// Радио от сида: "artist:ID" | "track:ID" | "album:ID" | "playlist:ID" | полный spotify:…-URI.
     pub fn play_station(&self, seed: String, title: String) {
+        if let Some(video) = yt::youtube_seed(&seed) {
+            return self.yt_play_station(video.to_owned(), title);
+        }
         let Some((seed, station)) = normalize(&seed) else {
             self.snapshot.send_modify(|s| s.error_text = mf_i18n::t(NO_RADIO_TEXT));
             return;
@@ -162,6 +176,9 @@ impl WaveService {
 
     /// Открыть станцию (загрузить треки без воспроизведения) — страница радио.
     pub fn open(&self, seed_uri: String) {
+        if let Some(video) = yt::youtube_seed(&seed_uri) {
+            return self.yt_open(video.to_owned());
+        }
         let Some((seed, station)) = normalize(&seed_uri) else {
             self.snapshot.send_modify(|s| s.error_text = mf_i18n::t(NO_RADIO_TEXT));
             return;
@@ -176,6 +193,11 @@ impl WaveService {
     /// «Пересобрать»: новый микс, старые треки видны до ответа.
     pub fn refresh(&self) {
         let snap = self.snapshot();
+        if let Some(seed) = yt::youtube_station_seed(&snap.station_uri)
+            && let Some(video) = yt::youtube_seed(&seed)
+        {
+            return self.yt_request(video.to_owned(), snap.station_title.clone(), Then::Refresh);
+        }
         let seed = station_seed(&snap.station_uri)
             .or_else(|| (!snap.selected.is_empty()).then(|| snap.selected.clone()))
             .or_else(|| seeds::default_seed(&snap.seeds));

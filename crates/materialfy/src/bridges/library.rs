@@ -10,9 +10,10 @@ use cxx_qt::{CxxQtThread, CxxQtType, Threading};
 use cxx_qt_lib::{QString, QStringList};
 use md3_model::{ListChange, PlayContext, PlaylistId, contexts};
 use sf_services::{AuthEvent, HistoryEvent, LibraryEvent, LibraryKind};
+use sf_services::library::ImportProgress;
 use tokio::sync::{Semaphore, broadcast};
 
-use super::{Delivery, forward_events, json_str, model_ptr, string_list, track_from_map, with_model};
+use super::{Delivery, forward_events, forward_watch, json_str, model_ptr, string_list, track_from_map, with_model};
 use crate::context::ctx;
 use crate::models::{DictListModel, ModelKind, Row, apply_list_change, apply_row_change, to_row_change, to_rows};
 use crate::qt::{QVariantList, QVariantMap, qvariant_to_json};
@@ -45,6 +46,19 @@ pub mod qobject {
         #[qproperty(i32, pins_revision, cxx_name = "pinsRevision", READ, NOTIFY = pins_changed)]
         #[qproperty(i32, pages_loaded, cxx_name = "pagesLoaded", READ, NOTIFY = pages_changed)]
         #[qproperty(i32, pages_total, cxx_name = "pagesTotal", READ, NOTIFY = pages_changed)]
+        // --- playlist import (YouTube Music): importPlaylist → progress below, one signal for the group ---
+        #[qproperty(bool, import_running, cxx_name = "importRunning", READ, NOTIFY = import_changed)]
+        /// songs looked up so far / songs in the source (0 until the source is read)
+        #[qproperty(i32, import_done, cxx_name = "importDone", READ, NOTIFY = import_changed)]
+        #[qproperty(i32, import_total, cxx_name = "importTotal", READ, NOTIFY = import_changed)]
+        #[qproperty(QString, import_title, cxx_name = "importTitle", READ, NOTIFY = import_changed)]
+        /// "title · artist" of the songs without a match
+        #[qproperty(QStringList, import_missed, cxx_name = "importMissed", READ, NOTIFY = import_changed)]
+        /// youtube:playlist:<id> the import was saved to; "" when not saved
+        #[qproperty(QString, import_playlist_uri, cxx_name = "importPlaylistUri", READ, NOTIFY = import_changed)]
+        #[qproperty(QString, import_error, cxx_name = "importError", READ, NOTIFY = import_changed)]
+        /// matched songs in source order (Track rows)
+        #[qproperty(*mut QObject, import_tracks, cxx_name = "importTracks", READ = import_tracks_ptr, CONSTANT)]
         type Library = super::LibraryRust;
 
         fn playlists_ptr(self: &Library) -> *mut QObject;
@@ -54,6 +68,7 @@ pub mod qobject {
         fn shows_ptr(self: &Library) -> *mut QObject;
         fn episodes_ptr(self: &Library) -> *mut QObject;
         fn recent_ptr(self: &Library) -> *mut QObject;
+        fn import_tracks_ptr(self: &Library) -> *mut QObject;
 
         #[qsignal]
         #[cxx_name = "errorChanged"]
@@ -70,6 +85,9 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "pagesChanged"]
         fn pages_changed(self: Pin<&mut Library>);
+        #[qsignal]
+        #[cxx_name = "importChanged"]
+        fn import_changed(self: Pin<&mut Library>);
         /// дерево/сортировка изменились — модели items()/folderChildren() уже обновлены
         #[qsignal]
         #[cxx_name = "entriesChanged"]
@@ -148,6 +166,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "unfollowPlaylist"]
         fn unfollow_playlist(self: &Library, playlist_id: &QString);
+        /// Import a playlist into YouTube Music songs: YouTube link or id, Spotify link, M3U or JSON text.
+        /// save: also create a private YouTube Music playlist from the matches (needs the account).
+        #[qinvokable]
+        #[cxx_name = "importPlaylist"]
+        fn import_playlist(self: &Library, input: &QString, save: bool);
+        #[qinvokable]
+        #[cxx_name = "cancelImport"]
+        fn cancel_import(self: &Library);
 
         // --- лайки, сохранённое ---
         #[qinvokable]
@@ -211,6 +237,15 @@ pub struct LibraryRust {
     pins_revision: i32,
     pages_loaded: i32,
     pages_total: i32,
+    import: ImportProgress,
+    import_running: bool,
+    import_done: i32,
+    import_total: i32,
+    import_title: QString,
+    import_missed: QStringList,
+    import_playlist_uri: QString,
+    import_error: QString,
+    import_tracks: UniquePtr<DictListModel>,
 }
 
 impl Default for LibraryRust {
@@ -221,6 +256,8 @@ impl Default for LibraryRust {
         with_model(&mut episodes, |m| m.set_context(PlayContext::new(contexts::EPISODE)));
         let mut recent = DictListModel::create(ModelKind::Track);
         with_model(&mut recent, |m| m.set_context(PlayContext::new(contexts::TRACKS)));
+        let mut import_tracks = DictListModel::create(ModelKind::Track);
+        with_model(&mut import_tracks, |m| m.set_context(PlayContext::new(contexts::TRACKS)));
         Self {
             playlists: DictListModel::create(ModelKind::Playlist),
             liked,
@@ -239,6 +276,15 @@ impl Default for LibraryRust {
             pins_revision: 0,
             pages_loaded: 0,
             pages_total: 0,
+            import: ImportProgress::default(),
+            import_running: false,
+            import_done: 0,
+            import_total: 0,
+            import_title: QString::default(),
+            import_missed: QStringList::default(),
+            import_playlist_uri: QString::default(),
+            import_error: QString::default(),
+            import_tracks,
         }
     }
 }
@@ -323,6 +369,41 @@ impl qobject::Library {
 
     fn recent_ptr(&self) -> *mut cxx_qt::QObject {
         model_ptr(&self.recent)
+    }
+
+    fn import_tracks_ptr(&self) -> *mut cxx_qt::QObject {
+        model_ptr(&self.import_tracks)
+    }
+
+    fn import_playlist(&self, input: &QString, save: bool) {
+        let input = input.to_string();
+        if !input.trim().is_empty() {
+            ctx().services.library.import_playlist(input, save);
+        }
+    }
+
+    fn cancel_import(&self) {
+        ctx().services.library.cancel_import();
+    }
+
+    /// Import progress → the import* properties; the track model is reset only when the matches change.
+    fn apply_import(mut self: Pin<&mut Self>, next: ImportProgress) {
+        let prev = std::mem::replace(&mut self.as_mut().rust_mut().import, next.clone());
+        if prev == next {
+            return;
+        }
+        let this = self.as_mut().rust_mut().get_mut();
+        this.import_running = next.running;
+        this.import_done = i32::try_from(next.done).unwrap_or(i32::MAX);
+        this.import_total = i32::try_from(next.total).unwrap_or(i32::MAX);
+        this.import_title = QString::from(next.title.as_str());
+        this.import_missed = next.missed.iter().map(|line| QString::from(line.as_str())).collect();
+        this.import_playlist_uri = QString::from(next.playlist_uri.as_str());
+        this.import_error = QString::from(next.error_text.as_str());
+        if prev.tracks != next.tracks {
+            with_model(&mut this.import_tracks, |m| m.reset_rows(to_rows(&next.tracks)));
+        }
+        self.import_changed();
     }
 
     fn albums_ptr(&self) -> *mut cxx_qt::QObject {
@@ -726,5 +807,9 @@ impl cxx_qt::Initialize for qobject::Library {
         forward_library(self.qt_thread(), events);
         forward_events(self.qt_thread(), history, Self::on_history);
         forward_events(self.qt_thread(), auth, Self::on_auth);
+        let mut import = ctx().services.library.watch_import();
+        let progress = import.borrow_and_update().clone();
+        self.as_mut().apply_import(progress);
+        forward_watch(self.qt_thread(), import, Self::apply_import);
     }
 }
