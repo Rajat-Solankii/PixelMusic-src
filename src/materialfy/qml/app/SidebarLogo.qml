@@ -3,7 +3,10 @@ import QtQuick.Shapes
 import Md3
 import "../Md3/Shapes.js" as Shapes
 
-// Шапка боковой панели: знак «Волна-M» и надпись «Materialfy» (локап как в wordmark.svg).
+// Шапка боковой панели: logo mark (M-wave) and wordmark «Pixel Music». The mark — a button that toggles
+// sidebar collapse/expand, similar to ChatGPT and Claude: on hover or keyboard focus the cookie morphs
+// into a circle, the M with runner dissolves, and an action icon appears in its place.
+// Morph and icon transition follow Theme.motion tokens; instant when Theme.reducedMotion is true.
 // Знак — кнопка «свернуть / развернуть панель», как в ChatGPT и Claude: при наведении или фокусе с клавиатуры
 // печенька морфится в круг, «M» с бегунком растворяется, на её месте проявляется иконка действия.
 // Морф и смена иконки — переходы свойств по токенам Theme.motion; при Theme.reducedMotion — мгновенно.
@@ -39,7 +42,7 @@ Item {
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: root.actionText
-        Accessible.description: "Materialfy"
+        Accessible.description: "Pixel Music"
         Accessible.onPressAction: root.activated()
         Keys.onPressed: e => {
             if (e.key === Qt.Key_Space || e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {

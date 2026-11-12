@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-on-dark.svg">
-  <img src="docs/brand/wordmark.svg" width="420" alt="Materialfy">
+  <img src="docs/brand/wordmark.svg" width="420" alt="Pixel Music">
 </picture>
 
 [![Release build](https://github.com/fatyzzz/materialfy/actions/workflows/release.yml/badge.svg)](https://github.com/fatyzzz/materialfy/actions/workflows/release.yml)
@@ -25,7 +25,7 @@ Windows и Linux, macOS в экспериментальном режиме.
 
 <br>
 
-Materialfy ставят вместо официального настольного приложения Spotify, чтобы слушать музыку в обычном
+Pixel Music ставят вместо официального настольного приложения Spotify, чтобы слушать музыку в обычном
 нативном окне. Интерфейс написан на QML (Qt 6.12) без браузерного движка, логика на Rust. Звук играет
 [librespot](https://github.com/librespot-org/librespot) внутри процесса программы, поэтому для воспроизведения
 на компьютере нужен Spotify Premium. Цвета интерфейса подстраиваются под обложку текущего трека. Язык интерфейса
@@ -200,7 +200,7 @@ Spotify выдаёт два отдельных разрешения, и прог
 2. Воспроизведение на этом компьютере: экран «Воспроизведение» или меню устройств. Второе подтверждение
    в браузере приходит на `http://127.0.0.1:8898/login`. После него компьютер появляется в Spotify Connect.
 
-Без второго шага Materialfy работает как пульт для других устройств (с Premium).
+Без второго шага Pixel Music работает как пульт для других устройств (с Premium).
 
 ## Сессия Spotify и Web API
 
@@ -245,7 +245,7 @@ Spotify выдаёт два отдельных разрешения, и прог
 3. Новое приложение работает в режиме разработки и пускает только пользователей из списка. Добавьте свой
    email от аккаунта Spotify в «User Management».
 4. Скопируйте Client ID (32 символа) со страницы приложения.
-5. В Materialfy: «Настройки» → «Аккаунт» → «Личное приложение Spotify» → «Настроить». В форме показан redirect
+5. В Pixel Music: «Настройки» → «Аккаунт» → «Личное приложение Spotify» → «Настроить». В форме показан redirect
    URI из шага 2 с кнопкой копирования. Вставьте Client ID, нажмите «Сохранить» и подтвердите доступ в браузере.
 
 Часть запросов Web API и со своим Client ID идёт через общий: чужие плейлисты, список ваших плейлистов,
@@ -428,7 +428,7 @@ cargo test --locked --workspace
 
 ## Происхождение и лицензия
 
-Materialfy основан на двух проектах под лицензией MIT:
+Pixel Music основан на двух проектах под лицензией MIT:
 
 - [spotifast](https://github.com/crmne/spotifast) (Carmine Paolino, crmne): вход, клиент Web API, воспроизведение
   через librespot, Spotify Connect, очередь, библиотека и радио (`crates/sf-*`).
@@ -441,11 +441,11 @@ Materialfy основан на двух проектах под лицензие
 [cxx-qt](https://github.com/KDAB/cxx-qt) (MIT или Apache-2.0), [Qt 6](https://www.qt.io) (LGPL-3.0, подключается
 динамически), шрифт Google Sans (SIL Open Font License 1.1) и иконки Material Symbols Rounded (Apache License 2.0).
 
-Materialfy распространяется по лицензии GNU GPL версии 3 или любой более поздней (GPL-3.0-or-later), текст в
+Pixel Music распространяется по лицензии GNU GPL версии 3 или любой более поздней (GPL-3.0-or-later), текст в
 [LICENSE](LICENSE). Версии до 0.2.1 включительно вышли под MIT, а код из spotifast и yamusic-md3 сохраняет
 уведомление MIT в [LICENSES/MIT.txt](LICENSES/MIT.txt). Авторы, источники и лицензии зависимостей
 перечислены в [NOTICE](NOTICE). Логотип «Волна-M» лежит в [`docs/brand/`](docs/brand/).
 
 <br>
 
-<p align="center"><sub>Materialfy не связан со Spotify AB и не одобрен ею. Spotify является товарным знаком Spotify AB.</sub></p>
+<p align="center"><sub>Pixel Music не связан со Spotify AB и не одобрен ею. Spotify является товарным знаком Spotify AB.</sub></p>

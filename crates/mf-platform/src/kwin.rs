@@ -189,7 +189,7 @@ mod imp {
         #[test]
         fn script_locks_the_edge_axis_and_reports_the_drop() {
             let spot = super::super::Spot { x: 10, y: 0, width: 400, height: 200, hide_fullscreen: true, hide_maximized: false, move_x: true, move_y: false };
-            let text = script_text("Materialfy Island 0", &spot, ":1.42");
+            let text = script_text("Pixel Music Island 0", &spot, ":1.42");
             assert!(text.contains("const moveX = true;\nconst moveY = false;"));
             // поперёк края окно стоит там, куда его поставили
             assert!(text.contains("moveY ? clamp(g.y, area.y, area.y + area.height - g.height) : 0;"));

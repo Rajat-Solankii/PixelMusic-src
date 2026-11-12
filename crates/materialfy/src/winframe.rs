@@ -53,6 +53,11 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "raiseMain"]
         fn raise_main(self: &WindowShell);
+        
+        /// Update window/taskbar icon based on colorway setting
+        #[qinvokable]
+        #[cxx_name = "updateIcon"]
+        fn update_icon_qml(self: &WindowShell, colorway: &QString);
         /// Окно-островок: не в панели задач и Alt+Tab, не забирает фокус (Windows; иначе false)
         #[qinvokable]
         #[cxx_name = "makeToolWindow"]
@@ -256,6 +261,10 @@ impl qobject::WindowShell {
     fn windhawk_active(&self) -> bool {
         qobject::floating_windhawk_active()
     }
+
+    fn update_icon_qml(&self, colorway: &QString) {
+        update_icon(&colorway.to_string());
+    }
 }
 
 /// Поставить фильтр на главное окно (после load, окно уже создано). `window` — QQuickWindow* корня.
@@ -271,4 +280,31 @@ pub fn install(window: *mut cxx_qt::QObject) {
     if !unsafe { qobject::taskbar_install(window) } {
         tracing::warn!("taskbar: no thumbnail toolbar (no HWND, QML engine or Player)");
     }
+}
+
+/// Update window and taskbar icon based on colorway.
+/// Maps colorway names (bluePurple, babyPinkPurple, etc.) to icon files.
+pub fn update_icon(colorway: &str) {
+    let icon_name = match colorway {
+        "babyPinkPurple" => "baby-pink-purple",
+        "graphiteGray" => "graphite-gray",
+        "limeGreen" => "lime-green",
+        "limeLemon" => "lime-lemon",
+        "orangeYellow" => "orange-yellow",
+        _ => "blue-purple", // default fallback
+    };
+    
+    let assets_dir = crate::engine::assets_dir();
+    let icon_path = assets_dir.join("logos").join(format!("{}.svg", icon_name));
+    
+    if !icon_path.exists() {
+        tracing::warn!("icon file not found for colorway {}: {:?}", colorway, icon_path);
+        return;
+    }
+    
+    let qpath = QString::from(icon_path.to_string_lossy().as_ref());
+    crate::qt::ffi::ffi::app_set_window_icon(&qpath);
+    
+    // Note: On Windows, taskbar icon updates automatically when window icon changes
+    // The .ico file embedded in the exe (IDI_ICON1) is used for shortcuts
 }

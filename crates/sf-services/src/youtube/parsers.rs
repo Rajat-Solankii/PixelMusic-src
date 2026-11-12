@@ -253,10 +253,41 @@ pub(crate) fn parse_abbreviated(value: &str) -> i64 {
     digits.parse::<f64>().map_or(0, |number| (number * scale).round() as i64)
 }
 
+/// Normalize a thumbnail URL: fix protocol-relative URLs and malformed size parameters.
+fn normalize_thumbnail_url(url: &str) -> String {
+    let url = url.trim();
+    
+    // Fix protocol-relative URLs
+    let url = if url.starts_with("//") {
+        format!("https:{}", url)
+    } else {
+        url.to_owned()
+    };
+    
+    // For Google/YouTube URLs, normalize size parameters
+    if url.contains("googleusercontent.com") || url.contains("ggpht.com") || url.contains("ytimg.com") {
+        // Normalize =w0-h0 or missing size params to =w300-h300-l90-rj for square thumbnails
+        // This preserves aspect ratio while ensuring a reasonable size
+        let url = if SIZE_WH.is_match(&url) {
+            SIZE_WH.replace(&url, "=w300-h300-l90-rj").into_owned()
+        } else if SIZE_S.is_match(&url) {
+            SIZE_S.replace(&url, "=s300").into_owned()
+        } else if !url.contains("=w") && !url.contains("=s") {
+            // Append size param if missing
+            format!("{}=w300-h300-l90-rj", url)
+        } else {
+            url
+        };
+        return url;
+    }
+    
+    url
+}
+
 /// Last (largest) entry of a `{ "thumbnails": [...] }` object.
 fn thumbnail_url(value: &Value) -> String {
     let url = arr(&value["thumbnails"]).last().map(|thumbnail| text(&thumbnail["url"])).unwrap_or_default();
-    if url.starts_with("//") { format!("https:{url}") } else { url.to_owned() }
+    normalize_thumbnail_url(url)
 }
 
 /// A thumbnail in any of its wrappers (`musicThumbnailRenderer`, `croppedSquareThumbnailRenderer`, bare).
@@ -265,17 +296,35 @@ fn renderer_thumbnail(value: &Value) -> String {
     thumbnail_url(or(&renderer["thumbnail"], or(&value["thumbnail"], value)))
 }
 
-/// Google image URLs carry their size as a suffix; ask for `px` instead. Other hosts are left alone.
+/// Google/YouTube image URLs carry their size as a suffix; ask for `px` instead.
+/// Also handles ytimg.com URLs. Other hosts are left alone.
+/// Fixes protocol-relative URLs (//...) by adding https: prefix.
 pub(crate) fn sized(url: &str, px: u32) -> String {
-    if !(url.contains("googleusercontent.com") || url.contains("ggpht.com")) {
-        return url.to_owned();
-    }
-    if SIZE_WH.is_match(url) {
-        SIZE_WH.replace(url, format!("=w{px}-h{px}-l90-rj")).into_owned()
-    } else if SIZE_S.is_match(url) {
-        SIZE_S.replace(url, format!("=s{px}")).into_owned()
+    let url = url.trim();
+    
+    // Fix protocol-relative URLs first
+    let url = if url.starts_with("//") {
+        format!("https:{}", url)
     } else {
         url.to_owned()
+    };
+    
+    if !(url.contains("googleusercontent.com") || url.contains("ggpht.com") || url.contains("ytimg.com")) {
+        return url;
+    }
+    
+    // Ensure px is reasonable (minimum 48, maximum 1920)
+    let px = px.clamp(48, 1920);
+    
+    if SIZE_WH.is_match(&url) {
+        SIZE_WH.replace(&url, format!("=w{px}-h{px}-l90-rj")).into_owned()
+    } else if SIZE_S.is_match(&url) {
+        SIZE_S.replace(&url, format!("=s{px}")).into_owned()
+    } else if !url.contains("=") || url.ends_with("=") {
+        // Append size param if missing or empty
+        format!("{}=w{px}-h{px}-l90-rj", url.trim_end_matches('='))
+    } else {
+        url
     }
 }
 
@@ -1044,8 +1093,11 @@ fn panel_track(renderer: &Value) -> Option<TrackItem> {
     ))
 }
 
+/// Returns the next page token and optionally automix playlist ID and params.
+pub type AutomixInfo = Option<(String, Option<String>)>;
+
 /// `YouTube.next`: the queue, and the automix playlist to follow when the panel ends with a preview.
-pub fn next_page(response: &Value) -> Result<(NextPage, Option<(String, Option<String>)>)> {
+pub fn next_page(response: &Value) -> Result<(NextPage, AutomixInfo)> {
     let tabs = &response["contents"]["singleColumnMusicWatchNextResultsRenderer"]["tabbedRenderer"]
         ["watchNextTabbedResultsRenderer"]["tabs"];
     let queue = &tabs[0]["tabRenderer"]["content"]["musicQueueRenderer"];

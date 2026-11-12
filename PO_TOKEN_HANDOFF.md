@@ -58,7 +58,7 @@ The user allowed running YouTube's downloaded JS (player base.js, BotGuard) in t
    object's zero-arg prototype method that returns a string starting with `http` (skip `constructor`/`clone`). This
    deciphers `s` and transforms `n`; call it with `("", "")` for formats that already have a plain `url` (n still transforms).
 4. BotGuard: POST `https://www.youtube.com/api/jnn/v1/Create` body `["O43z0dpjhgX20SCx4KAo"]`, headers
-   `content-type: application/json+protobuf`, `x-goog-api-key: REDACTED_API_KEY`,
+   `content-type: application/json+protobuf`, `x-goog-api-key: <BOTGUARD_API_KEY>`,
    `x-user-agent: grpc-web-javascript/0.1`, web UA. In a fresh Context: set `__realms` (an array with the globals of 4 other
    Contexts in the same Runtime, via `rquickjs::Persistent`) and optionally `__hostNow` (ms as f64 from an Instant), eval
    `__DOM_SURFACE` + env.js + botguard.js, then `__start(<create response>)`. Pump: run pending jobs, check

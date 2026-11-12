@@ -27,6 +27,23 @@ Window {
     property string floatingShot: ""
     property string taskbarTheme: ""
 
+    //尺寸变换和设置已保存之间的连接（保存至上次保存的）。QML ResizeEdges 通过 startSystemResize 做尺寸变换，
+    // WindowFrame 做圆角（窗口透明）。类似地 — Windows 任务栏窗口缩略图下的“后退 / 暂停 / 前进”按钮（cpp/taskbar.cpp）
+    // 和 QML 单例 WindowShell（最小化窗口而不丢失“最大化” / “全屏”；播放器窗口在主窗口之外 — 岛屿和任务栏小组件，cpp/floating.cpp）。
+    
+    // Update window/taskbar icon when logo colorway changes
+    property string _currentIconColorway: ""
+    Connections {
+        target: Settings
+        function onLogoColorwayChanged() {
+            const newColorway = Settings.logoColorway || "bluePurple"
+            if (newColorway !== win._currentIconColorway) {
+                win._currentIconColorway = newColorway
+                WindowShell.updateIcon(newColorway)
+            }
+        }
+    }
+
     // размер и положение — последние сохранённые (см. _restoreGeometry); окно показывается уже на месте
     width: 1280
     height: 800
@@ -35,7 +52,7 @@ Window {
     minimumWidth: 400
     minimumHeight: 120
     visible: false
-    title: Player.hasTrack ? Player.title + " — " + Player.artist + " · Materialfy" : "Materialfy"
+    title: Player.hasTrack ? Player.title + " — " + Player.artist + " · Pixel Music" : "Pixel Music"
     // «Поверх всех окон» (кнопка мини-плеера, меню трека); не запоминается между запусками
     property bool pinnedOnTop: false
     // закрепление — свойство мини-режима: окно, развёрнутое обратно, поверх всех не висит
@@ -80,7 +97,12 @@ Window {
             layoutMode = next
     }
     // размер и положение — из настроек; заодно разрывает привязку layoutMode (дальше — только _reevaluateMode)
-    Component.onCompleted: _restoreGeometry()
+    Component.onCompleted: {
+        _restoreGeometry()
+        // Set initial window/taskbar icon based on current colorway
+        win._currentIconColorway = Settings.logoColorway || "bluePurple"
+        WindowShell.updateIcon(win._currentIconColorway)
+    }
     onWidthChanged: { _reevaluateMode(); if (_geoReady) geoSave.restart() }
     onHeightChanged: { _reevaluateMode(); if (_geoReady) geoSave.restart() }
 
@@ -206,7 +228,7 @@ Window {
             icon.source: Qt.resolvedUrl("../assets/tray-" + (darkPanel && Qt.platform.os !== "osx" ? "white" : "black")
                                         + "-" + (dpr >= 1.75 ? 32 : dpr >= 1.25 ? 24 : 16) + ".png")
             icon.mask: Qt.platform.os === "osx"
-            tooltip: Player.hasTrack ? Player.title + " — " + Player.artist : "Materialfy"
+            tooltip: Player.hasTrack ? Player.title + " — " + Player.artist : "Pixel Music"
             onActivated: reason => {
                 if (reason === Platform.SystemTrayIcon.MiddleClick)
                     Player.togglePlay()
@@ -333,6 +355,7 @@ Window {
                             radio: Qt.resolvedUrl("app/pages/RadioPage.qml"),
                             releases: Qt.resolvedUrl("app/pages/ReleasesPage.qml"),
                             smartmix: Qt.resolvedUrl("app/pages/SmartMixPage.qml"),
+                            mix: Qt.resolvedUrl("app/pages/MixPage.qml"),
                             settings: Qt.resolvedUrl("app/pages/SettingsPage.qml"),
                             // Spotify sign-in is gone: "account" / "playback" open Settings (its first card is
                             // the YouTube Music account)
@@ -757,7 +780,7 @@ Window {
         interval: 2500
         running: CrashReport.pending
         onTriggered: {
-            snackbar.show(I18n.t("Materialfy closed unexpectedly last time"), I18n.t("Report"), () => {
+            snackbar.show(I18n.t("Pixel Music closed unexpectedly last time"), I18n.t("Report"), () => {
                 Qt.openUrlExternally(CrashReport.folder)
                 Qt.openUrlExternally(CrashReport.issueUrl)
             }, 20000)

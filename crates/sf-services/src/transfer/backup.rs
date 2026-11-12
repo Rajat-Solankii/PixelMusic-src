@@ -113,12 +113,12 @@ impl Backup {
 
     pub fn parse(text: &str) -> Result<Self, String> {
         let backup: Self = serde_json::from_str(text.trim_start_matches('\u{feff}'))
-            .map_err(|_| mf_i18n::t("This file is not a Materialfy backup"))?;
+            .map_err(|_| mf_i18n::t("This file is not a Pixel Music backup"))?;
         if backup.format != FORMAT {
-            return Err(mf_i18n::t("This file is not a Materialfy backup"));
+            return Err(mf_i18n::t("This file is not a Pixel Music backup"));
         }
         if backup.version > VERSION {
-            return Err(mf_i18n::t("This backup was made by a newer version of Materialfy"));
+            return Err(mf_i18n::t("This backup was made by a newer version of Pixel Music"));
         }
         Ok(backup)
     }

@@ -181,7 +181,7 @@ fn the_folder_tree_counts_tracks_below_each_folder() {
     let dir = library();
     let index = scan(&dir, &LocalIndex::default());
     let root = dir.path().join("music").to_string_lossy().into_owned();
-    let tree = folder_tree(&[root.clone()], &index.tracks);
+    let tree = folder_tree(std::slice::from_ref(&root), &index.tracks);
     assert_eq!(tree.len(), 1);
     let music = &tree[0];
     assert_eq!((music.path.as_str(), music.tracks, music.total), (root.as_str(), 1, 5));

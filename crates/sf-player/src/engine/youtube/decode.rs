@@ -1,6 +1,8 @@
 //! AAC in MP4 (YouTube's itag 140) decoded with symphonia into what the output chain takes: interleaved
 //! stereo f64 at 44 100 Hz. Mono is doubled, more than two channels keep the first two, other rates go
 //! through [`Resampler`](crate::engine::resample::Resampler).
+use std::sync::{Arc, Mutex};
+
 use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder as CodecDecoder, DecoderOptions};
@@ -21,6 +23,39 @@ fn download_failure(error: &Error) -> Option<String> {
     let download = io.get_ref()?.downcast_ref::<DownloadError>()?;
     log::info!("youtube decode: {download}");
     Some(download.user_message())
+}
+
+/// The source with a note of the download failure its reads met: the probe answers a source that fails at once
+/// with "no suitable format reader" and drops the read's own error.
+struct Watched {
+    inner: Box<dyn MediaSource>,
+    failure: Arc<Mutex<Option<DownloadError>>>,
+}
+
+impl std::io::Read for Watched {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf).inspect_err(|error| {
+            if let Some(download) = error.get_ref().and_then(|inner| inner.downcast_ref::<DownloadError>()) {
+                *self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(download.clone());
+            }
+        })
+    }
+}
+
+impl std::io::Seek for Watched {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(to)
+    }
+}
+
+impl MediaSource for Watched {
+    fn is_seekable(&self) -> bool {
+        self.inner.is_seekable()
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.inner.byte_len()
+    }
 }
 
 /// Packets that fail to decode in a row before the stream counts as broken.
@@ -50,7 +85,8 @@ impl Decoder {
     /// Probes the container the mime names first (`audio/flac`, `audio/mp4`) and opens the first decodable
     /// track; the probe still recognises the other containers by their magic bytes.
     pub fn open(source: Box<dyn MediaSource>, mime: &str) -> Result<Self, String> {
-        let stream = MediaSourceStream::new(source, Default::default());
+        let failure = Arc::new(Mutex::new(None));
+        let stream = MediaSourceStream::new(Box::new(Watched { inner: source, failure: failure.clone() }), Default::default());
         let mime = mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
         let mut hint = Hint::new();
         hint.with_extension(if mime.ends_with("flac") { "flac" } else { "m4a" });
@@ -59,7 +95,13 @@ impl Decoder {
         }
         let probed = symphonia::default::get_probe()
             .format(&hint, stream, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
-            .map_err(|error| download_failure(&error).unwrap_or_else(|| format!("unsupported audio: {error}")))?;
+            .map_err(|error| {
+                let refused = failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().map(|download| {
+                    log::info!("youtube decode: {download}");
+                    download.user_message()
+                });
+                download_failure(&error).or(refused).unwrap_or_else(|| format!("unsupported audio: {error}"))
+            })?;
         let format = probed.format;
         let track = format
             .tracks()
@@ -256,7 +298,7 @@ pub(crate) mod tests {
 
     /// Strength of a sine at `hz` in a stretch of the left channel (Goertzel).
     fn tone_power(samples: &[f64], hz: f64) -> f64 {
-        let left: Vec<f64> = samples.chunks_exact(2).map(|frame| frame[0]).collect();
+        let left: Vec<f64> = samples.as_chunks::<2>().0.iter().map(|frame| frame[0]).collect();
         let coefficient = 2.0 * (2.0 * std::f64::consts::PI * hz / f64::from(SAMPLE_RATE)).cos();
         let (mut previous, mut before) = (0.0, 0.0);
         for sample in &left {
@@ -290,7 +332,7 @@ pub(crate) mod tests {
         // one second at 44.1 kHz, give or take the encoder's padding and the filter's delay
         assert!((42_000..=46_000).contains(&frames), "frames {frames}");
         let middle = &samples[20_000..60_000];
-        assert!(middle.chunks_exact(2).all(|frame| frame[0] == frame[1]), "mono is copied to both sides");
+        assert!(middle.as_chunks::<2>().0.iter().all(|frame| frame[0] == frame[1]), "mono is copied to both sides");
         assert!(tone_power(middle, 1_000.0) > 100.0 * tone_power(middle, 440.0));
     }
 

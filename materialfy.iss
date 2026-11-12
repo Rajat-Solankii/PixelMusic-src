@@ -1,10 +1,10 @@
-﻿; Inno Setup script for Materialfy (Rust + Qt 6)
+﻿; Inno Setup script for Pixel Music (Rust + Qt 6)
 ; Built from build_windows.ps1:
-;   ISCC /DAppVersion=0.1.0 /DDistDir=target\dist\materialfy /Otarget\dist materialfy.iss
-; Output: target\dist\Materialfy-<version>-Setup.exe
-; Per-user install (no UAC) into %LocalAppData%\Programs\Materialfy
+;   ISCC /DAppVersion=0.1.0 /DDistDir=target\dist\pixelmusic /Otarget\dist pixelmusic.iss
+; Output: target\dist\PixelMusic-<version>-Setup.exe
+; Per-user install (no UAC) into %LocalAppData%\Programs\PixelMusic
 
-#define AppName "Materialfy"
+#define AppName "Pixel Music"
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
@@ -14,10 +14,10 @@
 #endif
 ; folder assembled by build_windows.ps1: materialfy.exe, qml\, assets\, Qt, MSVC runtime
 #ifndef DistDir
-  #define DistDir "target\dist\materialfy"
+  #define DistDir "target\dist\pixelmusic"
 #endif
-#define AppPublisher "Materialfy"
-#define AppExeName "materialfy.exe"
+#define AppPublisher "Ian Shul Yadav"
+#define AppExeName "pixelmusic.exe"
 
 [Setup]
 LicenseFile=LICENSE
@@ -36,7 +36,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
 OutputDir=target\dist
-OutputBaseFilename=Materialfy-{#AppVersion}-Setup
+OutputBaseFilename=PixelMusic-{#AppVersion}-Setup
 SetupIconFile=materialfy.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
@@ -49,9 +49,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; No administrator rights
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-; Close a running Materialfy before updating
+; Close a running Pixel Music before updating
 CloseApplications=yes
-CloseApplicationsFilter=*{#AppExeName}
+CloseApplicationsFilter=*materialfy.exe
 ; Minimum Windows version: 10 1809
 MinVersion=10.0.17763
 ; Setup language follows the Windows UI language; the dialog appears only when it matches neither
@@ -95,7 +95,7 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename:
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: startupicon
 
 [Run]
-; Offer to launch Materialfy after installation
+; Offer to launch Pixel Music after installation
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 ; Update from inside the app (Setup.exe /SILENT ... /RELAUNCH): start the new version once the files are in place.
 ; Without /RELAUNCH (a regular or a scripted silent install) nothing changes.

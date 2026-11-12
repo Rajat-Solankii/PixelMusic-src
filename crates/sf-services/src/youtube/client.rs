@@ -15,7 +15,8 @@ const REFERER: &str = "https://music.youtube.com/";
 /// BotGuard's challenge service (`potoken.rs`).
 const BOTGUARD_BASE: &str = "https://www.youtube.com/api/jnn/v1/";
 /// The public key the web client sends to BotGuard's service.
-const BOTGUARD_API_KEY: &str = "REDACTED_API_KEY";
+/// Loaded from `BOTGUARD_API_KEY` env var at runtime; falls back to this default.
+const BOTGUARD_API_KEY_DEFAULT: &str = "REPLACE_WITH_YOUR_API_KEY";
 const MAX_ATTEMPTS: u32 = 4;
 const RETRY_DELAY: Duration = Duration::from_millis(800);
 
@@ -63,6 +64,11 @@ pub const ANDROID_VR: ClientPreset = ClientPreset {
     device_model: Some("Quest 3"),
     android_sdk_version: Some("32"),
 };
+
+/// `ANDROID_VR` as the signed-in user (the cookie and its SAPISIDHASH, like the web client): what the anonymous
+/// one is refused with "Sign in to confirm you're not a bot" or an age wall, the account may still play, with
+/// direct URLs and no PoToken.
+pub const ANDROID_VR_USER: ClientPreset = ClientPreset { login_supported: true, ..ANDROID_VR };
 
 /// Transcripts.
 pub const WEB: ClientPreset = ClientPreset {
@@ -231,7 +237,9 @@ impl InnerTube {
             .http_client()?
             .post(format!("{}{method}", self.botguard_base))
             .header(reqwest::header::CONTENT_TYPE, "application/json+protobuf")
-            .header("x-goog-api-key", BOTGUARD_API_KEY)
+            .header("x-goog-api-key",
+                std::env::var("BOTGUARD_API_KEY")
+                    .unwrap_or_else(|_| BOTGUARD_API_KEY_DEFAULT.to_string()))
             .header("x-user-agent", "grpc-web-javascript/0.1")
             .header(reqwest::header::USER_AGENT, USER_AGENT_WEB)
             .body(body.to_string())

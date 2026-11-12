@@ -207,6 +207,9 @@ pub enum SettingKey {
     DownloadsFolder,
     /// most space downloads may take, in MB; 0 — no limit
     DownloadsLimitMb,
+    // Logo
+    /// logo colorway: "bluePurple" | "babyPinkPurple" | "graphiteGray" | "limeGreen" | "limeLemon" | "orangeYellow"
+    LogoColorway,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -226,7 +229,7 @@ pub enum SettingType {
 }
 
 impl SettingKey {
-    pub const ALL: [SettingKey; 104] = [
+    pub const ALL: [SettingKey; 105] = [
         SettingKey::ThemeMode,
         SettingKey::SchemeVariant,
         SettingKey::AccentFromCover,
@@ -331,6 +334,7 @@ impl SettingKey {
         SettingKey::MonoAudio,
         SettingKey::DownloadsFolder,
         SettingKey::DownloadsLimitMb,
+        SettingKey::LogoColorway,
     ];
 
     /// Имя ключа в хранилище и в QML ("themeMode", …).
@@ -441,6 +445,7 @@ impl SettingKey {
             MonoAudio => "monoAudio",
             DownloadsFolder => "downloadsFolder",
             DownloadsLimitMb => "downloadsLimitMb",
+            LogoColorway => "logoColorway",
         }
     }
 
@@ -565,6 +570,7 @@ impl SettingKey {
             MonoAudio => Bool(false),
             DownloadsFolder => Str(String::new()),
             DownloadsLimitMb => Int(0),
+            LogoColorway => Str("bluePurple".into()),
         }
     }
 
@@ -707,6 +713,10 @@ impl SettingKey {
                 String::new()
             } else {
                 eq_bands_to_string(&eq_bands_from_str(&s))
+            }),
+            (SettingKey::LogoColorway, SettingValue::Str(s)) => SettingValue::Str(match s.as_str() {
+                "babyPinkPurple" | "graphiteGray" | "limeGreen" | "limeLemon" | "orangeYellow" => s.to_string(),
+                _ => "bluePurple".into(),
             }),
             (_, value) => value,
         }

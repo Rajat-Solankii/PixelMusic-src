@@ -1,4 +1,4 @@
-//! Materialfy localisation. Source strings are English; the dictionaries (`i18n/ru/*.json`, `i18n/pt/*.json`
+//! Pixel Music localisation. Source strings are English; the dictionaries (`i18n/ru/*.json`, `i18n/pt/*.json`
 //! at the repo root) are merged and embedded at compile time by build.rs. The current language is a global
 //! atomic, so `t`/`tf`/`n` are callable from any thread.
 //!

@@ -378,7 +378,7 @@ pub enum JamControl {
     /// 0 off, 1 one, 2 all
     SetRepeat(i64),
     /// `play_now`: a guest tapped the song to play it: insert next and jump to it.
-    AddTrack { track: JamQueueItem, is_play_next: bool, play_now: bool },
+    AddTrack { track: Box<JamQueueItem>, is_play_next: bool, play_now: bool },
 }
 
 pub fn control_to_json(action: &JamControl, sender_id: &str, sender_name: &str) -> Value {
@@ -446,7 +446,7 @@ pub fn control_from_json(j: &Value, now_ms: i64) -> Option<JamControl> {
                 is_play_next,
                 ..queue_item_from_json(track)
             };
-            JamControl::AddTrack { track, is_play_next, play_now: opt_bool(j, "playNow") }
+            JamControl::AddTrack { track: Box::new(track), is_play_next, play_now: opt_bool(j, "playNow") }
         }
         _ => return None,
     })

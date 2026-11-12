@@ -38,6 +38,8 @@ pub mod qobject {
         #[qproperty(QString, search_query, cxx_name = "searchQuery", READ, NOTIFY = search_changed)]
         #[qproperty(QMap_QString_QVariant, best, READ, NOTIFY = search_changed)]
         #[qproperty(QMap_QString_QVariant, totals, READ, NOTIFY = search_changed)]
+        /// recent queries, newest first: [{ query, searchedAt }]
+        #[qproperty(QList_QVariant, search_history, cxx_name = "searchHistory", READ, NOTIFY = search_history_changed)]
         #[qproperty(*mut QObject, search_tracks, cxx_name = "searchTracks", READ = search_tracks_ptr, CONSTANT)]
         #[qproperty(*mut QObject, search_albums, cxx_name = "searchAlbums", READ = search_albums_ptr, CONSTANT)]
         #[qproperty(*mut QObject, search_artists, cxx_name = "searchArtists", READ = search_artists_ptr, CONSTANT)]
@@ -71,6 +73,9 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "searchChanged"]
         fn search_changed(self: Pin<&mut Catalog>);
+        #[qsignal]
+        #[cxx_name = "searchHistoryChanged"]
+        fn search_history_changed(self: Pin<&mut Catalog>);
         /// меню трека у точки (x, y) — его показывает главное окно; w, h > 0 — размер кнопки «⋯»
         /// с левым верхним углом в (x, y): меню встаёт у неё
         #[qsignal]
@@ -129,6 +134,15 @@ pub mod qobject {
         #[qinvokable]
         fn search(self: Pin<&mut Catalog>, query: &QString, kind: &QString);
         #[qinvokable]
+        #[cxx_name = "addSearchQuery"]
+        fn add_search_query(self: Pin<&mut Catalog>, query: &QString);
+        #[qinvokable]
+        #[cxx_name = "removeSearchQuery"]
+        fn remove_search_query(self: Pin<&mut Catalog>, query: &QString);
+        #[qinvokable]
+        #[cxx_name = "clearSearchHistory"]
+        fn clear_search_history(self: Pin<&mut Catalog>);
+        #[qinvokable]
         #[cxx_name = "search"]
         fn search_all(self: Pin<&mut Catalog>, query: &QString);
 
@@ -158,6 +172,15 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "requestTrackDetails"]
         fn request_track_details(self: Pin<&mut Catalog>, track: &QMap_QString_QVariant);
+        /// Resolve duration for a track that's missing it (YouTube tracks from Quick Picks, etc.).
+        /// trackId can be a YouTube video ID or a youtube:track: URI.
+        #[qinvokable]
+        #[cxx_name = "resolveDuration"]
+        fn resolve_duration(self: Pin<&mut Catalog>, track_id: &QString, current_ms: i64);
+        /// Duration was resolved for a track.
+        #[qsignal]
+        #[cxx_name = "durationResolved"]
+        fn duration_resolved(self: Pin<&mut Catalog>, track_id: QString, duration_ms: i64);
     }
 
     impl cxx_qt::Threading for Catalog {}
@@ -237,6 +260,7 @@ pub struct CatalogRust {
     search_query: QString,
     best: QVariantMap,
     totals: QVariantMap,
+    search_history: QVariantList,
     query: String,
     kind: SearchKind,
     state: &'static str,
@@ -264,6 +288,7 @@ impl Default for CatalogRust {
             search_query: QString::default(),
             best: QVariantMap::default(),
             totals: QVariantMap::default(),
+            search_history: QVariantList::default(),
             query: String::new(),
             kind: SearchKind::All,
             state: "idle",
@@ -295,6 +320,12 @@ fn is_collection_uri(text: &str) -> bool {
     let Some(rest) = text.strip_prefix("spotify:") else { return false };
     let rest = rest.strip_suffix(":tracks").unwrap_or(rest);
     rest == "collection" || rest.strip_prefix("user:").is_some_and(|r| r.ends_with(":collection") && r.len() > 11)
+}
+
+/// The search history file's service (made on first use: the bridge is its only user).
+fn search_history() -> &'static Arc<sf_services::search_history::SearchHistoryService> {
+    static HISTORY: std::sync::OnceLock<Arc<sf_services::search_history::SearchHistoryService>> = std::sync::OnceLock::new();
+    HISTORY.get_or_init(|| sf_services::search_history::SearchHistoryService::new(ctx().rt.clone()))
 }
 
 fn signed_in() -> bool {
@@ -641,6 +672,36 @@ impl qobject::Catalog {
         this.search_state = QString::from(state);
     }
 
+    fn refresh_search_history(mut self: Pin<&mut Self>) {
+        let rows: Vec<Value> = search_history()
+            .queries()
+            .into_iter()
+            .map(|entry| serde_json::json!({ "query": entry.query, "searchedAt": entry.searched_at }))
+            .collect();
+        self.as_mut().rust_mut().search_history = json_to_qvariantlist(&rows);
+        self.search_history_changed();
+    }
+
+    fn add_search_query(self: Pin<&mut Self>, query: &QString) {
+        let query = query.to_string();
+        // the same query again (a filter change, Enter after the pause) changes nothing
+        if search_history().query_strings().first().is_some_and(|newest| newest == query.trim()) {
+            return;
+        }
+        search_history().add_query(query);
+        self.refresh_search_history();
+    }
+
+    fn remove_search_query(self: Pin<&mut Self>, query: &QString) {
+        search_history().remove_query(&query.to_string());
+        self.refresh_search_history();
+    }
+
+    fn clear_search_history(self: Pin<&mut Self>) {
+        search_history().clear_history();
+        self.refresh_search_history();
+    }
+
     fn search(mut self: Pin<&mut Self>, query: &QString, kind: &QString) {
         let query = query.to_string().trim().to_owned();
         let kind = SearchKind::from_name(&kind.to_string());
@@ -821,6 +882,47 @@ impl qobject::Catalog {
         });
     }
 
+    fn resolve_duration(self: Pin<&mut Self>, track_id: &QString, current_ms: i64) {
+        // Only resolve if duration is missing (0 or not set)
+        if current_ms > 0 {
+            return;
+        }
+        let track_id = track_id.to_string();
+        if track_id.is_empty() {
+            return;
+        }
+        // Extract video ID from youtube:track: URI or use as-is if it's already a video ID
+        let video_id = if track_id.starts_with("youtube:track:") {
+            track_id.strip_prefix("youtube:track:").unwrap_or(&track_id).to_owned()
+        } else if track_id.starts_with("youtube:") {
+            return; // Not a track URI, skip
+        } else {
+            // Spotify track - no resolution needed (they always have duration)
+            return;
+        };
+
+        let thread = self.qt_thread();
+        let youtube = ctx().services.youtube.clone();
+        
+        // Check if we already have a cached duration
+        if let Some(cached) = youtube.cached_duration(&video_id) {
+            let _ = thread.queue(move |catalog| {
+                catalog.duration_resolved(QString::from(track_id.as_str()), cached);
+            });
+            return;
+        }
+
+        // Resolve duration asynchronously
+        ctx().rt.spawn(async move {
+            let duration_ms = youtube.resolve_track_duration(&video_id).await;
+            if let Some(ms) = duration_ms {
+                let _ = thread.queue(move |catalog| {
+                    catalog.duration_resolved(QString::from(track_id.as_str()), ms);
+                });
+            }
+        });
+    }
+
     fn request_track_menu(self: Pin<&mut Self>, track: &QVariantMap, x: f64, y: f64) {
         self.track_menu_requested(track.clone(), x, y, 0.0, 0.0);
     }
@@ -831,7 +933,8 @@ impl qobject::Catalog {
 }
 
 impl cxx_qt::Initialize for qobject::Catalog {
-    fn initialize(self: Pin<&mut Self>) {
+    fn initialize(mut self: Pin<&mut Self>) {
+        self.as_mut().refresh_search_history();
         forward_events(self.qt_thread(), ctx().services.auth.subscribe(), Self::on_auth);
     }
 }

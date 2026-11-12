@@ -112,7 +112,7 @@ Item {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: I18n.t("Materialfy shares one Spotify developer app with many people, and Spotify has slowed it down. Playback and most pages go through your account and keep working; search, some artist pages and library changes may wait. Your own free app removes the limit for good and takes about two minutes.")
+                    text: I18n.t("Pixel Music shares one Spotify developer app with many people, and Spotify has slowed it down. Playback and most pages go through your account and keep working; search, some artist pages and library changes may wait. Your own free app removes the limit for good and takes about two minutes.")
                     type: "bodyMedium"
                     color: Theme.fgSurfaceVariant
                     wrapMode: Text.WordWrap

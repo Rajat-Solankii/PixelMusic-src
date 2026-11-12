@@ -28,7 +28,7 @@ use crate::youtube::models::{SearchFilter, YtItem};
 use crate::{CatalogService, SearchKind, YouTubeService, lock};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-const USER_AGENT: &str = concat!("Materialfy/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("PixelMusic/", env!("CARGO_PKG_VERSION"));
 /// Last.fm's grey star placeholder ("no artwork").
 const NO_ART_HASH: &str = "2a96cbd8b46e442fc41c2b86b821562f";
 /// Searches running at once while resolving a mix (the Kotlin Semaphore(3)).
@@ -512,11 +512,11 @@ pub fn pick_recommendations(weighted: Vec<(LfmTrack, u8)>, taste: &Taste, total:
     if filtered.len() < total / 2 {
         let keys: HashSet<String> = filtered.iter().map(|(t, _, _)| t.key()).collect();
         let mut extra: Vec<_> = scored.iter().filter(|(t, _, s)| *s != -1 && !keys.contains(&t.key())).cloned().collect();
-        extra.sort_by(|a, b| b.2.cmp(&a.2));
+        extra.sort_by_key(|a| std::cmp::Reverse(a.2));
         filtered.extend(extra);
     }
     // stable: equal scores keep their order
-    filtered.sort_by(|a, b| b.2.cmp(&a.2));
+    filtered.sort_by_key(|a| std::cmp::Reverse(a.2));
     let familiar = filtered.iter().filter(|(_, w, _)| *w >= 3).take(total * 60 / 100);
     let discovery = filtered.iter().filter(|(_, w, _)| *w <= 2).take(total * 40 / 100);
     let mut balanced: Vec<LfmTrack> = familiar.chain(discovery).map(|(t, _, _)| t.clone()).collect();
@@ -1023,6 +1023,7 @@ pub struct LastFmFeedService {
 }
 
 impl LastFmFeedService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rt: Handle,
         http: sf_api::Http,

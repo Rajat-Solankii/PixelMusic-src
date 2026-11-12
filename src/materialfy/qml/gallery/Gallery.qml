@@ -49,7 +49,7 @@ Window {
     width: 1280
     height: 800
     visible: true
-    title: "Materialfy — MD3 Gallery"
+    title: "Pixel Music — MD3 Gallery"
     flags: Qt.Window | Qt.FramelessWindowHint
     color: Theme.surfaceContainerLowest
 
@@ -182,7 +182,7 @@ Window {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                Label { text: "Materialfy"; type: "headlineSmall"; weight: 700; Layout.fillWidth: true }
+                                Label { text: "Pixel Music"; type: "headlineSmall"; weight: 700; Layout.fillWidth: true }
                                 Label { text: "Material 3 Expressive"; type: "bodyLarge"; color: Theme.fgSurfaceVariant }
 
                                 RowLayout {

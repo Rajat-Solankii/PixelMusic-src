@@ -1029,6 +1029,13 @@ pub fn select(found: Vec<(usize, NewRelease)>, today: Date, window_days: i64, li
     labelled(&releases, today)
 }
 
+impl ReleasesService {
+    /// New albums and singles on YouTube Music (`FEmusic_new_releases_albums`; works without an account).
+    pub async fn youtube_new_releases(&self) -> Result<Vec<AlbumItem>, crate::ServiceError> {
+        self.auth.youtube().new_releases().await.map_err(crate::catalog::yt_error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1241,12 +1248,5 @@ mod tests {
         assert!(json["kind"].is_string());
         let back: NewRelease = serde_json::from_value(json).unwrap();
         assert_eq!(back, release);
-    }
-}
-
-impl ReleasesService {
-    /// New albums and singles on YouTube Music (`FEmusic_new_releases_albums`; works without an account).
-    pub async fn youtube_new_releases(&self) -> Result<Vec<AlbumItem>, crate::ServiceError> {
-        self.auth.youtube().new_releases().await.map_err(crate::catalog::yt_error)
     }
 }

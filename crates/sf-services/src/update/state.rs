@@ -226,7 +226,7 @@ mod tests {
     fn offer(version: &str) -> Offer {
         Offer {
             version: version.into(),
-            asset_name: "Materialfy-0.2.0-Setup.exe".into(),
+            asset_name: "PixelMusic-0.2.0-Setup.exe".into(),
             asset_url: "https://example.invalid/x".into(),
             size: 100,
             ..Offer::default()

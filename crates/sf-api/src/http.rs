@@ -142,7 +142,7 @@ fn apply_blocking_proxy(
 }
 
 fn user_agent() -> &'static str {
-    concat!("Materialfy/", env!("CARGO_PKG_VERSION"))
+    concat!("PixelMusic/", env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]

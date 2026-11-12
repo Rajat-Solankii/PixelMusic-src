@@ -3,8 +3,8 @@
 //! и вернуть true (вызывающий выходит с кодом 0). Работающий экземпляр получает просьбу как MprisCommand::Raise.
 //!
 //! Windows и macOS (дополнение к Python-версии, где там всегда false): работающий экземпляр держит
-//! [`InstanceListener`] — именованный канал `\\.\pipe\materialfy-Materialfy-<user>` (создаётся как первый экземпляр
-//! канала, т. е. работает и как мьютекс) или unix-сокет `$TMPDIR/materialfy-Materialfy.sock`. Новый процесс подключается,
+//! [`InstanceListener`] — именованный канал `\\.\pipe\pixelmusic-PixelMusic-<user>` (создаётся как первый экземпляр
+//! канала, т. е. работает и как мьютекс) или unix-сокет `$TMPDIR/pixelmusic-PixelMusic.sock`. Новый процесс подключается,
 //! пишет "raise\n" и выходит; без слушателя (оболочка его не запустила) — false, как раньше.
 //! Протокол: клиент — строка "raise\n", сервер — ответ "ok\n" или "hung\n": окно не отвечает (GUI-поток не
 //! отметился в [`gui_alive`] за 20 с: подвисание на тяжёлой странице слабого ПК — ещё не зависание). Зависший экземпляр новый процесс завершает (Windows) и запускается сам —
@@ -79,7 +79,7 @@ pub async fn become_primary() -> bool {
                 return false;
             }
             if std::time::Instant::now() >= deadline {
-                tracing::warn!("another Materialfy is starting but doesn't answer; not starting a second one");
+                tracing::warn!("another Pixel Music is starting but doesn't answer; not starting a second one");
                 return false;
             }
             tokio::time::sleep(Duration::from_millis(300)).await;

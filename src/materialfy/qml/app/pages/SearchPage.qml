@@ -26,6 +26,9 @@ Page {
     readonly property var episodesModel: Catalog.searchEpisodes ?? null
     readonly property int perRow: Math.max(1, Math.floor((width - 2 * sideMargin + 20) / (168 + 20)))
 
+    // History visible when search box is empty and there are items
+    readonly property bool showHistory: field.text.trim() === "" && Catalog.searchHistory.length > 0
+
     function followersText(n) {
         if (!(n > 0))
             return ""
@@ -39,6 +42,16 @@ Page {
         filter = 0
         field.text = q
         debounce.stop()
+        // Record this query in history
+        Catalog.addSearchQuery(q)
+    }
+    function runSearch(q) {
+        if (q.trim() === "")
+            return
+        field.text = q
+        debounce.stop()
+        Catalog.search(q, page.type)
+        Catalog.addSearchQuery(q)
     }
     Component.onCompleted: {
         showQuery(Catalog.searchQuery)
@@ -48,9 +61,18 @@ Page {
     Timer {
         id: debounce
         interval: 350
-        onTriggered: Catalog.search(field.text, page.type)
+        onTriggered: {
+            Catalog.search(field.text, page.type)
+            // Record the query in search history when search is actually performed
+            if (field.text.trim() !== "") {
+                Catalog.addSearchQuery(field.text)
+            }
+        }
     }
-    onTypeChanged: if (field.text.trim() !== "") Catalog.search(field.text, page.type)
+    onTypeChanged: if (field.text.trim() !== "") {
+        Catalog.search(field.text, page.type)
+        Catalog.addSearchQuery(field.text)
+    }
 
     SearchField {
         id: field
@@ -64,8 +86,10 @@ Page {
         // Enter — искать сразу, не дожидаясь паузы ввода; Esc — очистить поле
         onAccepted: {
             debounce.stop()
-            if (field.text.trim() !== "")
+            if (field.text.trim() !== "") {
                 Catalog.search(field.text, page.type)
+                Catalog.addSearchQuery(field.text)
+            }
         }
         Keys.onEscapePressed: event => {
             if (field.text !== "")
@@ -92,11 +116,87 @@ Page {
         }
     }
 
+    // ---- Search History ----
+    ColumnLayout {
+        Layout.fillWidth: true
+        Layout.maximumWidth: 720
+        Layout.alignment: Qt.AlignHCenter
+        Layout.topMargin: 24
+        visible: page.showHistory
+        spacing: 8
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 16
+
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("Search history")
+                type: "titleMedium"
+                weight: 600
+            }
+            Button {
+                style: "text"
+                size: "xs"
+                text: I18n.t("Clear all")
+                onClicked: Catalog.clearSearchHistory()
+            }
+        }
+
+        Repeater {
+            model: Catalog.searchHistory
+
+            // the whole row searches again; the cross on its right forgets the query
+            Item {
+                id: historyRow
+                required property var modelData
+                readonly property string query: modelData && modelData.query ? modelData.query : ""
+                Layout.fillWidth: true
+                implicitHeight: 48
+
+                StateLayer {
+                    anchors.fill: parent
+                    radius: 12
+                    onClicked: page.runSearch(historyRow.query)
+                }
+                Icon {
+                    id: historyIcon
+                    anchors.left: parent.left
+                    anchors.leftMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "history"
+                    size: 20
+                    color: Theme.fgSurfaceVariant
+                }
+                Label {
+                    anchors.left: historyIcon.right
+                    anchors.leftMargin: 12
+                    anchors.right: forget.left
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: historyRow.query
+                    type: "bodyLarge"
+                    elide: Text.ElideRight
+                }
+                IconButton {
+                    id: forget
+                    anchors.right: parent.right
+                    anchors.rightMargin: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: "close"
+                    size: "xs"
+                    onClicked: Catalog.removeSearchQuery(historyRow.query)
+                }
+            }
+        }
+    }
+
     // ---- Состояния ----
     EmptyState {
         Layout.alignment: Qt.AlignHCenter
         Layout.topMargin: 48
-        visible: !page.signedIn || Catalog.searchState === "idle" || Catalog.searchState === "empty" || Catalog.searchState === "error"
+        // Hide empty state when showing history
+        visible: !page.showHistory && (!page.signedIn || Catalog.searchState === "idle" || Catalog.searchState === "empty" || Catalog.searchState === "error")
         icon: !page.signedIn ? "login" : Catalog.searchState === "empty" ? "search_off"
             : Catalog.searchState === "error" ? "cloud_off" : "travel_explore"
         title: !page.signedIn ? I18n.t("Sign in to search")

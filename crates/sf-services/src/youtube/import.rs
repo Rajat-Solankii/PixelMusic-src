@@ -91,7 +91,7 @@ impl WantedTrack {
 /// One song of a source: a YouTube video already, or something to look up.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Entry {
-    Known(TrackItem),
+    Known(Box<TrackItem>),
     Wanted(WantedTrack),
 }
 
@@ -357,7 +357,7 @@ pub(crate) fn m3u_entry(entry: &M3uEntry) -> Entry {
     let artist = entry.artist.clone().unwrap_or_default();
     let duration_ms = entry.duration_sec.unwrap_or(0) * 1000;
     match VIDEO_LINK.captures(&entry.location) {
-        Some(found) => Entry::Known(known_track(&found[1], &entry.title, &artist, duration_ms, "")),
+        Some(found) => Entry::Known(Box::new(known_track(&found[1], &entry.title, &artist, duration_ms, ""))),
         None => Entry::Wanted(WantedTrack { title: entry.title.clone(), artist, duration_ms }),
     }
 }
@@ -395,7 +395,7 @@ fn json_entry(object: &Value) -> Option<Entry> {
     let id = str_of(object, "videoId").or_else(|| str_of(object, "id")).filter(|id| VIDEO_ID.is_match(id));
     if let Some(id) = id {
         let cover = str_of(object, "thumbnail").or_else(|| str_of(object, "artwork")).unwrap_or_default();
-        return Some(Entry::Known(known_track(id, title.unwrap_or_default(), &artist, duration_ms, cover)));
+        return Some(Entry::Known(Box::new(known_track(id, title.unwrap_or_default(), &artist, duration_ms, cover))));
     }
     Some(Entry::Wanted(WantedTrack { title: title?.to_owned(), artist, duration_ms }))
 }
@@ -538,7 +538,7 @@ impl YouTubeService {
                     let result = match entry {
                         Entry::Known(track) => {
                             let label = track.title.clone();
-                            (Some(track), label)
+                            (Some(*track), label)
                         }
                         Entry::Wanted(want) => (self.find_match(&want).await, want.label()),
                     };
@@ -682,7 +682,7 @@ mod tests {
         let candidates = [live.clone(), cover.clone(), other, exact.clone()];
         assert_eq!(best_match(&want, &candidates), Some(&exact));
         // a cover with only the title and the length right still clears the bar; a wrong title never does
-        assert_eq!(best_match(&want, &[cover.clone()]), Some(&cover));
+        assert_eq!(best_match(&want, std::slice::from_ref(&cover)), Some(&cover));
         assert_eq!(best_match(&WantedTrack { title: "Nothing alike".into(), ..want }, &candidates), None);
     }
 

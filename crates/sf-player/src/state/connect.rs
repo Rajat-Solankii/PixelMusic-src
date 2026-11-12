@@ -952,8 +952,8 @@ mod tests {
             player_state: MessageField::some(state),
             ..Default::default()
         };
-        cluster.device.insert("phone".into(), info("Pixel", DeviceType::SMARTPHONE, 32768));
-        cluster.device.insert("pc".into(), info("Materialfy · PC", DeviceType::COMPUTER, 65535));
+        cluster.device.insert("phone".into(), info("Xperia", DeviceType::SMARTPHONE, 32768));
+        cluster.device.insert("pc".into(), info("Pixel Music · PC", DeviceType::COMPUTER, 65535));
         let mut ghost = info("Hidden", DeviceType::SPEAKER, 0);
         ghost.capabilities.mut_or_insert_default().hidden = true;
         cluster.device.insert("ghost".into(), ghost);
@@ -971,7 +971,7 @@ mod tests {
         let state = remote_state(&cluster, 1_005_000, &tracks).unwrap();
         assert_eq!(state.device_id(), Some("phone"));
         let device = state.device.as_ref().unwrap();
-        assert_eq!((device.name.as_str(), device.kind.as_str(), device.is_active), ("Pixel", "Smartphone", true));
+        assert_eq!((device.name.as_str(), device.kind.as_str(), device.is_active), ("Xperia", "Smartphone", true));
         assert_eq!(device.volume_percent, Some(50));
         assert!(state.is_playing);
         assert!(state.shuffle);
@@ -1120,7 +1120,7 @@ mod tests {
     fn devices_leave_out_hidden_ones_and_carry_volume() {
         let list = devices(&cluster());
         let names: Vec<&str> = list.iter().map(|device| device.name.as_str()).collect();
-        assert_eq!(names, ["Materialfy · PC", "Pixel"]);
+        assert_eq!(names, ["Pixel Music · PC", "Xperia"]);
         assert_eq!(list[0].volume_percent, Some(100));
         assert!(!list[0].is_active && list[1].is_active);
         let mut silent = info("Fixed", DeviceType::AVR, 100);

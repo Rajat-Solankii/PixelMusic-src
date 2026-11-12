@@ -35,7 +35,7 @@ fn the_first_playlist_page_has_its_header_one_track_and_a_continuation() {
     assert_eq!(track.album, "Nightcall EP");
     assert_eq!(track.album_id, "MPREb_album01");
     assert_eq!(track.duration_ms, 222_000);
-    assert_eq!(track.cover, "https://lh3.googleusercontent.com/track001.jpg");
+    assert_eq!(track.cover, "https://lh3.googleusercontent.com/track001.jpg=w300-h300-l90-rj");
     assert!(track.available);
     let token = page.continuation.expect("continuation");
     assert!(token.contains("ctok_page2_token"), "{token}");
@@ -106,8 +106,8 @@ fn the_library_lists_both_playlists_without_the_vl_prefix() {
     assert_eq!(playlists, [("PL1234567890abcdef".to_owned(), 45), ("PLsynthwave999xyz".to_owned(), 80)]);
     let YtItem::Playlist(first) = &page.items[0] else { unreachable!() };
     assert_eq!(first.title, "Chill Lofi Beats");
-    // the largest thumbnail
-    assert_eq!(first.cover, "https://lh3.googleusercontent.com/cover1_large.jpg");
+    // the largest thumbnail - size params added by sized()
+    assert_eq!(first.cover, "https://lh3.googleusercontent.com/cover1_large.jpg=w300-h300-l90-rj");
     assert_eq!(page.continuation, None);
 }
 
@@ -177,7 +177,16 @@ fn helpers_read_times_counts_and_image_sizes() {
         "https://lh3.googleusercontent.com/x=w300-h300-l90-rj"
     );
     assert_eq!(sized("https://yt3.ggpht.com/y=s88-c-k", 640), "https://yt3.ggpht.com/y=s640");
-    assert_eq!(sized("https://i.ytimg.com/vi/z/hq.jpg", 300), "https://i.ytimg.com/vi/z/hq.jpg");
+    // ytimg.com URLs should get size params added
+    assert_eq!(sized("https://i.ytimg.com/vi/z/hq.jpg", 300), "https://i.ytimg.com/vi/z/hq.jpg=w300-h300-l90-rj");
+    
+    // Test URL size clamping (min 48, max 1920)
+    assert!(sized("https://lh3.googleusercontent.com/test", 10).contains("=w48-h48"));
+    assert!(sized("https://lh3.googleusercontent.com/test", 5000).contains("=w1920-h1920"));
+    
+    // Test protocol-relative URL normalization via sized
+    assert!(sized("//lh3.googleusercontent.com/test", 300).starts_with("https://"));
+    
     let subtitle = json!({ "runs": [{ "text": "Album • Queen • 1975" }] });
     let split = runs(&subtitle);
     let texts: Vec<&str> = split.iter().map(|run| run.text.as_str()).collect();
@@ -197,7 +206,7 @@ fn small_responses_are_read() {
         Some(AccountInfo {
             name: "Alex".into(),
             email: "alex@example.com".into(),
-            avatar: "https://lh3.googleusercontent.com/a=s48".into()
+            avatar: "https://lh3.googleusercontent.com/a=s300".into()
         })
     );
     assert_eq!(account_info(&json!({})), None);

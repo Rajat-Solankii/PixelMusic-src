@@ -63,7 +63,7 @@ Item {
             items.push({ id: "repeat", text: I18n.t("Repeat"), icon: Player.repeat === "one" ? "repeat_one" : "repeat", checked: Player.repeat !== "off" })
             items.push({ separator: true })
         }
-        items.push({ id: "open", text: I18n.t("Open Materialfy"), icon: "open_in_new" })
+        items.push({ id: "open", text: I18n.t("Open Pixel Music"), icon: "open_in_new" })
         items.push({ id: "settings", text: I18n.t("Settings"), icon: "settings" })
         items.push({ id: "off", text: I18n.t("Turn off floating player"), icon: "visibility_off" })
         return items

@@ -11,6 +11,7 @@ members = [
     "crates/mf-platform",
     "crates/mf-i18n",
     "crates/materialfy",
+    "crates/icon-gen",
 ]
 
 [workspace.package]

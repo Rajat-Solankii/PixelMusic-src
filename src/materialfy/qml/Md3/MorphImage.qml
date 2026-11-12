@@ -26,16 +26,18 @@ Item {
     // панели не держат декодированные обложки. Показанная однажды не выгружается. eager — грузить сразу.
     property bool eager: false
 
-    // Не загрузилась — ещё попытка (сетевой менеджер к тому времени переходит на другое зеркало Spotify), потом
-    // запасная обложка по названию (Covers: iTunes, Deezer, Яндекс). Повтор — с меткой #rN: Qt помнит неудачную
-    // загрузку адреса и тот же адрес сразу отдал бы ту же ошибку; фрагмент на сервер не уходит. fallbackKind: "album" | "track" |
-    // "artist"; fallbackArtist — первый исполнитель; fallbackTitle — альбом или трек (у исполнителя пусто).
+    // Не загрузилась — повторные попытки с экспоненциальным откатом (3 попытки: 1.5с, 3с, 6с).
+    // Потом запасная обложка по названию (Covers: iTunes, Deezer, Яндекс).
+    // Повтор — с меткой #rN: Qt помнит неудачную загрузку адреса и тот же адрес сразу отдал бы ту же ошибку;
+    // фрагмент на сервер не уходит. fallbackKind: "album" | "track" | "artist";
+    // fallbackArtist — первый исполнитель; fallbackTitle — альбом или трек (у исполнителя пусто).
     property string fallbackKind
     property string fallbackArtist
     property string fallbackTitle
     property int _tries: 0
     property url _fallback
     property string _fallbackKey
+    property int _retryDelay: 1500  // Base delay in ms
     onSourceChanged: {
         _tries = 0
         _fallback = ""
@@ -43,7 +45,10 @@ Item {
         retry.stop()
     }
     function _failed() {
-        if (_tries < 1) {
+        // Exponential backoff: 1.5s, 3s, 6s (max 3 retries)
+        if (_tries < 3) {
+            const delay = _retryDelay * Math.pow(2, _tries)
+            retry.interval = Math.min(delay, 6000)  // Cap at 6s
             retry.restart()
         } else if (fallbackKind !== "" && fallbackArtist !== "" && _fallbackKey === "" && _fallback.toString() === "") {
             _fallbackKey = Covers.find(fallbackKind, fallbackArtist, fallbackTitle)
@@ -52,7 +57,11 @@ Item {
     Timer {
         id: retry
         interval: 1500
-        onTriggered: root._tries += 1
+        onTriggered: {
+            root._tries += 1
+            // Reset interval to default for next potential retry
+            interval = 1500
+        }
     }
     Connections {
         target: root._fallbackKey !== "" ? Covers : null

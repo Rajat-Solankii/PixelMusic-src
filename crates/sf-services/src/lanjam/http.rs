@@ -169,7 +169,7 @@ pub async fn request(
     };
     let _ = stream.set_nodelay(true);
     let req = format!(
-        "{method} {path_and_query} HTTP/1.1\r\nHost: {addr}\r\nUser-Agent: Materialfy\r\nAccept: application/json\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        "{method} {path_and_query} HTTP/1.1\r\nHost: {addr}\r\nUser-Agent: Pixel Music\r\nAccept: application/json\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(req.as_bytes()).await.map_err(|e| HttpError::Io(e.to_string()))?;
     let mut buf = Vec::new();

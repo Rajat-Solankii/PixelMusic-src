@@ -204,7 +204,7 @@ fn default_name() -> String {
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
         .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| "Materialfy".into())
+        .unwrap_or_else(|| "Pixel Music".into())
 }
 
 fn room_code() -> String {
@@ -226,7 +226,7 @@ impl LanJamService {
             player,
             net,
             user_id,
-            device: format!("Materialfy for {os}"),
+            device: format!("Pixel Music for {os}"),
             state: Mutex::new(State { epoch: 0, session: Session::Idle, discovery: None, name: default_name() }),
             snapshot: watch::channel(idle()).0,
         })
@@ -629,7 +629,7 @@ impl LanJamService {
             added_at: now_ms(),
             is_play_next: play_next,
         };
-        self.control(JamControl::AddTrack { track: item, is_play_next: play_next, play_now });
+        self.control(JamControl::AddTrack { track: Box::new(item), is_play_next: play_next, play_now });
     }
 
     // ---- discovery for the card's "nearby" list ----

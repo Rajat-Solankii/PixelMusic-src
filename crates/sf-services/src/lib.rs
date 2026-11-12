@@ -33,6 +33,7 @@ pub mod lyrics;
 /// «Новинки»: «Радар новинок» и свежие релизы исполнителей
 pub mod releases;
 /// Friends (friend activity) and Jam through the session
+pub mod search_history;
 pub mod social;
 pub mod sources;
 /// Listening statistics (top tracks, artists, minutes per period) from a local listen log

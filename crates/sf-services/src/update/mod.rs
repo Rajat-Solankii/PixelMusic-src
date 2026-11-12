@@ -590,7 +590,7 @@ impl UpdateService {
                 }
                 Ok(install::Outcome::HandedOff) => {
                     this.apply(Event::InstallHandedOff {
-                        note: mf_i18n::t("Drag Materialfy to Applications in the window that opened, then restart the app"),
+                        note: mf_i18n::t("Drag Pixel Music to Applications in the window that opened, then restart the app"),
                     });
                 }
                 Err(text) => {
@@ -712,14 +712,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mf-update-stale-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("portable")).unwrap();
-        for name in ["Materialfy-0.1.0-Setup.exe", "Materialfy-0.2.0-Setup.exe", "Materialfy-0.2.0-Setup.exe.part", "update.log"] {
+        for name in ["PixelMusic-0.1.0-Setup.exe", "PixelMusic-0.2.0-Setup.exe", "PixelMusic-0.2.0-Setup.exe.part", "update.log"] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
-        remove_stale(&dir, "Materialfy-0.2.0-Setup.exe").await;
+        remove_stale(&dir, "PixelMusic-0.2.0-Setup.exe").await;
         let mut left: Vec<String> =
             std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         left.sort();
-        assert_eq!(left, ["Materialfy-0.2.0-Setup.exe", "Materialfy-0.2.0-Setup.exe.part", "update.log"]);
+        assert_eq!(left, ["PixelMusic-0.2.0-Setup.exe", "PixelMusic-0.2.0-Setup.exe.part", "update.log"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

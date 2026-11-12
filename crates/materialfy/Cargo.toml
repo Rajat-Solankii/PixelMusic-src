@@ -8,7 +8,7 @@ license.workspace = true
 build = "build.rs"
 
 [[bin]]
-name = "materialfy"
+name = "pixelmusic"
 path = "src/main.rs"
 
 [dependencies]

@@ -627,11 +627,11 @@ impl YtLane {
     // --- what comes back ---------------------------------------------------------------------
 
     /// The stream of load `seq` is resolved (or not).
-    pub fn resolved(&mut self, seq: u64, result: Result<YtStream, String>) {
+    pub fn resolved(&mut self, seq: u64, result: Box<Result<YtStream, String>>) {
         if seq != self.seq || !self.active {
             return;
         }
-        match result {
+        match *result {
             Ok(stream) => {
                 self.fill_from(&stream);
                 if self.duration_ms == 0 && stream.duration_ms > 0 {
@@ -639,7 +639,7 @@ impl YtLane {
                 }
                 self.effects.push(YtEffect::Engine(YtCommand::Load {
                     seq,
-                    stream: stream.clone(),
+                    stream: Box::new(stream.clone()),
                     position_ms: self.start_ms,
                     play: self.playing,
                 }));
@@ -827,7 +827,7 @@ pub(crate) struct YtLink {
 /// Messages of the lane to the actor.
 pub(crate) enum YtMsg {
     Enable(YtLink),
-    Resolved { seq: u64, result: Result<YtStream, String> },
+    Resolved { seq: u64, result: Box<Result<YtStream, String>> },
     Event { seq: u64, event: YtEvent },
 }
 
@@ -869,7 +869,7 @@ mod tests {
         let mut lane = YtLane::default();
         lane.play_items(ids.iter().map(|id| yt(id)).collect(), row, PlayContext::new("playlist"));
         let seq = lane.seq();
-        lane.resolved(seq, Ok(stream(ids[row])));
+        lane.resolved(seq, Box::new(Ok(stream(ids[row]))));
         lane.event(seq, YtEvent::Playing { position_ms: 0 });
         lane.take_effects();
         lane
@@ -909,7 +909,7 @@ mod tests {
             uris(&lane),
             [(QueueSection::Current, "b".into()), (QueueSection::Context, "c".into())]
         );
-        lane.resolved(1, Ok(stream("b")));
+        lane.resolved(1, Box::new(Ok(stream("b"))));
         let effects = lane.take_effects();
         assert!(effects.iter().any(|effect| matches!(
             effect,
@@ -928,7 +928,7 @@ mod tests {
         lane.play_items(vec![local("f1"), yt("a"), local("f2")], 0, PlayContext::new("local"));
         // the source gets a local file's whole URI, a YouTube track's video id
         assert_eq!(resolves(&lane.take_effects()), [(1, "local:track:f1".to_owned())]);
-        lane.resolved(1, Ok(stream("local:track:f1")));
+        lane.resolved(1, Box::new(Ok(stream("local:track:f1"))));
         let effects = lane.take_effects();
         assert!(effects.iter().any(|effect| matches!(effect, YtEffect::Prefetch(request) if request.video_id == "a")));
         assert_eq!(uris(&lane).len(), 3);
@@ -946,7 +946,7 @@ mod tests {
         assert!(effects.iter().any(|effect| matches!(effect, YtEffect::Ended(ended) if !ended.natural)));
         // the old track's Ended must not skip the new one, its stream must not load
         lane.event(old, YtEvent::Ended);
-        lane.resolved(old, Ok(stream("a")));
+        lane.resolved(old, Box::new(Ok(stream("a"))));
         lane.event(old, YtEvent::Playing { position_ms: 5000 });
         assert!(lane.take_effects().is_empty());
         assert_eq!(lane.track().map(|track| track.track_id.as_str()), Some("b"));
@@ -1061,7 +1061,7 @@ mod tests {
         assert!(effects.contains(&YtEffect::Invalidate("a".into())));
         let retry = resolves(&effects);
         assert_eq!(retry.len(), 1);
-        lane.resolved(retry[0].0, Ok(stream("a")));
+        lane.resolved(retry[0].0, Box::new(Ok(stream("a"))));
         assert!(lane.take_effects().iter().any(|effect| matches!(
             effect,
             YtEffect::Engine(YtCommand::Load { position_ms: 42_000, .. })
@@ -1086,7 +1086,7 @@ mod tests {
             duration_ms: 180_000,
             ..stream("b")
         };
-        lane.resolved(seq, Ok(resolved));
+        lane.resolved(seq, Box::new(Ok(resolved)));
         let track = lane.track().cloned().unwrap();
         assert_eq!((track.title.as_str(), track.artists.as_str(), track.duration_ms), ("Song", "Band", 180_000));
         assert_eq!(lane.duration_ms(), 180_000);
@@ -1097,7 +1097,7 @@ mod tests {
     fn a_resolve_failure_shows_the_error() {
         let mut lane = YtLane::default();
         lane.play_items(vec![yt("a")], 0, PlayContext::new("search"));
-        lane.resolved(lane.seq(), Err("This song can't be played.".into()));
+        lane.resolved(lane.seq(), Box::new(Err("This song can't be played.".into())));
         assert_eq!(lane.error(), "This song can't be played.");
         assert!(!lane.playing() && !lane.loading());
     }
@@ -1123,7 +1123,7 @@ mod tests {
         lane.seek(30_000);
         let seq = lane.seq();
         lane.take_effects();
-        lane.resolved(seq, Ok(stream("a")));
+        lane.resolved(seq, Box::new(Ok(stream("a"))));
         assert!(lane.take_effects().iter().any(|effect| matches!(
             effect,
             YtEffect::Engine(YtCommand::Load { position_ms: 30_000, play: false, .. })

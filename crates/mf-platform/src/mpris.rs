@@ -284,7 +284,7 @@ mod imp {
 
         #[zbus(property)]
         fn identity(&self) -> String {
-            "Materialfy".into()
+            "Pixel Music".into()
         }
 
         #[zbus(property)]

@@ -818,7 +818,7 @@ impl Actor {
                         let tx = self.tx.clone();
                         tokio::spawn(async move {
                             let result = source.resolve_track(request).await;
-                            let _ = tx.send(Msg::YouTube(YtMsg::Resolved { seq, result }));
+                            let _ = tx.send(Msg::YouTube(YtMsg::Resolved { seq, result: Box::new(result) }));
                         });
                     }
                     None => tracing::debug!("youtube is off, {} not resolved", request.video_id),

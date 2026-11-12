@@ -176,8 +176,8 @@ Item {
                             Layout.fillWidth: true
                             visible: root.hasOffer
                             text: {
-                                const parts = [Updater.prerelease ? I18n.t("Materialfy {0} (pre-release)", Updater.version)
-                                                                  : I18n.t("Materialfy {0}", Updater.version)]
+                                const parts = [Updater.prerelease ? I18n.t("Pixel Music {0} (pre-release)", Updater.version)
+                                                                  : I18n.t("Pixel Music {0}", Updater.version)]
                                 if (Updater.publishedAt !== "")
                                     parts.push(I18n.date(Updater.publishedAt))
                                 if (Updater.size > 0)

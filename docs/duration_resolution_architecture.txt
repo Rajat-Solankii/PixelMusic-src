@@ -1,0 +1,227 @@
+Duration Resolution Architecture
+=================================
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                           QML Layer                                  │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  HomePage.qml                                                        │
+│  └─ Tracks Shelf                                                     │
+│      └─ Repeater                                                     │
+│          └─ TrackRow.qml                                            │
+│              ├─ Property: durationMs = 0                            │
+│              ├─ Property: trackId = "youtube:track:abc123"          │
+│              ├─ Property: _durationResolved = false                  │
+│              │                                                        │
+│              ├─ onVisibleChanged: ─────────────────────┐           │
+│              │  if (visible && durationMs <= 0 &&       │           │
+│              │      trackId !== "" && !_durationResolved)│          │
+│              │    _durationResolved = true              │           │
+│              │    Catalog.resolveDuration(trackId, 0)   │           │
+│              └──────────────────────────────────────────┘           │
+│                                                                      │
+│              ┌─ Connections ────────────────────────────┐           │
+│              │  onDurationResolved(trackId, durationMs):│           │
+│              │    if (trackId === this.trackId)          │           │
+│              │      this.durationMs = durationMs         │           │
+│              └───────────────────────────────────────────┘           │
+│                                                                      │
+└──────────────────────────┬──────────────────────────────────────────┘
+                            │
+                            │ Qt Signal/Slot
+                            │
+┌──────────────────────────▼──────────────────────────────────────────┐
+│                     Rust Bridge Layer                                │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  catalog.rs (CatalogRust)                                           │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ resolve_duration(track_id, current_ms)                        │   │
+│  │                                                                │   │
+│  │ 1. if current_ms > 0: return                                  │   │
+│  │ 2. video_id = extract_video_id(track_id)                      │   │
+│  │ 3. cached = youtube.cached_duration(video_id)                 │   │
+│  │    if cached:                                                 │   │
+│  │      emit durationResolved(track_id, cached)                  │   │
+│  │      return                                                   │   │
+│  │ 4. ctx().rt.spawn(async {                                     │   │
+│  │      duration = youtube.resolve_track_duration(video_id)      │   │
+│  │      emit durationResolved(track_id, duration)                │   │
+│  │    })                                                         │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  Signal: durationResolved(track_id: QString, duration_ms: i64)     │
+│                                                                      │
+└──────────────────────────┬──────────────────────────────────────────┘
+                            │
+                            │ async spawn
+                            │
+┌──────────────────────────▼──────────────────────────────────────────┐
+│                    Service Layer                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  YouTubeService                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ resolve_track_duration(video_id) -> Option<i64>               │   │
+│  │                                                                │   │
+│  │ 1. if cached = duration_cache.get(video_id):                 │   │
+│  │      return Some(cached)                                      │   │
+│  │                                                                │   │
+│  │ 2. response = client.get_video_info(video_id).await          │   │
+│  │    duration_ms = extract_duration_ms(response)                │   │
+│  │                                                                │   │
+│  │ 3. duration_cache.set(video_id, duration_ms)                 │   │
+│  │ 4. return Some(duration_ms)                                   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ DurationCache                                                 │   │
+│  │  - cache: HashMap<video_id, (timestamp, duration_ms)>        │   │
+│  │  - max_size: 1000                                            │   │
+│  │  - ttl: 30 minutes                                           │   │
+│  │                                                                │   │
+│  │  get(video_id) -> Option<i64>                                │   │
+│  │  set(video_id, duration_ms)                                  │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+└──────────────────────────┬──────────────────────────────────────────┘
+                            │
+                            │ HTTP request
+                            │
+┌──────────────────────────▼──────────────────────────────────────────┐
+│                    YouTube API                                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  InnerTube Client                                                    │
+│  POST /player                                                        │
+│  {                                                                   │
+│    "videoId": "abc123",                                             │
+│    "context": { "client": "ANDROID_VR" }                            │
+│  }                                                                   │
+│                                                                      │
+│  Response:                                                           │
+│  {                                                                   │
+│    "videoDetails": {                                                │
+│      "lengthSeconds": "212",                                        │
+│      ...                                                             │
+│    }                                                                 │
+│  }                                                                   │
+│                                                                      │
+│  → Extract duration = 212 seconds = 212000 ms                       │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+Data Flow Timeline
+==================
+
+Time  |  Component         |  Action                     |  State
+------+--------------------+-----------------------------+------------------
+T=0ms | TrackRow           | visible = true              | durationMs = 0
+      |                    | _durationResolved = false   |
+------+--------------------+-----------------------------+------------------
+T=1ms | TrackRow           | onVisibleChanged fires      | 
+      |                    | → Catalog.resolveDuration() |
+------+--------------------+-----------------------------+------------------
+T=2ms | Catalog            | Check current_ms = 0        |
+      |                    | Extract video_id            |
+      |                    | Check cache (miss)          |
+------+--------------------+-----------------------------+------------------
+T=3ms | Catalog            | Spawn async task            |
+      |                    | Return to UI thread         |
+------+--------------------+-----------------------------+------------------
+T=5ms | YouTubeService     | resolve_track_duration()    |
+      |                    | → get_video_info()          |
+------+--------------------+-----------------------------+------------------
+T=150 | InnerTube          | HTTP request to YouTube     |
+      |                    | Response received           |
+------+--------------------+-----------------------------+------------------
+T=151 | YouTubeService     | Extract duration: 212000ms  |
+      |                    | Cache result                |
+------+--------------------+-----------------------------+------------------
+T=152 | Catalog            | Emit durationResolved       |
+      |                    | signal                      |
+------+--------------------+-----------------------------+------------------
+T=153 | TrackRow           | Receive signal              | durationMs = 212000
+      |                    | Update durationMs           | _durationResolved = true
+      |                    | UI shows "3:32"            |
+
+
+Cache Hit Timeline (Second View)
+=================================
+
+Time  |  Component         |  Action                     |  State
+------+--------------------+-----------------------------+------------------
+T=0ms | TrackRow           | visible = true              | durationMs = 0
+------+--------------------+-----------------------------+------------------
+T=1ms | Catalog            | resolve_duration()          |
+      |                    | Check cache (HIT!)           |
+------+--------------------+-----------------------------+------------------
+T=2ms | Catalog            | Emit durationResolved       |
+      |                    | (synchronous)               |
+------+--------------------+-----------------------------+------------------
+T=3ms | TrackRow           | Update durationMs           | durationMs = 212000
+      |                    | No async needed             |
+
+
+Performance Benefits
+====================
+
+Without Lazy Resolution:
+- Resolve all 100 tracks: ~15 seconds (100 × 150ms)
+- Wasted bandwidth on tracks user never scrolls to
+- Slower initial page load
+
+With Lazy Resolution:
+- Resolve only visible tracks: ~150ms per track
+- Typical view: 8-10 visible tracks = ~1.5 seconds
+- On-demand: tracks resolve as user scrolls
+- Cache: subsequent views instant
+- Network efficient: only what's needed
+
+
+Memory Usage
+=============
+
+DurationCache:
+- Max 1000 entries
+- Each entry: ~16 bytes (String key + i64 + timestamp)
+- Total: ~16KB maximum
+- TTL: 30 minutes
+- Automatic eviction when full
+
+TrackRow instances:
+- 1 bool property per track (_durationResolved)
+- Minimal overhead
+- No memory leak (garbage collected with TrackRow)
+
+
+Thread Safety
+==============
+
+Cache:
+- Mutex<HashMap<...>>
+- Thread-safe reads/writes
+- lock() helper handles poisoning
+
+Resolution:
+- Async spawn on tokio runtime
+- Qt signal delivery on GUI thread
+- No race conditions (single resolution flag)
+
+
+Error Handling
+==============
+
+Network errors:
+- Silent failure (duration remains 0)
+- UI continues to function
+- No user-facing error
+
+Cache errors:
+- Mutex poisoning handled
+- Falls back to API call
+
+Invalid video IDs:
+- Early return in resolve_duration()
+- No unnecessary network calls

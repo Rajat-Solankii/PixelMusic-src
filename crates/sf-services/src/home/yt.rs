@@ -143,6 +143,8 @@ impl HomeService {
             s.loading = true;
             s.error_text.clear();
         });
+        // Home is shown: on a new day the mixes are built again
+        self.publish_mixes();
         let me = self.me.clone();
         self.rt.spawn(async move {
             let Some(service) = me.upgrade() else { return };
@@ -159,6 +161,8 @@ impl HomeService {
                         has_more: page.continuation.is_some(),
                         error_text: String::new(),
                     });
+                    // Your Mix also draws from the feed's songs
+                    service.publish_mixes();
                 }
                 Err(error) => service.yt_home.send_modify(|s| {
                     s.loading = false;

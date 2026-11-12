@@ -41,7 +41,7 @@ pub const SCROBBLE_CAP: Duration = Duration::from_secs(180);
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(180);
 const SIGN_IN_POLL: Duration = Duration::from_millis(2500);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-const USER_AGENT: &str = concat!("Materialfy/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("PixelMusic/", env!("CARGO_PKG_VERSION"));
 /// "Invalid session key": the user revoked access on last.fm.
 const ERROR_INVALID_SESSION: i64 = 9;
 /// "Unauthorized token": the user hasn't approved in the browser yet.

@@ -431,20 +431,20 @@ const LOGO: &str = include_str!("logo.svg");
 
 fn page(heading: &str, body: &str, accent: &str) -> String {
     let lang = mf_i18n::lang().code();
-    let title = format!("{heading} — Materialfy");
+    let title = format!("{heading} — Pixel Music");
     format!(
-        "<!doctype html><html lang=\"{lang}\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>:root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#141218;color:#e6e0e9;font-family:\"Segoe UI\",Roboto,system-ui,sans-serif}}main{{max-width:28rem;margin:1rem;padding:2.5rem;border-radius:1.75rem;background:#211f26;box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center}}.logo svg{{width:72px;height:72px;display:block;margin:0 auto 1rem}}.brand{{font-size:.875rem;letter-spacing:.02em;color:#cac4d0;margin:0 0 1.25rem}}h1{{font-size:1.5rem;margin:.25rem 0 .5rem;color:{accent}}}p{{color:#cac4d0;line-height:1.5;margin:0}}</style><main><div class=\"logo\">{LOGO}</div><p class=\"brand\">Materialfy</p><h1>{heading}</h1><p>{body}</p></main><script>setTimeout(function(){{window.close()}},1500)</script></html>"
+        "<!doctype html><html lang=\"{lang}\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>:root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#141218;color:#e6e0e9;font-family:\"Segoe UI\",Roboto,system-ui,sans-serif}}main{{max-width:28rem;margin:1rem;padding:2.5rem;border-radius:1.75rem;background:#211f26;box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center}}.logo svg{{width:72px;height:72px;display:block;margin:0 auto 1rem}}.brand{{font-size:.875rem;letter-spacing:.02em;color:#cac4d0;margin:0 0 1.25rem}}h1{{font-size:1.5rem;margin:.25rem 0 .5rem;color:{accent}}}p{{color:#cac4d0;line-height:1.5;margin:0}}</style><main><div class=\"logo\">{LOGO}</div><p class=\"brand\">Pixel Music</p><h1>{heading}</h1><p>{body}</p></main><script>setTimeout(function(){{window.close()}},1500)</script></html>"
     )
 }
 
 fn success_page() -> String {
-    page(&mf_i18n::t("Signed in"), &mf_i18n::t("You can close this tab and return to Materialfy."), "#cfbcff")
+    page(&mf_i18n::t("Signed in"), &mf_i18n::t("You can close this tab and return to Pixel Music."), "#cfbcff")
 }
 
 fn failure_page(reason: &str) -> String {
     page(
         &mf_i18n::t("Sign-in not completed"),
-        &mf_i18n::tf("{0}. Return to Materialfy and try again.", &[&html_escape(reason)]),
+        &mf_i18n::tf("{0}. Return to Pixel Music and try again.", &[&html_escape(reason)]),
         "#ffb4ab",
     )
 }
@@ -610,7 +610,7 @@ mod tests {
     fn pages_are_localized_branded_and_escape_reasons() {
         let ok = success_page();
         assert!(ok.contains("lang=\"en\""));
-        assert!(ok.contains("Materialfy"));
+        assert!(ok.contains("Pixel Music"));
         assert!(ok.contains("Signed in"));
         let failed = failure_page("<script>x</script>");
         assert!(failed.contains("&lt;script&gt;"));

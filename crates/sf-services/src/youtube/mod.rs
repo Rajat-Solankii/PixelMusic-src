@@ -6,6 +6,7 @@
 //! lyrics, account), `mutations.rs` (likes, subscriptions, playlist edits) and `import.rs`.
 
 pub mod client;
+pub mod duration_cache;
 pub mod error;
 pub mod import;
 pub mod models;
@@ -52,6 +53,8 @@ pub struct YouTubeService {
     home_cache: Mutex<Option<(Instant, ShelvesPage)>>,
     /// one home request at a time, so concurrent callers share the result
     home_gate: tokio::sync::Mutex<()>,
+    /// cache for resolved track durations
+    duration_cache: duration_cache::DurationCache,
 }
 
 impl YouTubeService {
@@ -61,7 +64,13 @@ impl YouTubeService {
 
     /// A service over a prepared client (tests point it at a local server).
     pub fn with_client(client: InnerTube) -> Self {
-        Self { client: std::sync::Arc::new(client), streams: Default::default(), home_cache: Mutex::new(None), home_gate: tokio::sync::Mutex::new(()) }
+        Self { 
+            client: std::sync::Arc::new(client), 
+            streams: Default::default(), 
+            home_cache: Mutex::new(None), 
+            home_gate: tokio::sync::Mutex::new(()),
+            duration_cache: duration_cache::DurationCache::new(),
+        }
     }
 
     pub fn client(&self) -> &InnerTube {
@@ -71,7 +80,9 @@ impl YouTubeService {
     /// Sign in (`Some`) or out (`None`). The cached home feed belonged to the previous identity.
     pub fn set_account(&self, account: Option<YouTubeAccount>) {
         self.client.set_account(account);
+        self.streams.account_changed();
         self.invalidate_home();
+        self.duration_cache.clear();
     }
 
     pub fn signed_in(&self) -> bool {
@@ -90,6 +101,29 @@ impl YouTubeService {
     /// `POST browse` for the next page of a list: the token goes in the body, as the reference client sends it.
     async fn browse_continuation(&self, continuation: &str, login: Login) -> Result<Value> {
         self.client.post(&client::WEB_REMIX, "browse", json!({ "continuation": continuation }), login).await
+    }
+    
+    /// Resolve duration for a track that might be missing it (e.g., from Quick Picks).
+    /// Returns cached duration if available, or fetches it from YouTube Music.
+    pub async fn resolve_track_duration(&self, video_id: &str) -> Option<i64> {
+        // Check cache first
+        if let Some(cached) = self.duration_cache.get(video_id) {
+            return Some(cached);
+        }
+        
+        // Fetch video info to get duration
+        let response = self.client.get_video_info(video_id).await.ok()?;
+        let duration_ms = InnerTube::extract_duration_ms(&response)?;
+        
+        // Cache the result
+        self.duration_cache.set(video_id.to_owned(), duration_ms);
+        
+        Some(duration_ms)
+    }
+    
+    /// Get cached duration if available.
+    pub fn cached_duration(&self, video_id: &str) -> Option<i64> {
+        self.duration_cache.get(video_id)
     }
 }
 

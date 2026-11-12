@@ -440,7 +440,7 @@ Page {
                     Layout.fillWidth: true
                     text: LastFm.connected ? I18n.t("What you play here is added to your Last.fm profile")
                         : LastFm.signingIn ? I18n.t("Press “Yes, allow access” on the Last.fm page that opened, then come back here")
-                        : I18n.t("Connect opens Last.fm in your browser to approve Materialfy. Your password is never typed into this app")
+                        : I18n.t("Connect opens Last.fm in your browser to approve Pixel Music. Your password is never typed into this app")
                     type: "bodyMedium"
                     color: Theme.fgSurfaceVariant
                     wrapMode: Text.WordWrap
@@ -734,6 +734,75 @@ Page {
                 }
             }
         }
+
+        // ---- Logo colorway ----
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Label { text: I18n.t("Logo color"); type: "bodyLarge" }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: I18n.t("Choose the app logo’s colorway")
+                type: "bodyMedium"
+                color: Theme.fgSurfaceVariant
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 12
+                Repeater {
+                    model: [
+                        { key: "bluePurple", gradient: ["#8C6DFF", "#4A2BE0"] },
+                        { key: "babyPinkPurple", gradient: ["#FF9ED2", "#B666D2"] },
+                        { key: "graphiteGray", gradient: ["#8E8E93", "#636366"] },
+                        { key: "limeGreen", gradient: ["#7DC88F", "#4CAF50"] },
+                        { key: "limeLemon", gradient: ["#FFEB3B", "#FBC02D"] },
+                        { key: "orangeYellow", gradient: ["#FF9800", "#FF5722"] }
+                    ]
+                    Rectangle {
+                        required property var modelData
+                        width: 56
+                        height: 56
+                        radius: Theme.shape.full
+                        color: Theme.surfaceContainerHigh
+                        border.width: Settings.logoColorway === modelData.key ? 3 : 1
+                        border.color: Settings.logoColorway === modelData.key ? Theme.primary : Theme.outlineVariant
+
+                        Behavior on border.width { NumberAnimation { duration: Theme.motion.effectsFast } }
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 40
+                            height: 40
+                            radius: width / 2
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0; color: modelData.gradient[0] }
+                                GradientStop { position: 1; color: modelData.gradient[1] }
+                            }
+                        }
+
+                        Icon {
+                            anchors.bottom: parent.bottom
+                            anchors.right: parent.right
+                            anchors.margins: 2
+                            visible: Settings.logoColorway === modelData.key
+                            name: "check_circle"
+                            size: 18
+                            color: Theme.primary
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Settings.logoColorway = modelData.key
+                        }
+                    }
+                }
+            }
+        }
+
         // ---- Фон и обложка ----
         RowLayout {
             Layout.fillWidth: true
@@ -1835,8 +1904,8 @@ Page {
         icon: "info"
 
         SettingRow {
-            title: Updater.buildCommit !== "" ? I18n.t("Materialfy {0}", Updater.appVersion) + " · " + Updater.buildCommit
-                                              : I18n.t("Materialfy {0}", Updater.appVersion)
+            title: Updater.buildCommit !== "" ? I18n.t("Pixel Music {0}", Updater.appVersion) + " · " + Updater.buildCommit
+                                              : I18n.t("Pixel Music {0}", Updater.appVersion)
             description: I18n.t("An unofficial Spotify client in Material 3 Expressive style. Playback requires Spotify Premium; no lossless or offline downloads.")
         }
         Label {

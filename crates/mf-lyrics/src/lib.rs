@@ -342,18 +342,17 @@ impl LyricsFetcher {
     /// slow, keeps the line result and lets a background task fill the cache.
     async fn word_result(&self, query: &LyricsQuery) -> Option<LyricsResult> {
         let http = (self.http)().ok()?;
-        if let Ok(Some(song)) = sources::ne_search(&http, query).await {
-            if let Some(id) = song.get("id") {
-                if let Ok(data) = sources::ne_lyric_by_id(&http, &py_id(id)).await {
-                    // нет YRC — не выход из функции: дальше пробуем Musixmatch
-                    let yrc = data.get("yrc").and_then(|y| y.get("lyric")).and_then(|v| v.as_str()).unwrap_or("");
-                    if !yrc.is_empty() {
-                        let lines = parse_yrc(yrc);
-                        let texts: Vec<String> = lines.iter().map(Line::text).collect();
-                        if !lines.is_empty() && !is_placeholder(texts.iter().map(String::as_str)) {
-                            return Some(LyricsResult::found("NetEase", "word", lines));
-                        }
-                    }
+        if let Ok(Some(song)) = sources::ne_search(&http, query).await
+            && let Some(id) = song.get("id")
+            && let Ok(data) = sources::ne_lyric_by_id(&http, &py_id(id)).await
+        {
+            // нет YRC — не выход из функции: дальше пробуем Musixmatch
+            let yrc = data.get("yrc").and_then(|y| y.get("lyric")).and_then(|v| v.as_str()).unwrap_or("");
+            if !yrc.is_empty() {
+                let lines = parse_yrc(yrc);
+                let texts: Vec<String> = lines.iter().map(Line::text).collect();
+                if !lines.is_empty() && !is_placeholder(texts.iter().map(String::as_str)) {
+                    return Some(LyricsResult::found("NetEase", "word", lines));
                 }
             }
         }

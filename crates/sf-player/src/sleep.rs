@@ -161,10 +161,10 @@ impl SleepTimer {
             return None;
         }
         // The user moved the volume during the fade: start the fade again from their level.
-        if let (Some(_), Some(set)) = (self.fading_from, self.last_set) {
-            if (view.volume - set).abs() > 0.02 {
-                self.fading_from = Some(view.volume);
-            }
+        if let (Some(_), Some(set)) = (self.fading_from, self.last_set)
+            && (view.volume - set).abs() > 0.02
+        {
+            self.fading_from = Some(view.volume);
         }
         let from = *self.fading_from.get_or_insert(view.volume);
         let level = (from * left as f64 / FADE_MS as f64).clamp(0.0, from);

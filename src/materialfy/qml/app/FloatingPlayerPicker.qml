@@ -17,7 +17,7 @@ ColumnLayout {
     Layout.fillWidth: true
 
     readonly property var _modeInfo: ({
-        off: { title: I18n.t("Off"), sub: I18n.t("Only the Materialfy window") },
+        off: { title: I18n.t("Off"), sub: I18n.t("Only the Pixel Music window") },
         island: { title: I18n.t("Island"), sub: I18n.t("At the top of the screen, like a notch") },
         taskbar: { title: I18n.t("Taskbar"), sub: I18n.t("Inside the Windows taskbar") },
         both: { title: I18n.t("Both"), sub: I18n.t("Island and taskbar together") }

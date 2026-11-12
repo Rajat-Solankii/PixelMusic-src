@@ -28,9 +28,11 @@ use crate::library::{LibraryEvent, LibraryService};
 use crate::releases::ReleasesService;
 use crate::lock;
 
+pub mod mixes;
 mod yt;
 pub(crate) use yt::home_shelf;
 pub use yt::YouTubeHomeSnapshot;
+pub use mixes::HomeMixes;
 
 /// Не чаще раза в 10 минут без force.
 pub const REFRESH_EVERY: Duration = Duration::from_secs(600);
@@ -96,6 +98,9 @@ pub struct HomeService {
     yt_home: watch::Sender<YouTubeHomeSnapshot>,
     yt_state: Mutex<yt::YtHome>,
     yt_generation: AtomicU64,
+    /// "Recently played", "Daily Mix" and "Your Mix" from the local history (home/mixes.rs)
+    mixes: watch::Sender<HomeMixes>,
+    mix_key: Mutex<mixes::MixKey>,
     me: Weak<HomeService>,
 }
 
@@ -123,10 +128,13 @@ impl HomeService {
             yt_home: watch::channel(YouTubeHomeSnapshot::default()).0,
             yt_state: Mutex::default(),
             yt_generation: AtomicU64::new(0),
+            mixes: watch::channel(HomeMixes::default()).0,
+            mix_key: Mutex::default(),
             me: me.clone(),
         });
         rt.spawn(listen(Arc::downgrade(&service)));
         service.spawn_yt_listener();
+        service.publish_mixes();
         service
     }
 
@@ -226,6 +234,33 @@ impl HomeService {
 
     pub fn watch(&self) -> watch::Receiver<HomeSnapshot> {
         self.snapshot.subscribe()
+    }
+
+    pub fn mixes(&self) -> HomeMixes {
+        self.mixes.borrow().clone()
+    }
+
+    pub fn watch_mixes(&self) -> watch::Receiver<HomeMixes> {
+        self.mixes.subscribe()
+    }
+
+    /// "Recently played", "Daily Mix" and "Your Mix" from the listening history (signed in or not). Called
+    /// when the history or the YouTube home feed changes and when Home is shown (a new day — new mixes).
+    pub fn publish_mixes(&self) {
+        let plays = self.history.recent(HISTORY_FOR_TOP);
+        let feed = mixes::feed_tracks(&self.yt_home.borrow().shelves);
+        let liked = |track: &TrackItem| self.library.is_liked(&track.uri);
+        let mut key = lock(&self.mix_key);
+        let previous = self.mixes.borrow().clone();
+        let (next, next_key) = mixes::build(&plays, &feed, &liked, &jiff::Zoned::now(), &previous, *key);
+        *key = next_key;
+        self.mixes.send_if_modified(|shown| {
+            if *shown == next {
+                return false;
+            }
+            *shown = next;
+            true
+        });
     }
 
     // --- внутреннее ----------------------------------------------------------------------------
@@ -602,6 +637,7 @@ async fn listen(weak: Weak<HomeService>) {
                 Ok(HistoryEvent::Changed) | Err(broadcast::error::RecvError::Lagged(_)) => {
                     let Some(me) = weak.upgrade() else { break };
                     me.publish();
+                    me.publish_mixes();
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },

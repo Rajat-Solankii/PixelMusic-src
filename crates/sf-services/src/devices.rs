@@ -32,7 +32,7 @@ const VOLUME_DEBOUNCE: Duration = Duration::from_millis(150);
 /// Показанная громкость держится до ответа списка.
 const VOLUME_HOLD: Duration = Duration::from_millis(2500);
 /// Имя, которым мы представляемся приёмнику при addUser.
-const CLIENT_NAME: &str = "Materialfy";
+const CLIENT_NAME: &str = "Pixel Music";
 const NEED_PLAYBACK: &str = "Turn on playback on this computer first — the receiver needs something to connect to";
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -310,7 +310,7 @@ impl DevicesService {
     /// Имя этого устройства по умолчанию: «Materialfy · <имя ПК>».
     pub fn default_device_name() -> String {
         let host = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
-        if host.is_empty() { "Materialfy".to_owned() } else { format!("Materialfy · {host}") }
+        if host.is_empty() { "Pixel Music".to_owned() } else { format!("Pixel Music · {host}") }
     }
 
     pub fn snapshot(&self) -> DevicesSnapshot {

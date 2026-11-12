@@ -34,7 +34,7 @@ SettingsCard {
     icon: "download"
 
     SettingRow {
-        title: I18n.t("Materialfy {0}", Updater.currentVersion)
+        title: I18n.t("Pixel Music {0}", Updater.currentVersion)
         description: root.status
                      + (Updater.lastChecked > 0 && root.st !== "checking" && root.st !== "error"
                         ? " · " + I18n.t("checked {0}", root._lower(I18n.relative(Updater.lastChecked))) : "")

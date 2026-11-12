@@ -33,7 +33,7 @@ Window {
     width: slotWidth
     height: 40
     color: "transparent"
-    title: "Materialfy"
+    title: "Pixel Music"
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     // Без владельца из Qt: окно, принадлежащее главному, Windows прячет вместе с ним (владелец — панель, см. C++)
     transientParent: null
@@ -105,15 +105,20 @@ Window {
         repeat: true
         running: root._ready && root.shotPath === ""
         onTriggered: {
-            if (!root.dragActive)
+            if (!root.dragActive && !placeDebounce.running)
                 root.place()
             root._fullscreen = root.placement === 2 && WindowShell.fullscreenOn(root)
         }
     }
     Connections {
         target: Settings
-        function onTaskbarWidgetPosChanged() { if (!root.dragActive) root.place() }
-        function onTaskbarPositionsChanged() { if (!root.dragActive) root.place() }
+        function onTaskbarWidgetPosChanged() { if (!root.dragActive) placeDebounce.restart() }
+        function onTaskbarPositionsChanged() { if (!root.dragActive) placeDebounce.restart() }
+    }
+    Timer {
+        id: placeDebounce
+        interval: 50
+        onTriggered: root.place()
     }
 
     // Клавиши без фокуса: ← → треки, ↑ ↓ громкость, пробел
@@ -223,7 +228,7 @@ Window {
             Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsFast } }
         }
 
-        // ---- Обложка и подписи: клик — открыть Materialfy, зажать и тянуть — двигать виджет ----
+        // ---- Обложка и подписи: клик — открыть Pixel Music, зажать и тянуть — двигать виджет ----
         Item {
             id: track
             anchors.left: parent.left

@@ -12,10 +12,10 @@ const KNOWN_HOSTS: [&str; 5] =
 pub fn mirrors(url: &str) -> Vec<String> {
     for host in KNOWN_HOSTS {
         for scheme in ["https://", "http://"] {
-            if let Some(path) = url.strip_prefix(scheme).and_then(|rest| rest.strip_prefix(host)) {
-                if path.starts_with("/image/") {
-                    return SPOTIFY_IMAGE_HOSTS.iter().map(|mirror| format!("https://{mirror}{path}")).collect();
-                }
+            if let Some(path) = url.strip_prefix(scheme).and_then(|rest| rest.strip_prefix(host))
+                && path.starts_with("/image/")
+            {
+                return SPOTIFY_IMAGE_HOSTS.iter().map(|mirror| format!("https://{mirror}{path}")).collect();
             }
         }
     }

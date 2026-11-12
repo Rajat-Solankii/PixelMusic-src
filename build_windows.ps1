@@ -51,14 +51,14 @@ $ProgressPreference = "SilentlyContinue"
 # UTF-8 output in any console code page (cp866/cp1251)
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
 
-$AppName = "Materialfy"
-$ExeName = "materialfy.exe"
-$FilePrefix = "Materialfy"
+$AppName = "Pixel Music"
+$ExeName = "pixelmusic.exe"
+$FilePrefix = "PixelMusic"
 
 $ProjectRoot = $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $ProjectRoot "target\dist" }
 $OutDir = [IO.Path]::GetFullPath($OutDir)
-$Stage = Join-Path $OutDir "materialfy"
+$Stage = Join-Path $OutDir "pixelmusic"
 
 function Write-Step { param([string]$msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$msg) Write-Host "    OK: $msg" -ForegroundColor Green }
@@ -116,9 +116,9 @@ if (-not $SkipBuild) {
     try {
         # --locked: Cargo.lock держит vergen 9.0.6 (9.1 ломает build-скрипт librespot-core)
         if ($CargoProfile -eq "release") {
-            cargo build --locked --release -p materialfy
+            cargo build --locked --release -p materialfy --bin pixelmusic
         } else {
-            cargo build --locked -p materialfy
+            cargo build --locked -p materialfy --bin pixelmusic
         }
         if ($LASTEXITCODE -ne 0) { Abort "cargo build failed" }
     } finally {

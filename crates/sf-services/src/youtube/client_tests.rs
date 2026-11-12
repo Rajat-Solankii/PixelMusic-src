@@ -594,13 +594,73 @@ async fn the_signed_in_web_tier_follows_a_refusal() {
     let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
     assert_eq!(stream.source, "WEB_REMIX");
     let requests = player_requests(&server);
-    assert_eq!(requests.len(), 2);
-    assert!(requests[1].header("cookie").is_some(), "WEB_REMIX goes as the user");
-    assert!(requests[1].body["serviceIntegrityDimensions"]["poToken"].is_string());
+    assert_eq!(requests.len(), 3);
+    assert_eq!((client_name(&requests[0]), requests[0].header("cookie")), ("ANDROID_VR", None));
+    assert_eq!(client_name(&requests[1]), "ANDROID_VR");
+    assert!(requests[1].header("cookie").is_some(), "then ANDROID_VR as the user");
+    assert!(requests[2].header("cookie").is_some(), "WEB_REMIX goes as the user");
+    assert!(requests[2].body["serviceIntegrityDimensions"]["poToken"].is_string());
     // an age wall does not rest ANDROID_VR
     service.invalidate_stream("fJ9rUzIMcZQ");
     service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
-    assert_eq!(client_name(&player_requests(&server)[2]), "ANDROID_VR");
+    assert_eq!(client_name(&player_requests(&server)[3]), "ANDROID_VR");
+    assert_eq!(player_requests(&server).len(), 6);
+}
+
+/// A server where the anonymous ANDROID_VR meets a bot check and the signed-in one answers `user`.
+async fn bot_checked_server(user: Option<Value>) -> MockServer {
+    let base = Arc::new(Mutex::new(String::new()));
+    let shared = base.clone();
+    let server = MockServer::start(move |request, _| {
+        let bot_check = fixture("error_responses.json")["bot_challenge_login_required"].clone();
+        match (request.header("cookie"), &user) {
+            (Some(_), None) => (200, player_response(&shared.lock().unwrap())),
+            (Some(_), Some(answer)) => (200, answer.clone()),
+            (None, _) => (200, bot_check),
+        }
+    })
+    .await;
+    *base.lock().unwrap() = server.base.clone();
+    server
+}
+
+#[tokio::test]
+async fn signing_in_gets_past_the_bot_check_with_android_vr() {
+    let server = bot_checked_server(None).await;
+    let service = server.service();
+    // signed out: the bot check, and ANDROID_VR rests
+    let error = service.resolve_stream("fJ9rUzIMcZQ").await.unwrap_err();
+    assert!(matches!(&error, YouTubeError::Unplayable(reason) if reason.contains("not a robot")), "{error:?}");
+    // signing in forgets the rest; the anonymous client is refused again, the user's is not
+    service.set_account(Some(account()));
+    let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
+    assert_eq!((stream.source.as_str(), stream.itag), ("ANDROID_VR", 140));
+    assert_eq!(stream.user_agent, ANDROID_VR.user_agent);
+    let requests = player_requests(&server);
+    let user = requests.last().unwrap();
+    assert_eq!(client_name(user), "ANDROID_VR");
+    assert_eq!(user.header("cookie"), Some(account().cookie.as_str()));
+    assert!(user.header("authorization").is_some_and(|value| value.starts_with("SAPISIDHASH ")));
+    assert_eq!(user.header("x-youtube-client-name"), Some("28"));
+    // the next song skips the resting anonymous client
+    service.resolve_stream("other").await.expect("stream");
+    let after = player_requests(&server);
+    assert_eq!(after.len(), requests.len() + 1);
+    assert!(after.last().unwrap().header("cookie").is_some());
+}
+
+#[tokio::test]
+async fn a_bot_check_of_the_account_rests_its_tier_too() {
+    let bot_check = fixture("error_responses.json")["bot_challenge_login_required"].clone();
+    let server = bot_checked_server(Some(bot_check)).await;
+    let service = server.service();
+    service.set_account(Some(account()));
+    for _ in 0..2 {
+        let error = service.resolve_stream("abc").await.unwrap_err();
+        assert!(matches!(&error, YouTubeError::Unplayable(reason) if reason.contains("not a robot")), "{error:?}");
+    }
+    let vr = player_requests(&server).into_iter().filter(|request| client_name(request) == "ANDROID_VR").count();
+    assert_eq!(vr, 2, "one anonymous and one signed-in request, then both rest");
 }
 
 #[tokio::test]

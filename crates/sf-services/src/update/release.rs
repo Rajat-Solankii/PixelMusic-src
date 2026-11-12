@@ -232,14 +232,14 @@ mod tests {
 
     fn release_assets() -> Vec<GhAsset> {
         [
-            "Materialfy-0.2.0-aarch64.AppImage",
-            "materialfy-0.2.0-linux-aarch64.tar.gz",
-            "materialfy-0.2.0-linux-x86_64.tar.gz",
-            "Materialfy-0.2.0-macos-arm64.dmg",
-            "Materialfy-0.2.0-macos-x86_64.dmg",
-            "Materialfy-0.2.0-Setup.exe",
-            "Materialfy-0.2.0-windows-x64-portable.zip",
-            "Materialfy-0.2.0-x86_64.AppImage",
+            "PixelMusic-0.2.0-aarch64.AppImage",
+            "pixelmusic-0.2.0-linux-aarch64.tar.gz",
+            "pixelmusic-0.2.0-linux-x86_64.tar.gz",
+            "PixelMusic-0.2.0-macos-arm64.dmg",
+            "PixelMusic-0.2.0-macos-x86_64.dmg",
+            "PixelMusic-0.2.0-Setup.exe",
+            "PixelMusic-0.2.0-windows-x64-portable.zip",
+            "PixelMusic-0.2.0-x86_64.AppImage",
             "SHA256SUMS.txt",
         ]
         .into_iter()
@@ -251,14 +251,14 @@ mod tests {
     fn asset_per_platform() {
         let assets = release_assets();
         let pick = |kind, arch| select_asset(&assets, kind, arch).map(|a| a.name.as_str());
-        assert_eq!(pick(InstallKind::WindowsInstaller, "x86_64"), Some("Materialfy-0.2.0-Setup.exe"));
-        assert_eq!(pick(InstallKind::WindowsInstaller, "aarch64"), Some("Materialfy-0.2.0-Setup.exe"));
-        assert_eq!(pick(InstallKind::WindowsPortable, "x86_64"), Some("Materialfy-0.2.0-windows-x64-portable.zip"));
-        assert_eq!(pick(InstallKind::AppImage, "x86_64"), Some("Materialfy-0.2.0-x86_64.AppImage"));
-        assert_eq!(pick(InstallKind::AppImage, "aarch64"), Some("Materialfy-0.2.0-aarch64.AppImage"));
+        assert_eq!(pick(InstallKind::WindowsInstaller, "x86_64"), Some("PixelMusic-0.2.0-Setup.exe"));
+        assert_eq!(pick(InstallKind::WindowsInstaller, "aarch64"), Some("PixelMusic-0.2.0-Setup.exe"));
+        assert_eq!(pick(InstallKind::WindowsPortable, "x86_64"), Some("PixelMusic-0.2.0-windows-x64-portable.zip"));
+        assert_eq!(pick(InstallKind::AppImage, "x86_64"), Some("PixelMusic-0.2.0-x86_64.AppImage"));
+        assert_eq!(pick(InstallKind::AppImage, "aarch64"), Some("PixelMusic-0.2.0-aarch64.AppImage"));
         assert_eq!(pick(InstallKind::AppImage, "riscv64"), None);
-        assert_eq!(pick(InstallKind::MacApp, "aarch64"), Some("Materialfy-0.2.0-macos-arm64.dmg"));
-        assert_eq!(pick(InstallKind::MacApp, "x86_64"), Some("Materialfy-0.2.0-macos-x86_64.dmg"));
+        assert_eq!(pick(InstallKind::MacApp, "aarch64"), Some("PixelMusic-0.2.0-macos-arm64.dmg"));
+        assert_eq!(pick(InstallKind::MacApp, "x86_64"), Some("PixelMusic-0.2.0-macos-x86_64.dmg"));
         assert_eq!(pick(InstallKind::Manual, "x86_64"), None);
         assert_eq!(pick(InstallKind::Dev, "x86_64"), None);
         // a release without the file
@@ -274,20 +274,20 @@ mod tests {
             let exe = PathBuf::from(exe);
             detect_install_kind(&Probe { os, exe: &exe, appimage, has_uninstaller, install_roots: &roots })
         };
-        assert_eq!(probe("windows", r"C:\Users\me\AppData\Local\Programs\Materialfy\materialfy.exe", None, true), InstallKind::WindowsInstaller);
-        assert_eq!(probe("windows", r"C:\Users\me\AppData\Local\Programs\Materialfy\materialfy.exe", None, false), InstallKind::WindowsInstaller);
-        assert_eq!(probe("windows", r"c:\program files\Materialfy\materialfy.exe", None, false), InstallKind::WindowsInstaller);
-        assert_eq!(probe("windows", r"D:\Apps\Materialfy\materialfy.exe", None, false), InstallKind::WindowsPortable);
-        assert_eq!(probe("windows", r"D:\Apps\Materialfy\materialfy.exe", None, true), InstallKind::WindowsInstaller);
+        assert_eq!(probe("windows", r"C:\Users\me\AppData\Local\Programs\PixelMusic\pixelmusic.exe", None, true), InstallKind::WindowsInstaller);
+        assert_eq!(probe("windows", r"C:\Users\me\AppData\Local\Programs\PixelMusic\pixelmusic.exe", None, false), InstallKind::WindowsInstaller);
+        assert_eq!(probe("windows", r"c:\program files\PixelMusic\pixelmusic.exe", None, false), InstallKind::WindowsInstaller);
+        assert_eq!(probe("windows", r"D:\Apps\PixelMusic\pixelmusic.exe", None, false), InstallKind::WindowsPortable);
+        assert_eq!(probe("windows", r"D:\Apps\PixelMusic\pixelmusic.exe", None, true), InstallKind::WindowsInstaller);
         // "C:\Program Files Extra" is not under "C:\Program Files"
-        assert_eq!(probe("windows", r"C:\Program Files Extra\m\materialfy.exe", None, false), InstallKind::WindowsPortable);
-        assert_eq!(probe("windows", r"C:\src\materialfy\target\release\materialfy.exe", None, false), InstallKind::Dev);
-        assert_eq!(probe("windows", r"C:\src\m\target\x86_64-pc-windows-msvc\debug\materialfy.exe", None, false), InstallKind::Dev);
-        assert_eq!(probe("linux", "/tmp/.mount_Materi/usr/bin/materialfy", Some("/home/me/Materialfy.AppImage"), false), InstallKind::AppImage);
-        assert_eq!(probe("linux", "/usr/bin/materialfy", None, false), InstallKind::Manual);
-        assert_eq!(probe("linux", "/usr/bin/materialfy", Some(""), false), InstallKind::Manual);
-        assert_eq!(probe("macos", "/Applications/Materialfy.app/Contents/MacOS/materialfy", None, false), InstallKind::MacApp);
-        assert_eq!(probe("macos", "/Users/me/src/materialfy/target/release/materialfy", None, false), InstallKind::Dev);
+        assert_eq!(probe("windows", r"C:\Program Files Extra\m\pixelmusic.exe", None, false), InstallKind::WindowsPortable);
+        assert_eq!(probe("windows", r"C:\src\pixelmusic\target\release\pixelmusic.exe", None, false), InstallKind::Dev);
+        assert_eq!(probe("windows", r"C:\src\m\target\x86_64-pc-windows-msvc\debug\pixelmusic.exe", None, false), InstallKind::Dev);
+        assert_eq!(probe("linux", "/tmp/.mount_PixelM/usr/bin/pixelmusic", Some("/home/me/PixelMusic.AppImage"), false), InstallKind::AppImage);
+        assert_eq!(probe("linux", "/usr/bin/pixelmusic", None, false), InstallKind::Manual);
+        assert_eq!(probe("linux", "/usr/bin/pixelmusic", Some(""), false), InstallKind::Manual);
+        assert_eq!(probe("macos", "/Applications/PixelMusic.app/Contents/MacOS/pixelmusic", None, false), InstallKind::MacApp);
+        assert_eq!(probe("macos", "/Users/me/src/pixelmusic/target/release/pixelmusic", None, false), InstallKind::Dev);
         assert_eq!(probe("freebsd", "/usr/local/bin/materialfy", None, false), InstallKind::Manual);
         for kind in ["installer", "portable", "appimage", "mac", "manual", "dev"] {
             assert_eq!(InstallKind::from_code(kind).map(InstallKind::code), Some(kind));
@@ -329,10 +329,10 @@ mod tests {
 
     #[test]
     fn github_json() {
-        let json = r#"{"tag_name":"v0.2.0","name":"Materialfy v0.2.0","body":"**Full Changelog**","draft":false,
+        let json = r#"{"tag_name":"v0.2.0","name":"Pixel Music v0.2.0","body":"**Full Changelog**","draft":false,
             "prerelease":false,"html_url":"https://github.com/fatyzzz/materialfy/releases/tag/v0.2.0",
-            "published_at":"2026-10-20T10:00:00Z","assets":[{"name":"Materialfy-0.2.0-Setup.exe","size":29833778,
-            "browser_download_url":"https://github.com/x/Materialfy-0.2.0-Setup.exe","digest":"sha256:AB","extra":1}],
+            "published_at":"2026-10-20T10:00:00Z","assets":[{"name":"PixelMusic-0.2.0-Setup.exe","size":29833778,
+            "browser_download_url":"https://github.com/x/PixelMusic-0.2.0-Setup.exe","digest":"sha256:AB","extra":1}],
             "author":{"login":"fatyzzz"}}"#;
         let release: GhRelease = serde_json::from_str(json).unwrap();
         assert_eq!(release.tag_name, "v0.2.0");
@@ -350,16 +350,16 @@ mod tests {
         let a = "15d2eb7d4918f286b63f4ac46e90330639326508e487c30605601e472a1ce026";
         let b = "8CEEE5886667930EF0AC862C14642A4930BCCBA73CE94239FF0E4281A7EF872E";
         let text = format!(
-            "\u{feff}{a}  Materialfy-0.1.0-Setup.exe\r\n{b} *./dist/Materialfy-0.1.0-windows-x64-portable.zip\n\
+            "\u{feff}{a}  PixelMusic-0.1.0-Setup.exe\r\n{b} *./dist/PixelMusic-0.1.0-windows-x64-portable.zip\n\
              not a checksum line\nabc  short.txt\n\n{a}  name with spaces.AppImage\n"
         );
         let sums = parse_sha256sums(&text);
         assert_eq!(sums.len(), 3);
-        assert_eq!(sums["Materialfy-0.1.0-Setup.exe"], a);
-        assert_eq!(sums["Materialfy-0.1.0-windows-x64-portable.zip"], b.to_ascii_lowercase());
+        assert_eq!(sums["PixelMusic-0.1.0-Setup.exe"], a);
+        assert_eq!(sums["PixelMusic-0.1.0-windows-x64-portable.zip"], b.to_ascii_lowercase());
         assert_eq!(sums["name with spaces.AppImage"], a);
 
-        let mut setup = asset("Materialfy-0.1.0-Setup.exe");
+        let mut setup = asset("PixelMusic-0.1.0-Setup.exe");
         assert_eq!(expected_sha256(&sums, &setup).as_deref(), Some(a));
         setup.name = "Other.exe".into();
         assert_eq!(expected_sha256(&sums, &setup), None);
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn file_names() {
-        assert_eq!(safe_file_name("Materialfy-0.2.0-Setup.exe"), Some("Materialfy-0.2.0-Setup.exe"));
+        assert_eq!(safe_file_name("PixelMusic-0.2.0-Setup.exe"), Some("PixelMusic-0.2.0-Setup.exe"));
         for bad in ["", ".", "..", "../x", r"a\b", "C:x", "a\nb"] {
             assert!(safe_file_name(bad).is_none(), "{bad:?}");
         }

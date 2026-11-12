@@ -32,6 +32,7 @@ Item {
             contextStart = -1
             return
         }
+        // the model searches its own rows: reading every row here built a map per track on each queue change
         manualStart = queue.find("section", "manual")
         contextStart = queue.find("section", "context")
     }
@@ -50,6 +51,8 @@ Item {
         function onRowsInserted() { root.recount() }
         function onRowsRemoved() { root.recount() }
         function onRowsMoved() { root.recount() }
+        // Also react to data changes in the model (section changes)
+        function onDataChanged() { Qt.callLater(root.recount) }
     }
     // новый контекст — снова свёрнут
     readonly property string _contextUri: Player.contextUri
@@ -232,10 +235,20 @@ Item {
             id: cell
             required property int index
             required property var model
-            readonly property string sec: model.section
-            readonly property int m: sec === "manual" ? index - root.manualStart
-                                   : sec === "context" ? index - root.contextStart : index
-            readonly property bool first: m === 0
+            readonly property string sec: model.section ?? ""
+            // Calculate position within section - use safe defaults when boundaries not yet calculated
+            readonly property int m: {
+                if (sec === "manual") return root.manualStart >= 0 ? index - root.manualStart : index
+                if (sec === "context") return root.contextStart >= 0 ? index - root.contextStart : index
+                return index
+            }
+            // first row of each section shows the header
+            readonly property bool first: {
+                if (sec === "current") return index === 0
+                if (sec === "manual") return root.manualStart >= 0 ? index === root.manualStart : index === 1
+                if (sec === "context") return root.contextStart >= 0 ? index === root.contextStart : false
+                return false
+            }
             readonly property bool hidden: sec === "context" && m >= root.contextShown
             readonly property bool lifted: root.dragFrom >= 0 && root.dragSection === sec && m === root.dragFrom
             readonly property bool movable: Player.queueReorderable && (sec === "manual" || sec === "context")
@@ -256,7 +269,7 @@ Item {
 
                     Item {
                         width: parent.width
-                        height: cell.sec === "context" && root.dropZoneShown ? zone.height + 8 : 0
+                        height: cell.sec === "context" && root.dropZoneShown && root.manualRows === 0 ? zone.height + 8 : 0
                         visible: height > 0
                         QueueDropZone {
                             id: zone

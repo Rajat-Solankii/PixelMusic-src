@@ -8,7 +8,7 @@ import Materialfy.Core
 // сам вырез, по бокам вогнутые «плечи». Состояния (макет docs/design/50-dynamic-island.html):
 //   idle         — ничего не играет: тонкая полоска 120 × 5 у кромки (на Mac — ничего, вырез и есть полоска).
 //                  Курсор упёрся в верхний край над ней (на Mac — навели на вырез) — выезжает peek
-//   peek         — 260 × 44: «Ничего не играет», клик открывает Materialfy
+//   peek         — 260 × 44: «Ничего не играет», клик открывает Pixel Music
 //   compact      — 164 × 36: обложка слева, полоски уровня (или пауза) справа
 //   volume       — 240 × 36: колесо или ↑ ↓ — проценты по центру, уровень на обложке
 //   announcement — 360 × 52 на 2,5 с при смене трека: обложка, название и исполнитель со шторкой
@@ -114,8 +114,8 @@ Window {
     color: "transparent"
     // KDE Wayland: окно ставит скрипт KWin и находит его по заголовку (cpp: crates/mf-platform/src/kwin.rs)
     readonly property bool kwin: Qt.platform.pluginName.indexOf("wayland") === 0 && WindowShell.kwinAvailable()
-    readonly property string kwinTitle: "Materialfy Island " + screenIndex
-    title: kwin ? kwinTitle : "Materialfy"
+    readonly property string kwinTitle: "Pixel Music Island " + screenIndex
+    title: kwin ? kwinTitle : "Pixel Music"
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     transientParent: null
     // x и y — от целевого экрана, а не от screen: macOS сам переводит окно на экран, где лежат его координаты
@@ -682,7 +682,7 @@ Window {
                         Label {
                             width: parent.width
                             horizontalAlignment: root.vertical ? Text.AlignHCenter : Text.AlignLeft
-                            text: !Player.hasTrack ? I18n.t("Click to open Materialfy")
+                            text: !Player.hasTrack ? I18n.t("Click to open Pixel Music")
                                 : Player.errorText !== "" ? Player.errorText : Player.artist
                             type: "labelMedium"
                             weight: 400

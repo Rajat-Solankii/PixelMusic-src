@@ -198,7 +198,7 @@ fn add_track_control_keeps_the_full_track() {
         duration_ms: 9,
         ..Default::default()
     };
-    let json = rt(&control_to_json(&JamControl::AddTrack { track, is_play_next: true, play_now: false }, "u1", "Guest"));
+    let json = rt(&control_to_json(&JamControl::AddTrack { track: Box::new(track), is_play_next: true, play_now: false }, "u1", "Guest"));
     let Some(JamControl::AddTrack { track, is_play_next, play_now }) = control_from_json(&json, 77) else { panic!("not addTrack") };
     assert!(is_play_next && !play_now);
     assert_eq!(track.content_uri.as_deref(), Some("saavn://x"));
@@ -220,7 +220,7 @@ fn unknown_control_type_is_ignored() {
 fn lan_controls_survive_the_flat_query_both_ways() {
     let mut actions = all_controls();
     actions.push(JamControl::AddTrack {
-        track: JamQueueItem { track_id: "dQw4w9WgXcQ".into(), title: "Never & Gonna?".into(), artist: "Rick Astley".into(), youtube_id: Some("dQw4w9WgXcQ".into()), duration_ms: 212_000, ..Default::default() },
+        track: Box::new(JamQueueItem { track_id: "dQw4w9WgXcQ".into(), title: "Never & Gonna?".into(), artist: "Rick Astley".into(), youtube_id: Some("dQw4w9WgXcQ".into()), duration_ms: 212_000, ..Default::default() }),
         is_play_next: false,
         play_now: true,
     });
@@ -485,7 +485,7 @@ async fn host_and_guest_talk_over_loopback() {
     guest.control(&control_to_json(&JamControl::SeekToTrack { track_id: "ccc".into(), position_ms: 0 }, guest.user_id(), "Pixel Guest")).await.unwrap();
     guest.control(&control_to_json(&JamControl::SetRepeat(1), guest.user_id(), "Pixel Guest")).await.unwrap();
     let add = JamQueueItem { track_id: "youtube_ddd".into(), title: "Added".into(), ..Default::default() };
-    guest.control(&control_to_json(&JamControl::AddTrack { track: add, is_play_next: true, play_now: false }, guest.user_id(), "Pixel Guest")).await.unwrap();
+    guest.control(&control_to_json(&JamControl::AddTrack { track: Box::new(add), is_play_next: true, play_now: false }, guest.user_id(), "Pixel Guest")).await.unwrap();
     assert_eq!(host_player.entries(), ["pause", "seek 61000", "row 3", "repeat one", "insert youtube:track:ddd @0"]);
 
     // a change on the host reaches the waiting long-poll
@@ -530,7 +530,7 @@ async fn host_gates_controls_by_approval_and_room_settings() {
 
     host.set_settings(JamRoomSettings { allow_guests_to_add_tracks: false, allow_guests_to_control_playback: false, require_host_approval_to_join: false });
     send(JamControl::SkipPrevious).await;
-    send(JamControl::AddTrack { track: JamQueueItem { youtube_id: Some("zzz".into()), ..Default::default() }, is_play_next: false, play_now: false }).await;
+    send(JamControl::AddTrack { track: Box::new(JamQueueItem { youtube_id: Some("zzz".into()), ..Default::default() }), is_play_next: false, play_now: false }).await;
     assert_eq!(host_player.entries(), ["next"]);
 
     // leaving removes the guest at once

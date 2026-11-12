@@ -60,6 +60,7 @@ floating_set_mask(QObject* object, int x, int y, int w, int h)
 #include <tlhelp32.h>
 #include <wrl/client.h>
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QMetaObject>
 #include <QtCore/QPointer>
 #include <QtCore/QVariant>
@@ -67,9 +68,12 @@ floating_set_mask(QObject* object, int x, int y, int w, int h)
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cwchar>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 
 using Microsoft::WRL::ComPtr;
@@ -272,9 +276,13 @@ bar_shown(const Bar& bar)
 }
 
 // Кнопки панели через UI Automation: «Пуск», поиск, представление задач и значки приложений — одна группа
-// (по центру или слева), «Виджеты» (погода) — слева от неё. false — UIA нет или кнопок не нашлось.
-// Обход дерева Explorer — межпроцессный: свойства берутся одним запросом (кэш UIA), результат живёт 3 с
-// (виджет переставляется раз в 2 с, а значки сдвигаются, только когда открывают и закрывают программы)
+// (по центру или слева), «Виджеты» (погода) — слева от неё.
+//
+// Обход дерева Explorer — межпроцессный и идёт в своём потоке, НЕ в потоке интерфейса: наше окно — дочернее
+// у Shell_TrayWnd, то есть само лежит в обходимом дереве. UIA из потока, которому принадлежит окно этого дерева,
+// ждёт Explorer, а Explorer через WM_GETOBJECT ждёт наш поток — приложение замирает (до 20 с на запрос), а вместе
+// с ним и панель задач: у дочернего окна и панели общая очередь ввода. Поток интерфейса только читает последний
+// результат и просит новый; пришёл другой результат — окно переставляется (place() в QML).
 struct Buttons
 {
   HWND tray = nullptr;
@@ -283,29 +291,35 @@ struct Buttons
   bool found = false;
   RECT apps{};
   RECT widgets{};
-} buttons_cache;
+};
 
-bool
-taskbar_buttons(HWND tray, const RECT& bar_rect, RECT& apps, RECT& widgets)
+struct ButtonScan
 {
-  const ULONGLONG now = GetTickCount64();
-  Buttons& c = buttons_cache;
-  if (c.tray == tray && EqualRect(&c.bar, &bar_rect) && now - c.tick < 3000) {
-    if (c.found) {
-      apps = c.apps;
-      widgets = c.widgets;
-    }
-    return c.found;
-  }
-  c = Buttons{ tray, bar_rect, now, false, {}, {} };
+  std::mutex mutex;
+  std::condition_variable wake;
+  Buttons cache;
+  HWND want_tray = nullptr;
+  RECT want_bar{};
+  bool wanted = false;
+  bool busy = false;
+  bool started = false;
+};
 
-  static ComPtr<IUIAutomation> uia;
-  if (!uia) {
-    // Qt уже инициализировал COM в GUI-потоке (OLE для перетаскивания); второй вызов безвреден
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(CoCreateInstance(__uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia))))
-      return false;
-  }
+// не разрушается: поток обхода живёт до конца процесса
+ButtonScan&
+button_scan()
+{
+  static auto* scan = new ButtonScan;
+  return *scan;
+}
+
+// окно, которое переставить, когда придёт новый результат; только поток интерфейса
+QPointer<QWindow> buttons_window;
+
+// Один обход (поток обхода). false — UIA не ответил или кнопок не нашлось
+bool
+scan_buttons(IUIAutomation* uia, HWND tray, RECT& apps, RECT& widgets)
+{
   ComPtr<IUIAutomationElement> root;
   if (FAILED(uia->ElementFromHandle(tray, &root)) || !root)
     return false;
@@ -317,6 +331,7 @@ taskbar_buttons(HWND tray, const RECT& bar_rect, RECT& apps, RECT& widgets)
   if (FAILED(uia->CreatePropertyCondition(UIA_ControlTypePropertyId, button, &condition))
       || FAILED(uia->CreateCacheRequest(&request)))
     return false;
+  // свойства — одним запросом (кэш UIA)
   request->AddProperty(UIA_AutomationIdPropertyId);
   request->AddProperty(UIA_ClassNamePropertyId);
   request->AddProperty(UIA_BoundingRectanglePropertyId);
@@ -354,14 +369,91 @@ taskbar_buttons(HWND tray, const RECT& bar_rect, RECT& apps, RECT& widgets)
       any = true;
     }
   }
-  c.found = any;
-  c.apps = group;
-  c.widgets = weather;
   if (any) {
     apps = group;
     widgets = weather;
   }
   return any;
+}
+
+void
+buttons_worker()
+{
+  ButtonScan& scan = button_scan();
+  // свой апартамент: вызовы UIA не качают сообщения окон
+  CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  ComPtr<IUIAutomation> uia;
+  for (;;) {
+    Buttons result;
+    {
+      std::unique_lock<std::mutex> lock(scan.mutex);
+      scan.wake.wait(lock, [&] { return scan.wanted; });
+      scan.wanted = false;
+      result.tray = scan.want_tray;
+      result.bar = scan.want_bar;
+    }
+    if (!uia) {
+      // CUIAutomation8 умеет сроки ожидания: зависший Explorer не держит поток по 20 с
+      if (FAILED(CoCreateInstance(__uuidof(CUIAutomation8), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia))))
+        CoCreateInstance(__uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia));
+      ComPtr<IUIAutomation2> timed;
+      if (uia && SUCCEEDED(uia.As(&timed)) && timed) {
+        timed->put_ConnectionTimeout(2000);
+        timed->put_TransactionTimeout(3000);
+      }
+    }
+    if (uia && IsWindow(result.tray))
+      result.found = scan_buttons(uia.Get(), result.tray, result.apps, result.widgets);
+    result.tick = GetTickCount64();
+    bool changed = false;
+    {
+      std::lock_guard<std::mutex> lock(scan.mutex);
+      const Buttons& old = scan.cache;
+      changed = old.tray != result.tray || !EqualRect(&old.bar, &result.bar) || old.found != result.found
+                || !EqualRect(&old.apps, &result.apps) || !EqualRect(&old.widgets, &result.widgets);
+      scan.cache = result;
+      scan.busy = false;
+    }
+    if (changed && QCoreApplication::instance()) {
+      QMetaObject::invokeMethod(
+        QCoreApplication::instance(),
+        [] {
+          if (buttons_window)
+            QMetaObject::invokeMethod(buttons_window.data(), "place", Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection);
+    }
+  }
+}
+
+// Последний известный результат для этой панели; устарел (5 с: виджет переставляется раз в 2 с, а значки
+// сдвигаются, только когда открывают и закрывают программы) — просит новый и не ждёт его. false — пока неизвестно
+bool
+taskbar_buttons(HWND tray, const RECT& bar_rect, RECT& apps, RECT& widgets)
+{
+  if (!tray || !IsWindow(tray))
+    return false;
+  ButtonScan& scan = button_scan();
+  const ULONGLONG now = GetTickCount64();
+  std::lock_guard<std::mutex> lock(scan.mutex);
+  const Buttons& c = scan.cache;
+  const bool same = c.tray == tray && EqualRect(&c.bar, &bar_rect);
+  if (!scan.busy && !(same && c.tick != 0 && now - c.tick < 5000)) {
+    scan.want_tray = tray;
+    scan.want_bar = bar_rect;
+    scan.wanted = true;
+    scan.busy = true;
+    if (!scan.started) {
+      scan.started = true;
+      std::thread(buttons_worker).detach();
+    }
+    scan.wake.notify_one();
+  }
+  if (!same || !c.found)
+    return false;
+  apps = c.apps;
+  widgets = c.widgets;
+  return true;
 }
 
 // Места для левого края окна шириной w: «left», «appsLeft», «appsRight», «tray» и свободный отрезок [lo, hi]
@@ -386,7 +478,7 @@ places(const Bar& bar, int w, bool with_buttons)
   if (found && widgets.right > widgets.left && widgets.right < apps.left)
     p.lo = std::max(p.lo, widgets.right + gap);
   LONG left = p.lo;
-  // значки слева (не по центру): «после Пуска и поиска» — сразу за группой
+  // значки слева (не по центру): у края стоит «Пуск» — «слева» значит сразу за группой
   if (found && apps.left - p.lo < w + gap)
     left = apps.right + gap;
   auto clamp = [&](LONG x) { return std::max(p.lo, std::min(x, p.hi)); };
@@ -704,7 +796,9 @@ floating_taskbar_place(QObject* object, int width, int height, bool embed, const
   const double scale = window_scale(bar);
   const int w = px(width, scale);
   const int h = size_h(bar, height, scale);
-  // кнопки панели нужны только местам у значков и у левого края — у трея хватает TrayNotifyWnd
+  // кнопки панели нужны всем местам, кроме трея (ему хватает TrayNotifyWnd); запрос не ждёт ответа —
+  // придёт новый результат, окно переставится
+  buttons_window = window;
   const Places p = places(bar, w, pos != QLatin1String("tray"));
   if (h <= 0 || p.hi < p.lo) {
     // узкий экран: виджет залез бы на «Пуск» и значки

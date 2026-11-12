@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-on-dark.svg">
-  <img src="docs/brand/wordmark.svg" width="420" alt="Materialfy">
+  <img src="docs/brand/wordmark.svg" width="420" alt="Pixel Music">
 </picture>
 
 [![Release build](https://github.com/fatyzzz/materialfy/actions/workflows/release.yml/badge.svg)](https://github.com/fatyzzz/materialfy/actions/workflows/release.yml)
@@ -25,7 +25,7 @@ Windows e Linux; o macOS é experimental.
 
 <br>
 
-O Materialfy substitui o app desktop oficial do Spotify para ouvir música em uma janela nativa comum. A
+O Pixel Music substitui o app desktop oficial do Spotify para ouvir música em uma janela nativa comum. A
 interface é escrita em QML (Qt 6.12), sem engine de navegador, e a lógica fica em Rust. O áudio é reproduzido
 pelo [librespot](https://github.com/librespot-org/librespot) dentro do próprio processo do app, então tocar
 música no computador exige Spotify Premium. As cores da interface seguem a capa da faixa atual. A interface
@@ -208,7 +208,7 @@ O Spotify concede duas permissões separadas, e o app pede uma de cada vez.
 2. Reprodução neste computador: a tela Reprodução ou o menu de dispositivos. A segunda confirmação no
    navegador volta para `http://127.0.0.1:8898/login`. Depois disso o computador aparece no Spotify Connect.
 
-Sem a segunda etapa, o Materialfy funciona como controle remoto de outros dispositivos (com Premium).
+Sem a segunda etapa, o Pixel Music funciona como controle remoto de outros dispositivos (com Premium).
 
 ## Sessão do Spotify e Web API
 
@@ -255,7 +255,7 @@ são compartilhados só com você.
 3. Um app novo roda em modo de desenvolvimento e só deixa entrar os usuários da sua lista. Adicione o e-mail
    da sua conta Spotify em "User Management".
 4. Copie o Client ID (32 caracteres) da página do app.
-5. No Materialfy: Configurações → Conta → App pessoal do Spotify → Configurar. O formulário mostra o redirect
+5. No Pixel Music: Configurações → Conta → App pessoal do Spotify → Configurar. O formulário mostra o redirect
    URI do passo 2 com um botão de copiar. Cole o Client ID, clique em Salvar e confirme o acesso no navegador.
 
 Mesmo com o seu próprio Client ID, algumas requisições da Web API passam pelo compartilhado: playlists de
@@ -442,7 +442,7 @@ em Rust é conectado ao QML por meio do [cxx-qt](https://github.com/KDAB/cxx-qt)
 
 ## Origem e licença
 
-O Materialfy é baseado em dois projetos com licença MIT:
+O Pixel Music é baseado em dois projetos com licença MIT:
 
 - [spotifast](https://github.com/crmne/spotifast) (Carmine Paolino, crmne): login, cliente da Web API,
   reprodução pelo librespot, Spotify Connect, fila, biblioteca e rádio (`crates/sf-*`).
@@ -457,7 +457,7 @@ Componentes de terceiros: [librespot](https://github.com/librespot-org/librespot
 dinamicamente), a fonte Google Sans (SIL Open Font License 1.1) e os ícones Material Symbols Rounded (Apache License
 2.0).
 
-O Materialfy é licenciado sob a GNU General Public License, versão 3 ou qualquer versão posterior
+O Pixel Music é licenciado sob a GNU General Public License, versão 3 ou qualquer versão posterior
 (GPL-3.0-or-later); o texto está em [LICENSE](LICENSE). As releases até a 0.2.1, inclusive, foram publicadas sob a
 MIT License, e o código tirado do spotifast e do yamusic-md3 mantém o aviso MIT em
 [LICENSES/MIT.txt](LICENSES/MIT.txt). Autores, fontes e licenças das dependências
@@ -465,4 +465,4 @@ estão listados em [NOTICE](NOTICE). O logotipo "Wave-M" está em [`docs/brand/`
 
 <br>
 
-<p align="center"><sub>O Materialfy não é afiliado ao Spotify AB nem endossado por ele. Spotify é uma marca registrada do Spotify AB.</sub></p>
+<p align="center"><sub>O Pixel Music não é afiliado ao Spotify AB nem endossado por ele. Spotify é uma marca registrada do Spotify AB.</sub></p>

@@ -1,13 +1,18 @@
 //! Progressive download of a stream URL into memory: a tokio task asks for `Range: bytes=a-b` chunks one after
 //! another and appends them to a shared buffer; [`StreamReader`] reads from that buffer (`Read + Seek`, and a
-//! symphonia `MediaSource`), blocking until the bytes at its position arrive. A seek past what has arrived
-//! waits for the sequential download to get there. Dropping the reader stops the download.
+//! symphonia `MediaSource`), blocking until the bytes at its position arrive. After a seek far from what has
+//! arrived the download continues from there (a FLAC of tens of megabytes would otherwise stay silent until
+//! everything before the target is in) and comes back for what it skipped. Dropping the reader stops the download.
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 /// How much one request asks for. YouTube throttles a whole-file request, not 4 MiB pieces.
 pub const CHUNK_BYTES: u64 = 4 * 1024 * 1024;
+/// A reader waiting within a quarter of a chunk ahead of the download lets it arrive; farther, the download jumps.
+const NEAR_PART: u64 = 4;
+/// The first request after a jump asks for a sixteenth of a chunk.
+const JUMP_PART: u64 = 16;
 /// How long a read waits for bytes before it gives up.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Further attempts at a chunk after a network failure or an unexpected status.
@@ -53,14 +58,94 @@ fn is_not_media(content_type: &str) -> bool {
     kind.starts_with("text/") || kind.contains("json") || kind.contains("html") || kind.contains("xml")
 }
 
+/// One downloaded stretch of the file.
+struct Piece {
+    start: u64,
+    data: Vec<u8>,
+}
+
+impl Piece {
+    fn end(&self) -> u64 {
+        self.start + self.data.len() as u64
+    }
+}
+
 #[derive(Default)]
 struct State {
-    data: Vec<u8>,
+    /// what has arrived: sorted by start, never overlapping or touching
+    pieces: Vec<Piece>,
+    /// where the download writes next
+    head: u64,
+    /// where the reader waits for bytes the download is not about to reach (a seek): the download goes there
+    want: Option<u64>,
+    /// a reader this close ahead of `head` just waits for the download
+    near: u64,
     /// total size, once a response or the stream description names it
     total: Option<u64>,
     done: bool,
     error: Option<DownloadError>,
     cancelled: bool,
+}
+
+impl State {
+    fn piece_at(&self, position: u64) -> Option<&Piece> {
+        self.pieces.iter().find(|piece| piece.start <= position && position < piece.end())
+    }
+
+    fn covers(&self, position: u64) -> bool {
+        self.piece_at(position).is_some()
+    }
+
+    /// The first offset at or after `from` that has not arrived.
+    fn gap_from(&self, from: u64) -> u64 {
+        self.piece_at(from).map_or(from, Piece::end)
+    }
+
+    /// Where the piece after `position` begins.
+    fn next_start(&self, position: u64) -> Option<u64> {
+        self.pieces.iter().map(|piece| piece.start).find(|&start| start > position)
+    }
+
+    /// Bytes from the start of the file without a gap.
+    fn prefix(&self) -> u64 {
+        self.pieces.first().filter(|piece| piece.start == 0).map_or(0, Piece::end)
+    }
+
+    fn downloaded(&self) -> u64 {
+        self.pieces.iter().map(|piece| piece.data.len() as u64).sum()
+    }
+
+    /// Stores `bytes` at `position`; what is already there stays.
+    fn put(&mut self, mut position: u64, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            if let Some(piece) = self.piece_at(position) {
+                let skip = ((piece.end() - position) as usize).min(bytes.len());
+                position += skip as u64;
+                bytes = &bytes[skip..];
+                continue;
+            }
+            let room = self.next_start(position).map_or(bytes.len() as u64, |next| next - position);
+            let take = (room as usize).min(bytes.len());
+            let index = match self.pieces.iter().position(|piece| piece.end() == position) {
+                Some(index) => {
+                    self.pieces[index].data.extend_from_slice(&bytes[..take]);
+                    index
+                }
+                None => {
+                    let index = self.pieces.iter().position(|piece| piece.start > position).unwrap_or(self.pieces.len());
+                    self.pieces.insert(index, Piece { start: position, data: bytes[..take].to_vec() });
+                    index
+                }
+            };
+            position += take as u64;
+            bytes = &bytes[take..];
+            // it reached the next piece: one piece from now on
+            if self.pieces.get(index + 1).is_some_and(|next| next.start == position) {
+                let next = self.pieces.remove(index + 1);
+                self.pieces[index].data.extend_from_slice(&next.data);
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -77,10 +162,6 @@ impl Shared {
     fn update(&self, change: impl FnOnce(&mut State)) {
         change(&mut self.lock());
         self.arrived.notify_all();
-    }
-
-    fn cancelled(&self) -> bool {
-        self.lock().cancelled
     }
 }
 
@@ -103,7 +184,11 @@ impl DownloadSpec {
 /// Starts the download on `runtime` and returns a reader over it.
 pub fn start(client: reqwest::Client, runtime: &tokio::runtime::Handle, spec: DownloadSpec) -> StreamReader {
     let shared = Arc::new(Shared::default());
-    shared.lock().total = spec.content_length.filter(|&length| length > 0);
+    {
+        let mut state = shared.lock();
+        state.total = spec.content_length.filter(|&length| length > 0);
+        state.near = (spec.chunk_bytes / NEAR_PART).max(1);
+    }
     let task = runtime.spawn(run(client, spec, shared.clone()));
     StreamReader {
         shared: shared.clone(),
@@ -129,22 +214,47 @@ impl Drop for Guard {
 async fn run(client: reqwest::Client, spec: DownloadSpec, shared: Arc<Shared>) {
     let chunk = spec.chunk_bytes.max(1);
     let mut failures = 0u32;
+    // the next request starts where the reader jumped to: a short one, so its first bytes are not behind a long answer
+    let mut jumped = false;
     loop {
-        if shared.cancelled() {
-            return;
-        }
-        let (offset, total) = {
-            let state = shared.lock();
-            (state.data.len() as u64, state.total)
+        let range = {
+            let mut state = shared.lock();
+            if state.cancelled {
+                return;
+            }
+            // without the size there is no telling a seek target from the end of the file
+            if state.total.is_some()
+                && let Some(want) = state.want.take()
+                && !state.covers(want)
+            {
+                state.head = want;
+                jumped = true;
+            }
+            let mut head = state.gap_from(state.head);
+            if let Some(total) = state.total
+                && head >= total
+            {
+                // the end is here; what a jump skipped comes next
+                head = state.gap_from(0);
+            }
+            state.head = head;
+            if state.total.is_some_and(|total| head >= total) {
+                None
+            } else {
+                let mut end = head + if jumped { (chunk / JUMP_PART).max(1) } else { chunk } - 1;
+                if let Some(total) = state.total {
+                    end = end.min(total - 1);
+                }
+                if let Some(next) = state.next_start(head) {
+                    end = end.min(next - 1);
+                }
+                Some((head, end))
+            }
         };
-        if total.is_some_and(|total| offset >= total) {
+        let Some((offset, end)) = range else {
             shared.update(|state| state.done = true);
             return;
-        }
-        let mut end = offset + chunk - 1;
-        if let Some(total) = total {
-            end = end.min(total - 1);
-        }
+        };
         match fetch(&client, &spec, offset, end, &shared).await {
             Ok(Fetched::Bytes(0)) => {
                 failures += 1;
@@ -153,9 +263,13 @@ async fn run(client: reqwest::Client, spec: DownloadSpec, shared: Arc<Shared>) {
                     return;
                 }
             }
-            Ok(Fetched::Bytes(_)) => failures = 0,
-            Ok(Fetched::End) => {
-                let length = shared.lock().data.len() as u64;
+            Ok(Fetched::Bytes(_)) => {
+                failures = 0;
+                jumped = false;
+            }
+            Ok(Fetched::Interrupted) => failures = 0,
+            Ok(Fetched::End(length)) => {
+                let length = length.unwrap_or_else(|| shared.lock().prefix());
                 if let Some(expected) = spec.content_length.filter(|&expected| expected > 0 && expected != length) {
                     // a short answer with a success status: not the stream
                     let error = DownloadError::Invalid(format!("{length} bytes instead of {expected}"));
@@ -190,10 +304,13 @@ async fn run(client: reqwest::Client, spec: DownloadSpec, shared: Arc<Shared>) {
 }
 
 enum Fetched {
-    /// this many bytes were appended
+    /// this many bytes arrived
     Bytes(u64),
-    /// the server says there is nothing at this offset: the file ended
-    End,
+    /// the reader jumped elsewhere while the answer was arriving
+    Interrupted,
+    /// the file ended: its length when the whole file came in this answer, `None` when the server says there is
+    /// nothing at this offset
+    End(Option<u64>),
 }
 
 async fn fetch(
@@ -215,7 +332,7 @@ async fn fetch(
     let status = response.status().as_u16();
     // A range past the end once the size is unknown means the file is complete.
     if status == 416 && offset > 0 {
-        return Ok(Fetched::End);
+        return Ok(Fetched::End(None));
     }
     if status == 403 || status == 410 {
         return Err(DownloadError::Expired);
@@ -242,30 +359,34 @@ async fn fetch(
     if let Some(total) = total {
         shared.update(|state| state.total = Some(total));
     }
-    // 200: the server ignored the range and sends the whole file; skip what is already here.
-    let mut skip = if status == 206 { 0 } else { offset };
-    let mut appended = 0u64;
+    // 200: the server ignored the range and sends the whole file from its start.
+    let ranged = status == 206;
+    let mut cursor = if ranged { offset } else { 0 };
+    let mut arrived = 0u64;
     while let Some(bytes) = response.chunk().await.map_err(failed)? {
-        if shared.cancelled() {
-            return Ok(Fetched::Bytes(appended));
-        }
-        let mut bytes = &bytes[..];
-        if skip > 0 {
-            let dropped = skip.min(bytes.len() as u64);
-            skip -= dropped;
-            bytes = &bytes[dropped as usize..];
-        }
         if bytes.is_empty() {
             continue;
         }
-        appended += bytes.len() as u64;
-        shared.update(|state| state.data.extend_from_slice(bytes));
+        arrived += bytes.len() as u64;
+        let mut state = shared.lock();
+        if state.cancelled {
+            return Ok(Fetched::Bytes(arrived));
+        }
+        state.put(cursor, &bytes);
+        cursor += bytes.len() as u64;
+        state.head = cursor;
+        let elsewhere = ranged && state.total.is_some() && state.want.is_some_and(|want| !state.covers(want));
+        drop(state);
+        shared.arrived.notify_all();
+        if elsewhere {
+            return Ok(Fetched::Interrupted);
+        }
     }
-    if status == 200 {
+    if !ranged {
         // the whole file came in one answer
-        return Ok(Fetched::End);
+        return Ok(Fetched::End(Some(cursor)));
     }
-    Ok(Fetched::Bytes(appended))
+    Ok(Fetched::Bytes(arrived))
 }
 
 /// The total of `bytes 0-99/1234` (`*` — unknown).
@@ -292,7 +413,7 @@ impl DownloadStatus {
     }
 
     pub fn downloaded(&self) -> u64 {
-        self.0.lock().data.len() as u64
+        self.0.lock().downloaded()
     }
 
     pub fn total(&self) -> Option<u64> {
@@ -347,17 +468,26 @@ impl Read for StreamReader {
             return Ok(0);
         }
         let position = self.position;
-        let state = self.wait(|state| {
-            state.data.len() as u64 > position || state.total.is_some_and(|total| position >= total)
-        })?;
-        let available = state.data.len() as u64;
-        if position >= available {
+        {
+            let mut state = self.shared.lock();
+            let past_end = state.total.is_some_and(|total| position >= total);
+            if !state.done && !past_end && !state.covers(position) {
+                // after a seek the bytes may be far from where the download is: it comes here instead of
+                // the reader waiting for everything in between
+                let near = position >= state.head && position - state.head <= state.near;
+                if !near {
+                    state.want = Some(position);
+                }
+            }
+        }
+        let state = self.wait(|state| state.covers(position) || state.total.is_some_and(|total| position >= total))?;
+        let Some(piece) = state.piece_at(position) else {
             // at or past the end of a finished file
             return Ok(0);
-        }
-        let start = position as usize;
-        let count = buf.len().min(available as usize - start);
-        buf[..count].copy_from_slice(&state.data[start..start + count]);
+        };
+        let start = (position - piece.start) as usize;
+        let count = buf.len().min(piece.data.len() - start);
+        buf[..count].copy_from_slice(&piece.data[start..start + count]);
         drop(state);
         self.position += count as u64;
         Ok(count)
@@ -371,7 +501,7 @@ impl Seek for StreamReader {
             SeekFrom::Current(delta) => Some(self.position as i128 + delta as i128),
             SeekFrom::End(delta) => {
                 let state = self.wait(|state| state.total.is_some())?;
-                let total = state.total.unwrap_or(state.data.len() as u64);
+                let total = state.total.unwrap_or(state.prefix());
                 Some(total as i128 + delta as i128)
             }
         };
@@ -392,7 +522,7 @@ impl symphonia::core::io::MediaSource for StreamReader {
 
     fn byte_len(&self) -> Option<u64> {
         // the MP4 reader needs the size; the first response names it quickly
-        self.wait(|state| state.total.is_some()).ok().and_then(|state| state.total.or(Some(state.data.len() as u64)))
+        self.wait(|state| state.total.is_some()).ok().and_then(|state| state.total.or(Some(state.prefix())))
     }
 }
 
@@ -548,6 +678,52 @@ pub(crate) mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_far_seek_is_served_before_the_bytes_in_between() {
+        let body = sample_body(4_000_000);
+        let (url, requests) = serve(body.clone(), Mode::Ranges).await;
+        let mut reader = start(client(), &tokio::runtime::Handle::current(), spec(&url, 16_000));
+        let status = reader.status();
+        let expected = body.clone();
+        let mut reader = tokio::task::spawn_blocking(move || {
+            let mut buf = [0u8; 1_000];
+            reader.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf[..], &expected[..1_000]);
+            reader.seek(SeekFrom::Start(3_500_000)).unwrap();
+            reader.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf[..], &expected[3_500_000..3_501_000]);
+            reader
+        })
+        .await
+        .unwrap();
+        // 4 MB in 16 kB requests is 250 of them; the target came long before that
+        assert!(requests.load(Ordering::SeqCst) < 60, "{} requests", requests.load(Ordering::SeqCst));
+        // what the jump skipped still arrives, and the file reads whole
+        let read = tokio::task::spawn_blocking(move || {
+            reader.seek(SeekFrom::Start(0)).unwrap();
+            let mut out = Vec::new();
+            reader.read_to_end(&mut out).unwrap();
+            out
+        })
+        .await
+        .unwrap();
+        assert!(read == body);
+        assert_eq!(status.downloaded(), 4_000_000);
+    }
+
+    #[test]
+    fn pieces_merge_and_keep_what_they_have() {
+        let mut state = State::default();
+        state.put(10, &[1, 2, 3]);
+        state.put(0, &[9; 4]);
+        assert_eq!((state.pieces.len(), state.prefix(), state.gap_from(11), state.next_start(4)), (2, 4, 13, Some(10)));
+        // fills the gap, runs into the second piece and past it
+        state.put(4, &[7; 12]);
+        assert_eq!(state.pieces.len(), 1);
+        assert_eq!(state.pieces[0].data, [9, 9, 9, 9, 7, 7, 7, 7, 7, 7, 1, 2, 3, 7, 7, 7]);
+        assert_eq!((state.prefix(), state.downloaded(), state.gap_from(0)), (16, 16, 16));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

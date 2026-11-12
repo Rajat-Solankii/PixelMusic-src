@@ -5,7 +5,7 @@
 <h1>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-on-dark.svg">
-  <img src="docs/brand/wordmark.svg" width="420" alt="Materialfy">
+  <img src="docs/brand/wordmark.svg" width="420" alt="Pixel Music">
 </picture>
 </h1>
 
@@ -27,7 +27,7 @@ Windows and Linux; macOS is experimental.
 
 <br>
 
-Materialfy replaces the official Spotify desktop app for listening to music in a regular native window. The
+Pixel Music replaces the official Spotify desktop app for listening to music in a regular native window. The
 interface is written in QML (Qt 6.12) with no browser engine, and the logic is in Rust. Audio is played by
 [librespot](https://github.com/librespot-org/librespot) inside the app's own process, so playback on the computer
 requires Spotify Premium. Interface colors follow the cover of the current track. The interface follows the system
@@ -203,7 +203,7 @@ Spotify grants two separate permissions, and the app asks for them one at a time
 2. Playback on this computer: the Playback screen or the devices menu. The second confirmation in the browser
    comes back to `http://127.0.0.1:8898/login`. After that the computer appears in Spotify Connect.
 
-Without the second step Materialfy works as a remote for other devices (with Premium).
+Without the second step Pixel Music works as a remote for other devices (with Premium).
 
 ## Spotify session and Web API
 
@@ -247,7 +247,7 @@ If the shared key keeps hitting limits, register your own Spotify app. Its limit
 3. A new app runs in development mode and only lets in users from its list. Add the email of your Spotify
    account under "User Management".
 4. Copy the Client ID (32 characters) from the app page.
-5. In Materialfy: Settings → Account → Personal Spotify app → Set up. The form shows the redirect URI from step 2
+5. In Pixel Music: Settings → Account → Personal Spotify app → Set up. The form shows the redirect URI from step 2
    with a copy button. Paste the Client ID, click Save and confirm access in the browser.
 
 Even with your own Client ID, some Web API requests go through the shared one: other people's playlists, the
@@ -431,7 +431,7 @@ runtime, and the Qt UI thread receives ready-made state snapshots.
 
 ## Origin and license
 
-Materialfy is based on two MIT-licensed projects:
+Pixel Music is based on two MIT-licensed projects:
 
 - [spotifast](https://github.com/crmne/spotifast) (Carmine Paolino, crmne): sign-in, Web API client, playback
   through librespot, Spotify Connect, queue, library and radio (`crates/sf-*`).
@@ -446,7 +446,7 @@ Third-party components: [librespot](https://github.com/librespot-org/librespot) 
 dynamically), the Google Sans font (SIL Open Font License 1.1) and Material Symbols Rounded icons (Apache License
 2.0).
 
-Materialfy is licensed under the GNU General Public License, version 3 or any later version
+Pixel Music is licensed under the GNU General Public License, version 3 or any later version
 (GPL-3.0-or-later); the text is in [LICENSE](LICENSE). Releases up to and including 0.2.1 were published under the
 MIT License, and the code taken from spotifast and yamusic-md3 keeps its MIT notice in
 [LICENSES/MIT.txt](LICENSES/MIT.txt). Authors, sources and dependency
@@ -454,4 +454,4 @@ licenses are listed in [NOTICE](NOTICE). The "Wave-M" logo is in [`docs/brand/`]
 
 <br>
 
-<p align="center"><sub>Materialfy is not affiliated with or endorsed by Spotify AB. Spotify is a trademark of Spotify AB.</sub></p>
+<p align="center"><sub>Pixel Music is not affiliated with or endorsed by Spotify AB. Spotify is a trademark of Spotify AB.</sub></p>

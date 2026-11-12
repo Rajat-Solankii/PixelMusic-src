@@ -21,8 +21,16 @@ Page {
     // или переставились. Данные полки кладутся в её Loader на месте и только если изменились: обновление
     // «Недавно прослушанного» не пересоздаёт «Сделано для вас» и остальные плитки.
     property var shelfIds: []
+    // "Your Mix", "Daily Mix" and "Recently played" (HomeMixes, from the local listening history) take a
+    // place among the shelves: after the quick picks when the feed has them, else first. Nothing played —
+    // no block.
+    readonly property bool hasMixes: (Home.recentlyPlayed ?? []).length > 0
     function _syncShelves() {
         const list = (signedIn ? (Home.shelves ?? []) : []).concat(youtubeHome ? (Home.youtubeShelves ?? []) : [])
+        if (hasMixes) {
+            const quick = list.findIndex(s => (s.key ?? "") === "quick" || /quick/i.test(s.title ?? ""))
+            list.splice(quick + 1, 0, { key: "homeMixes", kind: "mixes" })
+        }
         const ids = list.map(s => ({ key: s.key ?? "", kind: s.kind ?? "" }))
         if (JSON.stringify(ids) !== JSON.stringify(shelfIds))
             shelfIds = ids
@@ -42,6 +50,7 @@ Page {
         function onShelvesChanged() { page._syncShelves() }
         function onYoutubeShelvesChanged() { page._syncShelves() }
     }
+    onHasMixesChanged: _syncShelves()
     onSignedInChanged: _syncShelves()
 
     onVisibleChanged: {
@@ -207,10 +216,43 @@ Page {
                 property var shelfData: ({})
                 property string json
                 Layout.fillWidth: true
-                sourceComponent: modelData.key === "quick" ? quickShelf
+                sourceComponent: modelData.key === "quick" ? (modelData.variant === "list" ? quickPicksShelf : quickShelf)
+                    : modelData.key === "quickPicks" ? quickPicksShelf
+                    : modelData.kind === "mixes" ? mixesShelf
                     : modelData.kind === "tracks" ? tracksShelf
                     : rowShelf
             }
+        }
+    }
+
+    // Quick Picks - 2-column track grid with numbering (SoundWave style)
+    Component {
+        id: quickPicksShelf
+        ColumnLayout {
+            readonly property var shelfData: parent ? parent.shelfData : ({})
+            spacing: 12
+            QuickPicksShelf {
+                Layout.fillWidth: true
+                tracks: shelfData.items ?? []
+                compact: page.compact
+                title: shelfData.title ?? I18n.t("Quick picks")
+                showMore: (shelfData.items ?? []).length > 8
+                onActivated: (track, index) => {
+                    Player.rememberTrack(track)
+                    Player.playUris(shelfData.items.map(t => t.uri), index)
+                }
+                onShowMoreClicked: router.push("quickPicks", { title: shelfData.title })
+                onTrackMenuRequested: (track, position) => page.showMenu(track, position)
+            }
+        }
+    }
+
+    // "Your Mix", "Daily Mix", "Recently played"
+    Component {
+        id: mixesShelf
+        HomeMixes {
+            compact: page.compact
+            onSeeAll: mix => router.push("mix", { mix: mix })
         }
     }
 

@@ -2,7 +2,8 @@
 //! 140 usually; symphonia has no Opus decoder).
 //!
 //! Tier 1 is `ANDROID_VR`, anonymous and without a PoToken: direct URLs when it works. After `LOGIN_REQUIRED` or
-//! a bot check it rests for [`COOLDOWN`]. Tier 2 is the web player (`WEB_REMIX`, as the user when signed in): the
+//! a bot check it rests for [`COOLDOWN`]. With an account, the same client is then asked as the user
+//! (`ANDROID_VR_USER`): a bot check or an age wall is what signing in lifts. The last tier is the web player (`WEB_REMIX`, as the user when signed in): the
 //! request carries the player script's `signatureTimestamp` and a PO token bound to the video (`potoken.rs`), the
 //! chosen format's signature and `n` go through the player's own code (`cipher.rs`), and the URL gets `&pot=`. It
 //! rests after two technical failures in a row (script, BotGuard, HTTP), not after a song's own refusal. Results
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
 use sf_player::engine::youtube::{StreamSource, YtStream};
 
 use super::cipher::Cipher;
-use super::client::{ANDROID_VR, ClientPreset, InnerTube, Login, WEB_REMIX};
+use super::client::{ANDROID_VR, ANDROID_VR_USER, ClientPreset, InnerTube, Login, WEB_REMIX};
 use super::jsworker::JsWorker;
 use super::potoken::PoTokens;
 use super::{Result, YouTubeError, YouTubeService};
@@ -50,6 +51,8 @@ struct Tiers {
     android_vr_until: Option<Instant>,
     /// what ANDROID_VR said when it began to rest, reported while it rests
     android_vr_reason: String,
+    /// the signed-in ANDROID_VR, after a bot check of its own
+    android_vr_user_until: Option<Instant>,
     web_failures: u32,
     web_until: Option<Instant>,
 }
@@ -113,6 +116,13 @@ impl Streams {
             cache.remove(&oldest);
         }
         cache.insert(stream.video_id.clone(), Cached { stream: stream.clone(), valid_until, added: Instant::now() });
+    }
+
+    /// Another identity (signed in, out, another account): what the tiers refused and what was resolved belonged
+    /// to the previous one.
+    pub(crate) fn account_changed(&self) {
+        *lock(&self.tiers) = Tiers::default();
+        lock(&self.cache).clear();
     }
 
     fn invalidate(&self, video_id: &str) {
@@ -271,9 +281,36 @@ pub fn choose(
     Ok((stream, cipher))
 }
 
+/// One `ANDROID_VR` player request. A refusal comes with the bot check's reason when it was one.
+async fn vr_request(
+    client: &InnerTube,
+    preset: &'static ClientPreset,
+    login: Login,
+    video_id: &str,
+    data_saver: bool,
+) -> std::result::Result<YtStream, (YouTubeError, Option<String>)> {
+    let who = if login == Login::Never { "anonymous" } else { "signed in" };
+    match client.post(preset, "player", json!({ "videoId": video_id }), login).await {
+        Ok(response) => match parse_player(&response, preset, data_saver) {
+            Ok(stream) => Ok(with_id(stream, video_id)),
+            Err(refusal) => {
+                log_refusal(preset, video_id, &refusal, &response);
+                let bot_check = refusal.is_bot_check().then(|| refusal.reason.clone());
+                if bot_check.is_some() {
+                    log::info!("youtube streams: ANDROID_VR ({who}) refused ({}), resting", refusal.status);
+                }
+                Err((refusal.into_error(), bot_check))
+            }
+        },
+        Err(error) => {
+            log::debug!("youtube streams: {video_id}: ANDROID_VR ({who}) request failed: {error:?}");
+            Err((error, None))
+        }
+    }
+}
+
 /// Asks the tiers in turn.
 async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) -> Result<YtStream> {
-    let body = || json!({ "videoId": video_id });
     let data_saver = streams.data_saver.load(Ordering::Relaxed);
     let mut last_error = None;
 
@@ -288,23 +325,32 @@ async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) 
         resting
     };
     if !vr_resting {
-        match client.post(&ANDROID_VR, "player", body(), Login::Never).await {
-            Ok(response) => match parse_player(&response, &ANDROID_VR, data_saver) {
-                Ok(stream) => return Ok(with_id(stream, &video_id)),
-                Err(refusal) => {
-                    log_refusal(&ANDROID_VR, &video_id, &refusal, &response);
-                    if refusal.is_bot_check() {
-                        log::info!("youtube streams: ANDROID_VR refused ({}), resting", refusal.status);
-                        let mut tiers = lock(&streams.tiers);
-                        tiers.android_vr_until = Some(Instant::now() + COOLDOWN);
-                        tiers.android_vr_reason = refusal.reason.clone();
-                    }
-                    last_error = Some(refusal.into_error());
+        match vr_request(&client, &ANDROID_VR, Login::Never, &video_id, data_saver).await {
+            Ok(stream) => return Ok(stream),
+            Err((error, bot_check)) => {
+                if let Some(reason) = bot_check {
+                    let mut tiers = lock(&streams.tiers);
+                    tiers.android_vr_until = Some(Instant::now() + COOLDOWN);
+                    tiers.android_vr_reason = reason;
                 }
-            },
-            Err(error) => {
-                log::debug!("youtube streams: {video_id}: ANDROID_VR request failed: {error:?}");
                 last_error = Some(error);
+            }
+        }
+    }
+
+    // the same client as the user: the account is what a bot check and an age wall ask for
+    let user_resting = lock(&streams.tiers).android_vr_user_until.is_some_and(|until| Instant::now() < until);
+    if client.signed_in() && !user_resting {
+        match vr_request(&client, &ANDROID_VR_USER, Login::Required, &video_id, data_saver).await {
+            Ok(stream) => return Ok(stream),
+            Err((error, bot_check)) => {
+                if bot_check.is_some() {
+                    lock(&streams.tiers).android_vr_user_until = Some(Instant::now() + COOLDOWN);
+                }
+                // what the account was told says more than the anonymous answer; a failed request does not
+                if last_error.is_none() || matches!(error, YouTubeError::Unplayable(ref reason) if !reason.is_empty()) {
+                    last_error = Some(error);
+                }
             }
         }
     }

@@ -28,7 +28,7 @@ use crate::engine::vis::{AudioTap, Tapped};
 #[derive(Clone, Debug, PartialEq)]
 pub enum YtCommand {
     /// Open `stream` (load number `seq`) at `position_ms`, playing or paused.
-    Load { seq: u64, stream: YtStream, position_ms: u64, play: bool },
+    Load { seq: u64, stream: Box<YtStream>, position_ms: u64, play: bool },
     Play,
     Pause,
     Seek(u64),
@@ -62,6 +62,7 @@ const POSITION_EVERY_MS: u64 = 500;
 enum Input {
     Command(YtCommand),
     Opened { seq: u64, result: Result<Decoder, String> },
+    Seeked { id: u64, decoder: Decoder, result: Result<u64, String> },
 }
 
 pub struct YtPlayer {
@@ -205,6 +206,15 @@ struct Pending {
     seek: Option<u64>,
 }
 
+/// A seek running on its helper thread (it may wait for the download), which holds the decoder meanwhile.
+struct Seeking {
+    id: u64,
+    /// play once it lands (Play and Pause while it runs change this)
+    play: bool,
+    /// a newer target that arrived while it ran
+    next: Option<u64>,
+}
+
 struct Worker {
     output: Output,
     sink: Option<Box<dyn Sink>>,
@@ -216,6 +226,8 @@ struct Worker {
     converter: Converter,
     seq: u64,
     pending: Option<Pending>,
+    seeking: Option<Seeking>,
+    seek_id: u64,
     decoder: Option<Decoder>,
     playing: bool,
     gain: f64,
@@ -235,6 +247,8 @@ impl Worker {
             converter: Converter::new(None),
             seq: 0,
             pending: None,
+            seeking: None,
+            seek_id: 0,
             decoder: None,
             playing: false,
             gain: 1.0,
@@ -266,6 +280,7 @@ impl Worker {
                 Some(Input::Command(YtCommand::Shutdown)) => break,
                 Some(Input::Command(command)) => self.command(command),
                 Some(Input::Opened { seq, result }) => self.opened(seq, result),
+                Some(Input::Seeked { id, decoder, result }) => self.seeked(id, decoder, result),
                 None => self.pump(),
             }
         }
@@ -278,6 +293,8 @@ impl Worker {
             YtCommand::Play => {
                 if let Some(pending) = &mut self.pending {
                     pending.play = true;
+                } else if let Some(seeking) = &mut self.seeking {
+                    seeking.play = true;
                 } else if self.decoder.is_some() && !self.playing {
                     self.resume();
                 }
@@ -285,6 +302,8 @@ impl Worker {
             YtCommand::Pause => {
                 if let Some(pending) = &mut self.pending {
                     pending.play = false;
+                } else if let Some(seeking) = &mut self.seeking {
+                    seeking.play = false;
                 } else if let Some(decoder) = &self.decoder
                     && self.playing
                 {
@@ -297,25 +316,19 @@ impl Worker {
             YtCommand::Seek(ms) => {
                 if let Some(pending) = &mut self.pending {
                     pending.seek = Some(ms);
-                } else if self.decoder.is_some() {
+                } else if let Some(seeking) = &mut self.seeking {
+                    // the last target wins once the running seek comes back
+                    seeking.next = Some(ms);
+                } else if let Some(decoder) = self.decoder.take() {
                     self.cut();
-                    let decoder = self.decoder.as_mut().expect("decoder");
-                    match decoder.seek(ms) {
-                        Ok(position_ms) => {
-                            self.last_report = position_ms;
-                            let event = if self.playing {
-                                YtEvent::Playing { position_ms }
-                            } else {
-                                YtEvent::Paused { position_ms }
-                            };
-                            self.emit(event);
-                        }
-                        Err(error) => self.fail(error),
-                    }
+                    let play = self.playing;
+                    self.playing = false;
+                    self.start_seek(decoder, ms, play);
                 }
             }
             YtCommand::Stop => {
                 self.pending = None;
+                self.seeking = None;
                 self.decoder = None;
                 self.playing = false;
                 self.cut();
@@ -326,10 +339,11 @@ impl Worker {
         }
     }
 
-    fn load(&mut self, seq: u64, stream: YtStream, position_ms: u64, play: bool) {
+    fn load(&mut self, seq: u64, stream: Box<YtStream>, position_ms: u64, play: bool) {
         // the old track is cut off at once
         self.cut();
         self.decoder = None;
+        self.seeking = None;
         self.playing = false;
         self.seq = seq;
         self.gain = if self.output.normalise { normalisation_factor(stream.loudness_db) } else { 1.0 };
@@ -350,6 +364,44 @@ impl Worker {
         if let Err(error) = spawned {
             self.pending = None;
             self.fail(format!("couldn't start a thread: {error}"));
+        }
+    }
+
+    /// Seeks on a helper thread: the bytes at the target may still be on their way, and commands must not wait
+    /// for them.
+    fn start_seek(&mut self, mut decoder: Decoder, ms: u64, play: bool) {
+        self.seek_id += 1;
+        let id = self.seek_id;
+        self.seeking = Some(Seeking { id, play, next: None });
+        let loopback = self.loopback.clone();
+        let spawned = std::thread::Builder::new().name("youtube-seek".into()).spawn(move || {
+            let result = decoder.seek(ms);
+            let _ = loopback.send(Input::Seeked { id, decoder, result });
+        });
+        if let Err(error) = spawned {
+            self.seeking = None;
+            self.fail(format!("couldn't start a thread: {error}"));
+        }
+    }
+
+    fn seeked(&mut self, id: u64, decoder: Decoder, result: Result<u64, String>) {
+        // a seek of a track that was stopped or replaced meanwhile: dropping its decoder stops the download
+        let Some(seeking) = self.seeking.take_if(|seeking| seeking.id == id) else { return };
+        if let Some(ms) = seeking.next {
+            return self.start_seek(decoder, ms, seeking.play);
+        }
+        match result {
+            Ok(position_ms) => {
+                self.last_report = position_ms;
+                self.decoder = Some(decoder);
+                if seeking.play {
+                    self.resume();
+                } else {
+                    self.stop_sink();
+                    self.emit(YtEvent::Paused { position_ms });
+                }
+            }
+            Err(error) => self.fail(error),
         }
     }
 
@@ -427,6 +479,7 @@ impl Worker {
     fn fail(&mut self, error: String) {
         log::warn!("youtube player: {error}");
         self.decoder = None;
+        self.seeking = None;
         self.playing = false;
         self.cut();
         self.stop_sink();
@@ -450,10 +503,9 @@ impl Worker {
     fn stop_sink(&mut self) {
         if self.started
             && let Some(sink) = &mut self.sink
+            && let Err(error) = sink.stop()
         {
-            if let Err(error) = sink.stop() {
-                log::debug!("youtube output stop: {error}");
-            }
+            log::debug!("youtube output stop: {error}");
         }
         self.started = false;
     }
@@ -470,6 +522,7 @@ impl Worker {
 
     fn halt(&mut self) {
         self.pending = None;
+        self.seeking = None;
         self.decoder = None;
         self.playing = false;
         self.stop_sink();
@@ -556,7 +609,7 @@ mod tests {
     #[test]
     fn plays_a_track_to_the_end() {
         let h = harness(false);
-        h.player.send(YtCommand::Load { seq: 1, stream: stream("tone_44k_stereo.m4a"), position_ms: 0, play: true });
+        h.player.send(YtCommand::Load { seq: 1, stream: Box::new(stream("tone_44k_stereo.m4a")), position_ms: 0, play: true });
         let events = h.until(|(_, event)| *event == YtEvent::Ended);
         assert_eq!(events[0], (1, YtEvent::Loading));
         assert_eq!(events[1], (1, YtEvent::Playing { position_ms: 0 }));
@@ -570,7 +623,7 @@ mod tests {
     #[test]
     fn loads_paused_then_seeks_and_plays() {
         let h = harness(false);
-        h.player.send(YtCommand::Load { seq: 7, stream: stream("tone_44k_stereo.m4a"), position_ms: 0, play: false });
+        h.player.send(YtCommand::Load { seq: 7, stream: Box::new(stream("tone_44k_stereo.m4a")), position_ms: 0, play: false });
         let events = h.until(|(_, event)| matches!(event, YtEvent::Paused { .. }));
         assert_eq!(events.last(), Some(&(7, YtEvent::Paused { position_ms: 0 })));
         h.player.send(YtCommand::Seek(1_500));
@@ -585,10 +638,40 @@ mod tests {
     }
 
     #[test]
+    fn the_last_of_several_seeks_wins_and_play_survives_them() {
+        let h = harness(false);
+        h.player.send(YtCommand::Load { seq: 4, stream: Box::new(stream("tone_44k_stereo.m4a")), position_ms: 0, play: false });
+        h.until(|(_, event)| matches!(event, YtEvent::Paused { .. }));
+        h.player.send(YtCommand::Seek(200));
+        h.player.send(YtCommand::Seek(1_500));
+        // may arrive while a seek still runs
+        h.player.send(YtCommand::Play);
+        let events = h.until(|(_, event)| *event == YtEvent::Ended);
+        assert!(events.iter().any(|(_, event)| matches!(event, YtEvent::Playing { position_ms } if position_ms.abs_diff(1_500) <= 30)), "{events:?}");
+        let frames = h.recorded.lock().unwrap().samples.len() / 2;
+        assert!((20_000..=25_000).contains(&frames), "the last half second, got {frames}");
+    }
+
+    #[test]
+    fn a_stop_during_a_seek_stays_stopped() {
+        let h = harness(false);
+        h.player.send(YtCommand::Load { seq: 5, stream: Box::new(stream("tone_44k_stereo.m4a")), position_ms: 0, play: false });
+        h.until(|(_, event)| matches!(event, YtEvent::Paused { .. }));
+        h.player.send(YtCommand::Seek(500));
+        h.player.send(YtCommand::Stop);
+        h.player.send(YtCommand::Play);
+        // the seek may come back before or after the stop; either way nothing plays
+        std::thread::sleep(Duration::from_millis(400));
+        let events: Vec<_> = h.events.try_iter().collect();
+        assert!(!events.iter().any(|(_, event)| matches!(event, YtEvent::Playing { .. } | YtEvent::Ended)), "{events:?}");
+        assert!(h.recorded.lock().unwrap().samples.is_empty());
+    }
+
+    #[test]
     fn a_new_load_supersedes_the_old_one() {
         let h = harness(false);
-        h.player.send(YtCommand::Load { seq: 1, stream: stream("tone_44k_stereo.m4a"), position_ms: 0, play: true });
-        h.player.send(YtCommand::Load { seq: 2, stream: stream("tone_48k_mono.m4a"), position_ms: 0, play: true });
+        h.player.send(YtCommand::Load { seq: 1, stream: Box::new(stream("tone_44k_stereo.m4a")), position_ms: 0, play: true });
+        h.player.send(YtCommand::Load { seq: 2, stream: Box::new(stream("tone_48k_mono.m4a")), position_ms: 0, play: true });
         let events = h.until(|(seq, event)| *seq == 2 && *event == YtEvent::Ended);
         assert!(!events.iter().any(|(seq, event)| *seq == 1 && *event == YtEvent::Ended));
         assert!(events.contains(&(2, YtEvent::Playing { position_ms: 0 })));
@@ -597,7 +680,7 @@ mod tests {
     #[test]
     fn open_failures_are_reported() {
         let h = harness(false);
-        h.player.send(YtCommand::Load { seq: 3, stream: stream("broken"), position_ms: 0, play: true });
+        h.player.send(YtCommand::Load { seq: 3, stream: Box::new(stream("broken")), position_ms: 0, play: true });
         let events = h.until(|(_, event)| matches!(event, YtEvent::Error(_)));
         assert_eq!(events.last(), Some(&(3, YtEvent::Error("no such stream".into()))));
     }
@@ -612,7 +695,7 @@ mod tests {
         let mut track = stream("tone_44k_stereo.m4a");
         track.loudness_db = Some(6.0);
         for h in [&loud, &quiet] {
-            h.player.send(YtCommand::Load { seq: 1, stream: track.clone(), position_ms: 0, play: true });
+            h.player.send(YtCommand::Load { seq: 1, stream: Box::new(track.clone()), position_ms: 0, play: true });
             h.until(|(_, event)| *event == YtEvent::Ended);
         }
         let peak = |h: &Harness| h.recorded.lock().unwrap().samples.iter().fold(0f64, |peak, sample| peak.max(sample.abs()));
@@ -622,7 +705,7 @@ mod tests {
     #[test]
     fn stop_and_pause() {
         let h = harness(false);
-        h.player.send(YtCommand::Load { seq: 1, stream: stream("tone_44k_stereo.m4a"), position_ms: 0, play: true });
+        h.player.send(YtCommand::Load { seq: 1, stream: Box::new(stream("tone_44k_stereo.m4a")), position_ms: 0, play: true });
         h.player.send(YtCommand::Pause);
         let events = h.until(|(_, event)| matches!(event, YtEvent::Paused { .. }));
         assert!(!events.iter().any(|(_, event)| matches!(event, YtEvent::Playing { .. })), "paused before it opened");
@@ -651,7 +734,7 @@ mod tests {
         let player =
             YtPlayer::with_sink(Box::new(move || Box::new(RecordingSink(sink)) as Box<dyn Sink>), false, opener, notify);
         let h = Harness { player, recorded, events };
-        h.player.send(YtCommand::Load { seq: 1, stream: local, position_ms: 0, play: true });
+        h.player.send(YtCommand::Load { seq: 1, stream: Box::new(local), position_ms: 0, play: true });
         h.until(|(_, event)| *event == YtEvent::Ended);
         let frames = h.recorded.lock().unwrap().samples.len() / 2;
         assert!((42_000..=46_000).contains(&frames), "one second at 44.1 kHz, got {frames}");
