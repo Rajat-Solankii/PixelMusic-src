@@ -1,6 +1,6 @@
 // Сквозная проверка гейта декода на настоящем MorphImage (Md3 зарегистрирован в приложении):
 //   QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 \
-//     target/release/materialfy --offline --new-instance --qml tests/qml/integration/GateHarness.qml
+//     target/release/pixelmusic --offline --new-instance --qml tests/qml/integration/GateHarness.qml
 // 32 обложки с реальным локальным файлом: гейт пускает по 12, очередь должна разобраться до конца —
 // ни одна обложка не «застревает» (это и есть регрессия, которую чинили в MorphImage/ImageGate).
 // Итог — SMOKE-RESULT PASS/FAIL; проверяет вызывающая команда.

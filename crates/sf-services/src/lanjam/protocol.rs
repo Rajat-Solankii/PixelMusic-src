@@ -19,7 +19,7 @@ pub const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 pub const SOURCE_YOUTUBE: &str = "YOUTUBE";
 pub const SOURCE_JIOSAAVN: &str = "JIOSAAVN";
 pub const SOURCE_LOCAL: &str = "LOCAL";
-/// Not in the Kotlin apps: a Spotify track from a Materialfy host (Kotlin guests treat it as unplayable).
+/// Not in the Kotlin apps: a Spotify track from a PixelMusic host (Kotlin guests treat it as unplayable).
 pub const SOURCE_SPOTIFY: &str = "SPOTIFY";
 
 // ---- lenient readers (org.json opt*) ----

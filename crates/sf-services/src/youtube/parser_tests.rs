@@ -250,3 +250,70 @@ fn get_queue_gives_each_songs_length() {
     );
     assert!(queue_lengths(&json!({})).is_empty());
 }
+
+#[test]
+fn the_home_feed_reads_carousels_immersive_shelves_and_its_continuation() {
+    let page = shelves_page(&fixture("home_page1.json"));
+    let titles: Vec<&str> = page.shelves.iter().map(|shelf| shelf.title.as_str()).collect();
+    assert_eq!(titles, ["Quick picks", "Your mixes"], "the taste builder is no shelf");
+    assert_eq!(page.shelves[0].strapline, "Start radio from a song");
+    assert!(matches!(&page.shelves[0].items[0], YtItem::Track(track) if track.track_id == "vid_around01"));
+    let mixes = &page.shelves[1];
+    assert_eq!(mixes.strapline, "Made for you");
+    let more = mixes.more.as_ref().expect("see all");
+    assert_eq!((more.browse_id.as_str(), more.params.as_deref()), ("FEmusic_mixed_for_you", Some("mixes_params")));
+    let YtItem::Playlist(mix) = &mixes.items[0] else { panic!("{:?}", mixes.items[0]) };
+    assert_eq!(mix.playlist_id, "RDTMAK5uy_supermix");
+    assert_eq!(page.continuation.as_deref(), Some("home_ctoken_page2"));
+}
+
+#[test]
+fn a_home_continuation_brings_similar_to_and_community_playlists() {
+    let page = shelves_page(&fixture("home_continuation.json"));
+    assert_eq!(page.shelves.len(), 2, "the empty shelf is skipped: {:#?}", page.shelves);
+    let similar = &page.shelves[0];
+    assert_eq!((similar.strapline.as_str(), similar.title.as_str()), ("Similar to", "Daft Punk"));
+    assert_eq!(similar.thumbnail, "https://lh3.googleusercontent.com/daftpunk=w240-h240-l90-rj");
+    assert_eq!(similar.more, None, "the title links to the artist, not to a full shelf");
+    let YtItem::Album(album) = &similar.items[0] else { panic!("{:?}", similar.items[0]) };
+    assert_eq!((album.album_id.as_str(), album.artists.as_str(), album.year), ("MPREb_cross", "Justice", 2007));
+    let YtItem::Artist(artist) = &similar.items[1] else { panic!("{:?}", similar.items[1]) };
+    assert_eq!((artist.artist_id.as_str(), artist.followers), ("UCair", 2_100_000));
+
+    let community = &page.shelves[1];
+    assert_eq!(community.title, "Community playlists");
+    assert_eq!(community.more.as_ref().map(|more| more.browse_id.as_str()), Some("FEmusic_community_playlists"));
+    let YtItem::Playlist(playlist) = &community.items[0] else { panic!("{:?}", community.items[0]) };
+    assert_eq!((playlist.playlist_id.as_str(), playlist.owner.as_str()), ("PLfrenchtouch", "Night Owl"));
+    assert_eq!(page.continuation, None, "the last page has no token");
+}
+
+#[test]
+fn appended_continuation_items_are_read_as_shelves() {
+    let carousel = fixture("home_continuation.json")["continuationContents"]["sectionListContinuation"]["contents"][1].clone();
+    let response = json!({
+        "onResponseReceivedActions": [{ "appendContinuationItemsAction": { "continuationItems": [
+            carousel,
+            { "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "next_tok" } } } }
+        ] } }]
+    });
+    let page = shelves_page(&response);
+    assert_eq!(page.shelves.len(), 1);
+    assert_eq!(page.shelves[0].title, "Community playlists");
+    assert_eq!(page.continuation.as_deref(), Some("next_tok"));
+}
+
+#[test]
+fn an_artist_page_carousel_title_with_params_stays_its_see_all() {
+    let response = json!({ "contents": { "sectionListRenderer": { "contents": [{ "musicCarouselShelfRenderer": {
+        "header": { "musicCarouselShelfBasicHeaderRenderer": { "title": { "runs": [{ "text": "Albums",
+            "navigationEndpoint": { "browseEndpoint": { "browseId": "UCdaftpunk", "params": "discography",
+                "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": {
+                    "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } } }] } } },
+        "contents": fixture("home_continuation.json")["continuationContents"]["sectionListContinuation"]["contents"][0]
+            ["musicCarouselShelfRenderer"]["contents"].clone()
+    } }] } } });
+    let page = shelves_page(&response);
+    let more = page.shelves[0].more.as_ref().expect("see all");
+    assert_eq!((more.browse_id.as_str(), more.params.as_deref()), ("UCdaftpunk", Some("discography")));
+}

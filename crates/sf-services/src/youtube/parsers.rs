@@ -805,7 +805,7 @@ pub fn search_summary(response: &Value) -> Vec<Shelf> {
     let mut add_shelf = |renderer: &Value| {
         let found = dedupe(items(&renderer["contents"]));
         if !found.is_empty() {
-            shelves.push(Shelf { title: shelf_title(renderer), items: found, more: None, continuation: None });
+            shelves.push(Shelf { title: shelf_title(renderer), items: found, more: None, continuation: None, ..Default::default() });
         }
     };
     for section in search_sections(response) {
@@ -827,7 +827,7 @@ pub fn search_summary(response: &Value) -> Vec<Shelf> {
     }
     let top = dedupe(top);
     if !top.is_empty() {
-        shelves.insert(0, Shelf { title: mf_i18n::t("Top results"), items: top, more: None, continuation: None });
+        shelves.insert(0, Shelf { title: mf_i18n::t("Top results"), items: top, more: None, continuation: None, ..Default::default() });
     }
     shelves
 }
@@ -862,22 +862,47 @@ fn section_list(response: &Value) -> &Value {
 
 fn push_shelf(out: &mut Vec<Shelf>, title: String, items: Vec<YtItem>, more: Option<BrowseRef>, continuation: Option<String>) {
     if !items.is_empty() {
-        out.push(Shelf { title, items, more, continuation });
+        out.push(Shelf { title, items, more, continuation, ..Default::default() });
     }
+}
+
+/// A carousel (`musicCarouselShelfRenderer`, the home feed's big `musicImmersiveCarouselShelfRenderer`): the
+/// title, the strapline over it ("Similar to" above an artist), the header picture and the "more" target.
+fn carousel_shelf(carousel: &Value) -> Option<Shelf> {
+    let header = or(
+        &carousel["header"]["musicCarouselShelfBasicHeaderRenderer"],
+        &carousel["header"]["musicImmersiveCarouselShelfBasicHeaderRenderer"],
+    );
+    let items = items(&carousel["contents"]);
+    if items.is_empty() {
+        return None;
+    }
+    // the title of a "Similar to" shelf links to the artist's page itself (no params), not to the rest of the
+    // shelf; an artist page's "Albums" title links to the discography (params) and is its "see all"
+    let title_nav = &header["title"]["runs"][0]["navigationEndpoint"];
+    let artist_page = classify(title_nav) == Kind::Artist && title_nav["browseEndpoint"]["params"].is_null();
+    let title_more = if artist_page { &NULL } else { &title_nav["browseEndpoint"] };
+    let more = or(&header["moreContentButton"]["buttonRenderer"]["navigationEndpoint"]["browseEndpoint"], title_more);
+    let thumbnail = renderer_thumbnail(&header["thumbnail"]);
+    Some(Shelf {
+        title: runs_text(&header["title"]),
+        items,
+        more: browse_ref(more),
+        continuation: None,
+        strapline: runs_text(&header["strapline"]),
+        thumbnail: if thumbnail.is_empty() { thumbnail } else { sized(&thumbnail, 240) },
+    })
 }
 
 /// Every known kind of section as a titled shelf; empty and unknown sections are skipped.
 pub fn sections(contents: &Value) -> Vec<Shelf> {
     let mut out = Vec::new();
     for section in arr(contents) {
-        let carousel = &section["musicCarouselShelfRenderer"];
-        if !carousel.is_null() {
-            let header = &carousel["header"]["musicCarouselShelfBasicHeaderRenderer"];
-            let more = or(
-                &header["moreContentButton"]["buttonRenderer"]["navigationEndpoint"]["browseEndpoint"],
-                &header["title"]["runs"][0]["navigationEndpoint"]["browseEndpoint"],
-            );
-            push_shelf(&mut out, runs_text(&header["title"]), items(&carousel["contents"]), browse_ref(more), None);
+        for key in ["musicCarouselShelfRenderer", "musicImmersiveCarouselShelfRenderer"] {
+            let carousel = &section[key];
+            if !carousel.is_null() {
+                out.extend(carousel_shelf(carousel));
+            }
         }
         for key in ["musicShelfRenderer", "musicPlaylistShelfRenderer"] {
             let shelf = &section[key];
@@ -915,7 +940,15 @@ pub fn sections(contents: &Value) -> Vec<Shelf> {
 /// Home, explore, charts, history, a mood's playlists, "see all" pages — and their continuations.
 pub fn shelves_page(response: &Value) -> ShelvesPage {
     let list = section_list(response);
-    ShelvesPage { shelves: sections(&list["contents"]), continuation: continuation_of(&list["continuations"]) }
+    if list.is_null() {
+        // newer continuation responses append the sections instead of sending a section list
+        let appended = &response["onResponseReceivedActions"][0]["appendContinuationItemsAction"]["continuationItems"];
+        return ShelvesPage { shelves: sections(appended), continuation: continuation_item(appended) };
+    }
+    ShelvesPage {
+        shelves: sections(&list["contents"]),
+        continuation: continuation_of(&list["continuations"]).or_else(|| continuation_item(&list["contents"])),
+    }
 }
 
 /// Moods & genres: the navigation buttons of every grid.

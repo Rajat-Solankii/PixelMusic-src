@@ -863,7 +863,7 @@ async fn songs_without_a_length_get_it_from_one_get_queue_request() {
             ..Default::default()
         })
     };
-    let shelf = |items| Shelf { title: "Quick picks".to_owned(), items, more: None, continuation: None };
+    let shelf = |items| Shelf { title: "Quick picks".to_owned(), items, more: None, continuation: None, ..Default::default() };
     let page = || ShelvesPage {
         shelves: vec![shelf(vec![song("plain", 0), song("wrapped", 0), song("known", 5000)]), shelf(vec![song("plain", 0)])],
         continuation: None,
@@ -883,4 +883,106 @@ async fn songs_without_a_length_get_it_from_one_get_queue_request() {
     let mut again = ShelvesPage { shelves: vec![shelf(vec![song("plain", 0)])], continuation: None };
     service.fill_durations(&mut again).await;
     assert_eq!(server.api_requests().len(), 1);
+}
+
+#[tokio::test]
+async fn a_play_is_reported_with_the_tracking_address_of_the_signed_in_player_response() {
+    let server = MockServer::start(|request, _| {
+        if request.target.starts_with("/youtubei/v1/player") {
+            (200, json!({ "playbackTracking": { "videostatsPlaybackUrl": {
+                "baseUrl": "https://s.youtube.com/api/stats/playback?docid=vid1&ei=abc"
+            } } }))
+        } else {
+            (204, Value::String(String::new()))
+        }
+    })
+    .await;
+    let service = server.service();
+    assert_eq!(service.report_play("vid1", None).await, Err(YouTubeError::NotSignedIn));
+    assert!(server.all_requests().is_empty());
+
+    service.set_account(Some(account()));
+    service.report_play("vid1", Some("PLmix")).await.expect("reported");
+    let api = server.api_requests();
+    assert_eq!(api.len(), 1);
+    assert_eq!(api[0].body["videoId"], "vid1");
+    assert_eq!(api[0].body["playlistId"], "PLmix");
+    assert_eq!(api[0].body["context"]["client"]["clientName"], "WEB_REMIX");
+    assert!(api[0].header("cookie").is_some());
+    let report = server.all_requests().into_iter().find(|r| r.target.starts_with("/api/stats/playback")).expect("report");
+    assert_eq!(report.method, "GET");
+    let (head, cpn) = report.target.split_once("&cpn=").expect("cpn");
+    assert_eq!(head, "/api/stats/playback?docid=vid1&ei=abc&ver=2&c=WEB_REMIX");
+    assert_eq!(cpn.split('&').next().unwrap().len(), 16);
+    assert!(report.target.contains("&list=PLmix&referrer=https%3A%2F%2Fmusic.youtube.com%2Fplaylist%3Flist%3DPLmix"));
+    assert!(report.header("cookie").is_some());
+    assert!(report.header("authorization").is_some_and(|value| value.starts_with("SAPISIDHASH")));
+}
+
+#[tokio::test]
+async fn a_player_response_without_tracking_or_a_refused_report_is_an_error() {
+    let server = MockServer::start(|request, _| {
+        if request.is_api() { (200, json!({ "playabilityStatus": { "status": "OK" } })) } else { (403, Value::String(String::new())) }
+    })
+    .await;
+    let service = server.service();
+    service.set_account(Some(account()));
+    assert!(matches!(service.report_play("vid1", None).await, Err(YouTubeError::Unexpected(_))));
+
+    let server = MockServer::start(|request, _| {
+        if request.is_api() {
+            (200, json!({ "playbackTracking": { "videostatsPlaybackUrl": { "baseUrl": "https://s.youtube.com/api/stats/playback?docid=v" } } }))
+        } else {
+            (403, Value::String(String::new()))
+        }
+    })
+    .await;
+    let service = server.service();
+    service.set_account(Some(account()));
+    assert_eq!(service.report_play("v", None).await, Err(YouTubeError::Http(403)));
+}
+
+/// `FEmusic_history`: one music shelf per day group.
+fn history_response() -> Value {
+    let row = |id: &str, title: &str| json!({ "musicResponsiveListItemRenderer": {
+        "playlistItemData": { "videoId": id },
+        "flexColumns": [
+            { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": title }] } } },
+            { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": "Singer" }] } } }
+        ]
+    }});
+    let shelf = |title: &str, rows: Vec<Value>| json!({ "musicShelfRenderer": {
+        "title": { "runs": [{ "text": title }] }, "contents": rows
+    }});
+    json!({ "contents": { "singleColumnBrowseResultsRenderer": { "tabs": [{ "tabRenderer": { "content": {
+        "sectionListRenderer": { "contents": [
+            shelf("Today", vec![row("t1", "First"), row("t2", "Second")]),
+            shelf("Yesterday", vec![row("y1", "Third")]),
+            shelf("March 2025", vec![row("m1", "Fourth")])
+        ]}
+    }}}]}}})
+}
+
+#[tokio::test]
+async fn the_history_becomes_recent_plays_in_youtubes_order_with_day_estimates() {
+    let server = MockServer::start(|_, _| (200, history_response())).await;
+    let service = server.service();
+    assert_eq!(service.history().await, Err(YouTubeError::NotSignedIn));
+    service.set_account(Some(account()));
+    let page = service.history().await.expect("history");
+    assert_eq!(server.api_requests()[0].body["browseId"], "FEmusic_history");
+
+    let now: jiff::Timestamp = "2026-11-13T12:00:00Z".parse().unwrap();
+    let records = crate::history::youtube_records(&page, now);
+    let got: Vec<(&str, &str)> = records.iter().map(|r| (r.track.uri.as_str(), r.played_at.as_str())).collect();
+    assert_eq!(
+        got,
+        [
+            ("youtube:track:t1", "2026-11-13T11:59:00Z"),
+            ("youtube:track:t2", "2026-11-13T11:58:00Z"),
+            ("youtube:track:y1", "2026-11-12T11:59:00Z"),
+            ("youtube:track:m1", "2026-11-05T11:59:00Z"),
+        ]
+    );
+    assert_eq!(records[0].track.title, "First");
 }

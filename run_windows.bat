@@ -1,6 +1,6 @@
 @echo off
 setlocal
-:: Runs Materialfy from source: cargo run --release with Qt 6.12 (MSVC).
+:: Runs PixelMusic from source: cargo run --release with Qt 6.12 (MSVC).
 :: Arguments are passed to the app: run_windows.bat --new-instance --light
 :: Qt is looked up in QTDIR, then C:\Qt\6.12.0\msvc2022_64, %USERPROFILE%\Qt\6.12.0\msvc2022_64, %USERPROFILE%\Qt\6.12.0.
 chcp 65001 >nul
@@ -29,4 +29,4 @@ set "QMAKE=%QT%\bin\qmake6.exe"
 set "PATH=%QT%\bin;%PATH%"
 
 cd /d "%~dp0"
-cargo run --locked --release -p materialfy -- %*
+cargo run --locked --release -p pixelmusic -- %*

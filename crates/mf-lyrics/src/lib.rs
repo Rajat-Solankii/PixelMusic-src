@@ -5,6 +5,7 @@
 //! (по словам) → Musixmatch richsync (по словам) → LRCLIB (строки) → Musixmatch subtitles → NetEase LRC.
 //! У построчных текстов время слов интерполируется. Формат результата и кэша (JSON) — по ключам как в Python.
 pub mod lrc;
+pub mod romanize;
 pub mod sources;
 pub mod text;
 
@@ -337,6 +338,12 @@ impl LyricsFetcher {
         tokio::fs::rename(&tmp, &path).await
     }
 
+    /// LRCLIB free-text search for the Search Lyrics dialog.
+    pub async fn search(&self, query: &str) -> Result<Vec<sources::SearchHit>, String> {
+        let http = (self.http)()?;
+        sources::lrclib_search(&http, query).await
+    }
+
     /// Word-level result from the sources that have it, without lines-only fallbacks.
     /// Called after Spotify returned line lyrics: the caller waits a little and, if this is
     /// slow, keeps the line result and lets a background task fill the cache.
@@ -510,9 +517,66 @@ fn py_id(id: &serde_json::Value) -> String {
     }
 }
 
+/// Plain text as untimed lines (every `t`/`e` is 0); blank lines stay as empty rows between verses.
+pub fn plain_lines(text: &str) -> Vec<Line> {
+    text.lines()
+        .map(|line| Line::words(0.0, 0.0, vec![Word { x: line.trim().to_owned(), s: 0.0, e: 0.0, p: None }], false))
+        .collect()
+}
+
+/// Lyrics the user chose (a search hit, an imported .lrc/.txt file): text with [mm:ss.xx] stamps → timed lines
+/// (kind "line", with gaps), anything else → plain lines (kind "plain"). None for empty text.
+pub fn result_from_text(source: &str, text: &str, duration: f64) -> Option<LyricsResult> {
+    let text = text.trim_start_matches('\u{feff}');
+    let timed = lines_from_lrc(text);
+    if timed.iter().any(|(_, x)| !x.is_empty()) {
+        let lines = build_from_timed_lines(&timed, duration);
+        if !lines.is_empty() {
+            return Some(LyricsResult::found(source, "line", add_gaps(lines, duration)));
+        }
+    }
+    let lines = plain_lines(text.trim());
+    lines.iter().any(|l| !l.text().is_empty()).then(|| LyricsResult::found(source, "plain", lines))
+}
+
+/// The lines as an .lrc file: `[mm:ss.xx]text` per sung line (pauses dropped); untimed (plain) lyrics as bare text.
+pub fn to_lrc(lines: &[Line], kind: &str) -> String {
+    let mut out = String::new();
+    for line in lines {
+        let Line::Words { t, .. } = line else { continue };
+        if kind != "plain" {
+            let cs = (t.max(0.0) * 100.0).round() as u64;
+            out.push_str(&format!("[{:02}:{:02}.{:02}]", cs / 6000, cs / 100 % 60, cs % 100));
+        }
+        out.push_str(line.text().trim());
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chosen_text_becomes_timed_or_plain_lines_and_goes_back_to_lrc() {
+        let synced = "\u{feff}[ar: X]\n[00:01.50] First line\n[00:12.00]Second\n";
+        let r = result_from_text("LRCLIB", synced, 30.0).unwrap();
+        assert_eq!((r.source.as_str(), r.kind.as_str()), ("LRCLIB", "line"));
+        let sung: Vec<String> = r.lines.iter().filter(|l| matches!(l, Line::Words { .. })).map(|l| l.text().trim().to_owned()).collect();
+        assert_eq!(sung, ["First line", "Second"]);
+        assert!(r.lines.iter().any(|l| matches!(l, Line::Gap { .. })), "a 10 s pause becomes a gap");
+        let lrc = to_lrc(&r.lines, &r.kind);
+        assert_eq!(lrc, "[00:01.50]First line\n[00:12.00]Second\n");
+        assert_eq!(result_from_text("x", &lrc, 30.0).unwrap().lines.len(), r.lines.len());
+
+        let plain = result_from_text("File", "One\n\nTwo\n", 0.0).unwrap();
+        assert_eq!(plain.kind, "plain");
+        assert_eq!(plain.lines.len(), 3);
+        assert_eq!(to_lrc(&plain.lines, "plain"), "One\n\nTwo\n");
+        assert!(result_from_text("File", "  \n ", 0.0).is_none());
+        assert_eq!(to_lrc(&[Line::words(3725.257, 3726.0, Vec::new(), true)], "line"), "[62:05.26]\n");
+    }
 
     fn sample() -> LyricsResult {
         LyricsResult::found(
@@ -727,10 +791,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// Живая проверка источников: `MATERIALFY_LYRICS_LIVE=1 cargo test -p mf-lyrics live -- --nocapture`.
+    /// Живая проверка источников: `PIXELMUSIC_LYRICS_LIVE=1 cargo test -p mf-lyrics live -- --nocapture`.
     #[tokio::test]
     async fn live_sources_find_a_known_song() {
-        if std::env::var("MATERIALFY_LYRICS_LIVE").as_deref() != Ok("1") {
+        if std::env::var("PIXELMUSIC_LYRICS_LIVE").as_deref() != Ok("1") {
             return;
         }
         let dir = std::env::temp_dir().join("mf-lyrics-live");

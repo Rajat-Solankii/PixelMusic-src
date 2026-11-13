@@ -16,6 +16,8 @@ use crate::{RESTART_BEFORE_PREVIOUS_MS, Repeat};
 
 /// Queue row ids of the lane start high so they never meet the ids `Core` hands out.
 const FIRST_UID: u64 = 1 << 48;
+/// How many times a failed load is resolved again: the anonymous ANDROID_VR, the account's, then the web player.
+const MAX_RETRIES: u8 = 2;
 
 /// What the actor does for the lane.
 #[derive(Clone, Debug, PartialEq)]
@@ -78,8 +80,8 @@ pub(crate) struct YtLane {
     /// where to start once the stream is resolved
     start_ms: u64,
     error: String,
-    /// a failed load was retried once with a fresh URL
-    retried: bool,
+    /// failed loads retried with a fresh URL (each asks the resolver after the tier that failed: `MAX_RETRIES`)
+    retried: u8,
     /// the player has played this load (history started)
     started: bool,
     played: Duration,
@@ -111,7 +113,7 @@ impl Default for YtLane {
             duration_ms: 0,
             start_ms: 0,
             error: String::new(),
-            retried: false,
+            retried: 0,
             started: false,
             played: Duration::ZERO,
             played_since: None,
@@ -348,7 +350,7 @@ impl YtLane {
         self.start_ms = position_ms;
         self.duration_ms = track.duration_ms.max(0) as u64;
         self.error.clear();
-        self.retried = false;
+        self.retried = 0;
         self.started = false;
         self.played = Duration::ZERO;
         self.played_since = None;
@@ -817,8 +819,9 @@ impl YtLane {
                 }
             }
             YtEvent::Error(error) => {
-                if !self.retried && self.stream.is_some() {
-                    // most often an expired URL: forget it and resolve again, once
+                if self.retried < MAX_RETRIES && self.stream.is_some() {
+                    // most often an expired or refused URL: forget it and resolve again (the resolver then skips
+                    // the tier that gave it, so the next attempt has another chance)
                     let position = self.position_ms();
                     let retried_load = self.started;
                     let video = self.stream.as_ref().map(|stream| stream.video_id.clone()).unwrap_or_default();
@@ -828,7 +831,7 @@ impl YtLane {
                     self.stream = None;
                     self.loading = true;
                     self.start_ms = position;
-                    self.retried = true;
+                    self.retried += 1;
                     // the listening goes on: history keeps its start
                     self.started = retried_load;
                     let mut request = self

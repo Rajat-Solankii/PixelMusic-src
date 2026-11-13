@@ -9,7 +9,7 @@
 //!   json — компактный (separators ',' ':') {"id","cp":"false","lv":"0","kv":"0","tv":"0","rv":"0","yv":"0","ytv":"0","yrv":"0","csrf_token":""};
 //! - Musixmatch: https://apic-desktop.musixmatch.com/ws/1.1/, заголовки authority/cookie как MXM_HEADERS, app_id web-desktop-app-v1.0;
 //!   токен token.get кэшируется в <cache>/mxm_token.json {"token", "expires"} (6 ч; null — 1 ч);
-//! - LRCLIB: https://lrclib.net/api/get и /api/search, заголовок Lrclib-Client: materialfy.
+//! - LRCLIB: https://lrclib.net/api/get и /api/search, заголовок Lrclib-Client: pixelmusic.
 //!
 //! Чужие API меняются, поэтому JSON читается терпимо (отсутствующее поле = пусто), как в Kotlin-версии.
 use std::fmt;
@@ -34,7 +34,7 @@ pub const NE_LYRIC_PATH: &str = "/api/song/lyric/v1";
 pub const MXM_BASE: &str = "https://apic-desktop.musixmatch.com/ws/1.1/";
 pub const MXM_HEADERS: [(&str, &str); 2] = [("authority", "apic-desktop.musixmatch.com"), ("cookie", "x-mxm-token-guid=")];
 const MXM_APP_ID: &str = "web-desktop-app-v1.0";
-const LRCLIB_HEADER: (&str, &str) = ("Lrclib-Client", "materialfy");
+const LRCLIB_HEADER: (&str, &str) = ("Lrclib-Client", "pixelmusic");
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
@@ -536,6 +536,57 @@ fn pick_lrclib(found: &[Value], query: &LyricsQuery) -> Option<String> {
         .map(|c| c.lrc.to_owned())
 }
 
+/// One LRCLIB search answer for the Search Lyrics dialog.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct SearchHit {
+    pub id: i64,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    /// seconds
+    pub duration: f64,
+    /// LRC with [mm:ss.xx] stamps, empty when the entry has no synced lyrics
+    pub synced: String,
+    pub plain: String,
+    pub instrumental: bool,
+}
+
+/// LRCLIB /api/search rows → hits that have some text (or are marked instrumental); synced ones first,
+/// otherwise in LRCLIB's order; the same id once.
+pub fn parse_lrclib_hits(found: &Value) -> Vec<SearchHit> {
+    let mut seen = std::collections::HashSet::new();
+    let mut hits: Vec<SearchHit> = found
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| {
+            // some uploads carry the text "null" for a missing name
+            let name = |key: &str| Some(text_of(get(r, key)).trim()).filter(|s| *s != "null").unwrap_or("").to_owned();
+            let hit = SearchHit {
+                id: get(r, "id").as_i64().unwrap_or(0),
+                title: name("trackName"),
+                artist: name("artistName"),
+                album: name("albumName"),
+                duration: get(r, "duration").as_f64().unwrap_or(0.0),
+                synced: text_of(get(r, "syncedLyrics")).to_owned(),
+                plain: text_of(get(r, "plainLyrics")).to_owned(),
+                instrumental: truthy(get(r, "instrumental")),
+            };
+            let has_text = !hit.synced.trim().is_empty() || !hit.plain.trim().is_empty() || hit.instrumental;
+            (has_text && seen.insert(hit.id)).then_some(hit)
+        })
+        .collect();
+    hits.sort_by_key(|h| h.synced.trim().is_empty());
+    hits
+}
+
+/// LRCLIB free-text search (`/api/search?q=`), for the user's own query.
+pub async fn lrclib_search(http: &reqwest::Client, query: &str) -> Result<Vec<SearchHit>, String> {
+    let found = lrclib(http, "https://lrclib.net/api/search", &[("q", query.trim().to_owned())]).await?;
+    Ok(parse_lrclib_hits(&found))
+}
+
 async fn lrclib(http: &reqwest::Client, url: &str, params: &[(&str, String)]) -> Result<Value, HttpError> {
     let q: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
     http_json(|| http.get(url).query(&q).header(LRCLIB_HEADER.0, LRCLIB_HEADER.1).timeout(timeout())).await
@@ -554,6 +605,26 @@ mod tests {
                "syncedLyrics": format!("[{first}] a
 [00:30.00] b
 [00:40.00] c")})
+    }
+
+    #[test]
+    fn search_hits_put_synced_first_and_drop_empty_and_repeated_rows() {
+        let rows = json!([
+            {"id": 1, "trackName": "Aroma", "artistName": "Sidhu Moose Wala", "albumName": "null", "duration": 200.0,
+             "plainLyrics": "a
+b", "syncedLyrics": null},
+            {"id": 2, "trackName": "Aroma ", "artistName": "Sidhu Moose Wala", "albumName": "Moosetape", "duration": 201.0,
+             "plainLyrics": "a", "syncedLyrics": "[00:01.00] a"},
+            {"id": 2, "trackName": "Aroma", "artistName": "dup", "syncedLyrics": "[00:01.00] a"},
+            {"id": 3, "trackName": "Empty", "artistName": "x", "plainLyrics": "", "syncedLyrics": ""},
+            {"id": 4, "trackName": "Intro", "artistName": "x", "instrumental": true}
+        ]);
+        let hits = parse_lrclib_hits(&rows);
+        assert_eq!(hits.iter().map(|h| h.id).collect::<Vec<_>>(), [2, 1, 4]);
+        assert_eq!((hits[0].title.as_str(), hits[0].album.as_str(), hits[0].duration), ("Aroma", "Moosetape", 201.0));
+        assert_eq!((hits[1].album.as_str(), hits[1].synced.as_str()), ("", ""));
+        assert!(hits[2].instrumental);
+        assert!(parse_lrclib_hits(&json!({"error": "x"})).is_empty());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Other catalogs' copies of a YouTube Music track: the free lossless Monochrome server (FLAC) and JioSaavn
 //! (320 kbps AAC). Neither needs an account or a key. Ported from the Android app's `LosslessStreamResolver` /
-//! `SaavnService` (see `LOSSLESS_SAAVN_GUIDE.md` at the repository root).
+//! `SaavnService`.
 //!
 //! [`SourceChain`] is the [`StreamSource`] the player's YouTube lane uses. For each track it tries, in the
 //! Android app's order: Monochrome (setting "lossless streams", not with the data saver), JioSaavn (setting

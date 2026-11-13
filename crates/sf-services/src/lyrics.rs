@@ -125,7 +125,42 @@ impl LyricsService {
 
     /// Повторить для текущего трека (после ошибки).
     pub fn retry(&self) {
+        // a cached "not found" would come back as is: ask the sources again
+        if let Some(track) = self.player.snapshot().track {
+            let _ = std::fs::remove_file(self.fetcher.cache_path(&query_for(&track).track_id));
+        }
         self.load(true);
+    }
+
+    /// LRCLIB search for the Search Lyrics dialog (the user's own query).
+    pub async fn search(&self, query: &str) -> Result<Vec<mf_lyrics::sources::SearchHit>, String> {
+        self.fetcher.search(query).await
+    }
+
+    /// Show this text for the playing song and keep it in the cache in place of what the sources found: a picked
+    /// search hit (`source` "LRCLIB") or an imported .lrc/.txt file. Timed text plays in sync, other text as plain.
+    pub fn apply_text(&self, source: &str, text: &str) -> Result<(), String> {
+        let track = self.player.snapshot().track.filter(|t| !t.track_id.is_empty());
+        let Some(track) = track else { return Err(mf_i18n::t("Nothing is playing")) };
+        let query = query_for(&track);
+        let result = mf_lyrics::result_from_text(source, text, query.duration)
+            .ok_or_else(|| mf_i18n::t("There are no lyrics in this text"))?;
+        // a load still running for this song must not replace the chosen text
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let (fetcher, cached) = (self.fetcher.clone(), result.clone());
+        self.rt.spawn(async move {
+            if let Err(e) = fetcher.write_cache(&query.track_id, &cached).await {
+                tracing::warn!("lyrics: chosen text for {} not cached: {e}", query.track_id);
+            }
+        });
+        self.set(track.track_id.clone(), LyricsStatus::Ok, Some(result));
+        Ok(())
+    }
+
+    /// The shown lyrics as an .lrc file (plain lyrics without stamps); None when there are none.
+    pub fn lrc(&self) -> Option<String> {
+        let current = self.snapshot.borrow();
+        (current.status == LyricsStatus::Ok && !current.lines.is_empty()).then(|| mf_lyrics::to_lrc(&current.lines, &current.kind))
     }
 
     fn load(&self, force: bool) {
@@ -239,12 +274,7 @@ const YOUTUBE_SOURCE: &str = "YouTube Music";
 
 /// Plain text as untimed lines (every `t`/`e` is 0); blank lines are kept as empty rows between verses.
 pub fn plain_lines(text: &str) -> Vec<mf_lyrics::Line> {
-    text.lines()
-        .map(|line| {
-            let word = mf_lyrics::Word { x: line.trim().to_owned(), s: 0.0, e: 0.0, p: None };
-            mf_lyrics::Line::words(0.0, 0.0, vec![word], false)
-        })
-        .collect()
+    mf_lyrics::plain_lines(text)
 }
 
 /// Запрос mf-lyrics по треку (title/artist/album/duration).

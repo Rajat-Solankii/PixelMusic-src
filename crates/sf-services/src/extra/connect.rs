@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn order_is_active_this_computer_then_others() {
         let api = [device("x", "X"), device("y", "Y"), device("z", "Z")];
-        let this = ThisDevice { id: "me".into(), name: "Materialfy · PC".into(), volume: 40 };
+        let this = ThisDevice { id: "me".into(), name: "PixelMusic · PC".into(), volume: 40 };
         let list = merge(&api, &[], Some(&this), "z");
         let ids: Vec<_> = list.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["z", "me", "x", "y"]);
@@ -154,12 +154,12 @@ mod tests {
 
     #[test]
     fn this_computer_listed_by_web_api_is_marked_not_duplicated() {
-        let api = [device("x", "X"), device("me", "Materialfy · PC"), device("x", "X dup")];
+        let api = [device("x", "X"), device("me", "PixelMusic · PC"), device("x", "X dup")];
         let this = ThisDevice { id: "me".into(), name: "ignored".into(), volume: 10 };
         let list = merge(&api, &[], Some(&this), "me");
         let ids: Vec<_> = list.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["me", "x"]);
         assert!(list[0].is_this_computer && list[0].is_active);
-        assert_eq!(list[0].name, "Materialfy · PC");
+        assert_eq!(list[0].name, "PixelMusic · PC");
     }
 }

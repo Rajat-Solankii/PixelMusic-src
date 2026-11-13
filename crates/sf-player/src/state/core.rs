@@ -337,6 +337,9 @@ pub struct Core {
     pub(crate) local_transfer_sequence: Option<u64>,
     pub(crate) local_list: Option<Vec<String>>,
     pub autoplay: bool,
+    /// Spotify playback (Web API polling, remote devices, its queue). Off in the app: Spotify was cut and its
+    /// remote path only raised "Nothing is playing" while the YouTube lane played; tests keep it on.
+    pub spotify: bool,
     unavailable_at: Vec<Instant>,
     last_unavailable_reconnect: Option<Instant>,
     /// громкость, которую движок ещё не подтвердил
@@ -437,6 +440,7 @@ impl Core {
             local_transfer_sequence: None,
             local_list: None,
             autoplay: true,
+            spotify: true,
             unavailable_at: Vec::new(),
             last_unavailable_reconnect: None,
             pending_local_volume: None,
@@ -1469,8 +1473,11 @@ impl Core {
     }
 
     pub(crate) fn poll_remote(&mut self) {
-        self.remote_poll_pending = true;
         self.remote_polled_at = Instant::now();
+        if !self.spotify {
+            return;
+        }
+        self.remote_poll_pending = true;
         self.remote_poll_seq += 1;
         self.api(ApiCall::Playback { seq: self.remote_poll_seq });
     }
@@ -1484,6 +1491,9 @@ impl Core {
     }
 
     pub fn refresh_queue(&mut self, force: bool) {
+        if !self.spotify {
+            return;
+        }
         if self.resume_only() && self.queue.is_some() {
             // нигде ничего не играет; на экране сохранённая очередь — запрос вернул бы меньше
             return;
@@ -2644,6 +2654,12 @@ impl Core {
 
     /// Громкость: локально сразу (VolumePreview), Volume и удалённый PUT — после 150 мс тишины.
     pub fn set_volume(&mut self, volume: u16) {
+        if !self.spotify {
+            // the YouTube lane got it already; only remembered here (snapshot, session, the lane's next start)
+            self.local.volume = volume;
+            self.volume = volume;
+            return;
+        }
         match self.target() {
             Target::Local => {
                 self.local.volume = volume;
@@ -2738,6 +2754,9 @@ impl Core {
 
     /// Удалённая команда; без активного устройства запрос не шлётся.
     fn remote(&mut self, action: RemoteAction, device: Option<String>) {
+        if !self.spotify {
+            return;
+        }
         if device.is_none() && self.remote_fresh().is_none() {
             self.notice(mf_i18n::t("Nothing is playing. Choose something to play first"));
             return;

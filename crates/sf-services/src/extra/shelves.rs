@@ -66,6 +66,7 @@ pub fn shelf<T: Serialize>(key: &str, items: &[T]) -> HomeShelf {
         title: mf_i18n::t(title(key)),
         kind: kind(key).to_owned(),
         items: items.iter().filter_map(|item| serde_json::to_value(item).ok()).collect(),
+        ..Default::default()
     }
 }
 

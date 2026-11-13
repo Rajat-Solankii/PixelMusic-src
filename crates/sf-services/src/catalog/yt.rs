@@ -231,7 +231,7 @@ mod tests {
     }
 
     fn shelf(items: Vec<YtItem>) -> Shelf {
-        Shelf { title: String::new(), items, more: None, continuation: None }
+        Shelf { title: String::new(), items, more: None, continuation: None, ..Default::default() }
     }
 
     #[test]

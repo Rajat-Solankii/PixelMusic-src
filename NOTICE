@@ -1,3 +1,20 @@
+Pixel Music (desktop)
+=====================
+
+Copyright (C) 2026 Rajat Solanki
+
+Pixel Music is a modified version of Materialfy (https://github.com/fatyzzz/materialfy), renamed and changed
+since 2026-11 (YouTube Music, Monochrome and JioSaavn playback, a PixelPlayer-style interface, lyrics tools,
+romanization, queue history and more; the Spotify side is no longer used). It is free software under the GNU
+General Public License, version 3 or (at your option) any later version (LICENSE). The source code of every
+release is attached to that release at https://github.com/Rajat-Solankii/PixelMusic/releases.
+
+Pixel Music is not affiliated with Google, YouTube, PixelPlayer or the Pixel Music Android app.
+Fonts added in Pixel Music: Google Sans Flex - SIL Open Font License 1.1
+(src/pixelmusic/assets/fonts/LICENSE-GoogleSansFlex.txt).
+
+The notice of the original project follows.
+
 Materialfy
 ==========
 
@@ -19,8 +36,8 @@ the MIT License text are kept in LICENSES/MIT.txt; authorship and what came from
 2. yamusic-md3 (yaskorinov) - interface
    https://github.com/yaskorinov/yamusic-md3
    Copyright (c) 2025-2026 yaskorinov and contributors. MIT License.
-   Taken from it: the QML interface and the Material 3 Expressive component library (src/materialfy/qml),
-   the cxx-qt shell (crates/materialfy), cover-based theming (crates/mf-theme),
+   Taken from it: the QML interface and the Material 3 Expressive component library (src/pixelmusic/qml),
+   the cxx-qt shell (crates/pixelmusic), cover-based theming (crates/mf-theme),
    lyrics (crates/mf-lyrics), platform services (crates/mf-platform),
    build and packaging scripts.
 
@@ -35,8 +52,8 @@ Third-party components
 - cxx-qt (https://github.com/KDAB/cxx-qt) - MIT or Apache-2.0.
 - Qt 6 (https://www.qt.io) - LGPL-3.0; the Qt libraries are linked dynamically and shipped
   unmodified; their sources are available at https://download.qt.io.
-- Google Sans - SIL Open Font License 1.1 (src/materialfy/assets/fonts/LICENSE-GoogleSans.txt).
-- Material Symbols Rounded - Apache License 2.0 (src/materialfy/assets/fonts/LICENSE-MaterialSymbols.txt).
+- Google Sans - SIL Open Font License 1.1 (src/pixelmusic/assets/fonts/LICENSE-GoogleSans.txt).
+- Material Symbols Rounded - Apache License 2.0 (src/pixelmusic/assets/fonts/LICENSE-MaterialSymbols.txt).
 - Other Rust dependencies - under the licenses stated in their packages (cargo metadata / Cargo.lock).
 
 Trademarks

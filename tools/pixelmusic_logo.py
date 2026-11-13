@@ -12,12 +12,12 @@ An adaptive icon shows only the middle 72 dp of its 108 dp layers, so the SVG ke
 (viewport 156.67 .. 783.33) and puts it on a rounded square instead of the launcher mask.
 
 Output:
-    src/materialfy/assets/logo/<name>.svg           the logo (sidebar, window icon, Settings swatches)
-    src/materialfy/assets/logo/<name>-<16|24|32>.png  tray icons
-    src/materialfy/assets/materialfy.svg            = blue_purple.svg (default window icon)
-    src/materialfy/assets/tray-<black|white>-<16|24|32>.png  one-colour silhouette (macOS template icon)
+    src/pixelmusic/assets/logo/<name>.svg           the logo (sidebar, window icon, Settings swatches)
+    src/pixelmusic/assets/logo/<name>-<16|24|32>.png  tray icons
+    src/pixelmusic/assets/pixelmusic.svg            = blue_purple.svg (default window icon)
+    src/pixelmusic/assets/tray-<black|white>-<16|24|32>.png  one-colour silhouette (macOS template icon)
     crates/sf-auth/src/logo.svg                     = blue_purple.svg (the OAuth "close this tab" page)
-    materialfy.ico (16..256), materialfy.png (512)  exe / installer icon, from blue_purple
+    pixelmusic.ico (16..256), pixelmusic.png (512)  exe / installer icon, from blue_purple
 
 The PNG and ICO files are rasterised here with Pillow (the paths are plain polygons with linear gradients),
 4x supersampled. Needs: pip install pillow numpy.
@@ -29,7 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "docs" / "brand" / "pixelmusic"
-ASSETS = ROOT / "src" / "materialfy" / "assets"
+ASSETS = ROOT / "src" / "pixelmusic" / "assets"
 A = "{http://schemas.android.com/apk/res/android}"
 AAPT = "{http://schemas.android.com/aapt}"
 
@@ -254,12 +254,12 @@ def main():
         if ref_dir:
             print(f"{name}: mean abs diff to reference = {compare(render(bg, shapes, 512, square=True), ref_dir / (name + '.png')):.2f}")
         if name == DEFAULT:
-            (ASSETS / "materialfy.svg").write_text(svg, encoding="utf-8", newline="\n")
+            (ASSETS / "pixelmusic.svg").write_text(svg, encoding="utf-8", newline="\n")
             (ROOT / "crates" / "sf-auth" / "src" / "logo.svg").write_text(svg, encoding="utf-8", newline="\n")
-            render(bg, shapes, 512).save(ROOT / "materialfy.png", optimize=True)
+            render(bg, shapes, 512).save(ROOT / "pixelmusic.png", optimize=True)
             sizes = [16, 24, 32, 48, 64, 128, 256]
             frames = [render(bg, shapes, s) for s in sizes]
-            frames[-1].save(ROOT / "materialfy.ico", format="ICO", sizes=[(s, s) for s in sizes], append_images=frames[:-1])
+            frames[-1].save(ROOT / "pixelmusic.ico", format="ICO", sizes=[(s, s) for s in sizes], append_images=frames[:-1])
             for size in (16, 24, 32):
                 render_silhouette(shapes, size, (0, 0, 0)).save(ASSETS / f"tray-black-{size}.png", optimize=True)
                 render_silhouette(shapes, size, (255, 255, 255)).save(ASSETS / f"tray-white-{size}.png", optimize=True)

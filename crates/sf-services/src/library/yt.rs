@@ -39,7 +39,7 @@ pub struct ImportProgress {
 #[derive(Default)]
 pub(super) struct YtState {
     generation: u64,
-    signed_in: bool,
+    pub(super) signed_in: bool,
     loading: bool,
     playlists: Vec<PlaylistItem>,
     albums: Vec<AlbumItem>,
@@ -103,8 +103,15 @@ fn playlist_entry(item: &PlaylistItem, pins: &[String]) -> LibraryEntry {
 }
 
 impl LibraryService {
-    fn yt(&self) -> Arc<YouTubeService> {
+    pub(super) fn yt(&self) -> Arc<YouTubeService> {
         self.auth.youtube()
+    }
+
+    /// (signed in, the account's playlists are read, their URIs) — for the Smart Mix retention sweep.
+    pub(super) fn yt_playlist_uris(&self) -> (bool, bool, HashSet<String>) {
+        let state = lock(&self.yt);
+        let uris = state.playlists.iter().map(|playlist| playlist.uri.clone()).collect();
+        (state.signed_in, !state.loading && !state.playlists.is_empty(), uris)
     }
 
     pub(super) fn spawn_yt_listener(&self) {
@@ -152,14 +159,25 @@ impl LibraryService {
         self.send(events);
         if signed_in {
             self.refresh_youtube();
+            self.sync_local_playlists();
         }
+    }
+
+    /// Setting "Sync Playlists & Liked Songs": off — the account's lists leave the library; on — read again.
+    fn yt_sync_on(&self) -> bool {
+        self.settings.get_bool(mf_platform::settings::SettingKey::YouTubeLibrarySync)
+    }
+
+    pub fn youtube_sync_changed(&self) {
+        let signed_in = lock(&self.yt).signed_in;
+        self.yt_switch(signed_in);
     }
 
     /// Re-read the YouTube Music library: playlists, saved albums and artists, Liked Music.
     pub fn refresh_youtube(&self) {
         let generation = {
             let mut state = lock(&self.yt);
-            if !state.signed_in {
+            if !state.signed_in || !self.yt_sync_on() {
                 return;
             }
             state.loading = true;
@@ -215,8 +233,12 @@ impl LibraryService {
                 }
             }
             service.send([LibraryEvent::EntriesChanged, LibraryEvent::LikesChanged, LibraryEvent::SavedChanged]);
-            if let Some(error) = failure {
-                service.yt_failed(&error);
+            match failure {
+                Some(error) => service.yt_failed(&error),
+                None => {
+                    service.sweep_smart_mixes();
+                    service.sync_local_playlists();
+                }
             }
         });
     }
@@ -264,12 +286,18 @@ impl LibraryService {
 
     /// YouTube rows of the Library screen (`entries`), before sorting.
     pub(super) fn yt_entries(&self, kind: LibraryKind, owner: &str, pins: &[String], entries: &mut Vec<LibraryEntry>) {
+        let mut hidden = if kind == LibraryKind::Playlists { self.hidden_mix_uris() } else { Default::default() };
+        if kind == LibraryKind::Playlists {
+            // a local playlist's YouTube Music mirror: the local playlist stands for it
+            hidden.extend(self.local_mirror_uris());
+        }
         let state = lock(&self.yt);
         match kind {
             LibraryKind::Playlists => entries.extend(
                 state
                     .playlists
                     .iter()
+                    .filter(|item| !hidden.contains(&item.uri))
                     .filter(|item| match owner {
                         "mine" => item.can_edit || item.playlist_id == LIKED_MUSIC,
                         "followed" => !item.can_edit && item.playlist_id != LIKED_MUSIC,
@@ -704,13 +732,24 @@ impl LibraryService {
 
     /// A new private YouTube Music playlist with these songs (YouTube ones only).
     pub fn create_youtube_playlist(&self, title: String, uris: Vec<String>) {
+        self.create_youtube_playlist_then(title, uris, |_, _| {});
+    }
+
+    /// `create_youtube_playlist`, then `created` with the new playlist's id (before the library is read again).
+    pub(super) fn create_youtube_playlist_then(
+        &self,
+        title: String,
+        uris: Vec<String>,
+        created: impl FnOnce(&LibraryService, String) + Send + 'static,
+    ) {
         if !self.yt_signed_in_or_notice() {
             return;
         }
         let videos = self.yt_videos(&uris);
         self.spawn(move |service| async move {
             match service.yt().create_playlist(&title, &videos, false).await {
-                Ok(_) => {
+                Ok(playlist_id) => {
+                    created(&service, playlist_id);
                     service.notice(mf_i18n::tf("Playlist “{0}” created", &[&title]));
                     service.refresh_youtube();
                 }

@@ -1,6 +1,6 @@
 # Localisation
 
-Materialfy's source language is **English**: every user-visible string is written in English in the code, and that
+PixelMusic's source language is **English**: every user-visible string is written in English in the code, and that
 English text is also the lookup key. Other languages are dictionaries in this directory: Russian (`i18n/ru/*.json`,
 three plural forms) and Portuguese, Brazil (`i18n/pt/*.json`, two plural forms). The language is chosen in
 Settings → Appearance → Language (setting `language`: `"system"` by default, `"en"`, `"ru"` or `"pt"`) and switches
@@ -77,7 +77,7 @@ Russian three *one|few|many*, Portuguese two *one|many*:
 
 ## Formatting helpers (QML)
 
-Numbers, dates and sizes are formatted by `I18n` (locale data in `src/materialfy/qml/Md3/I18n.qml`, `_loc`), not by
+Numbers, dates and sizes are formatted by `I18n` (locale data in `src/pixelmusic/qml/Md3/I18n.qml`, `_loc`), not by
 the dictionary:
 
 | Helper | English | Russian | Portuguese |
@@ -97,7 +97,7 @@ the dictionary:
 ## Qt's own strings
 
 File dialogs, standard context menus and other Qt texts follow the language through a `QTranslator` for
-`qtbase_<code>.qm` (`app_set_qt_language` in `crates/materialfy/cpp/mf_shell.cpp`). The release build deploys these
+`qtbase_<code>.qm` (`app_set_qt_language` in `crates/pixelmusic/cpp/mf_shell.cpp`). The release build deploys these
 catalogs with `windeployqt --translations ru,pt`; English needs none.
 
 ## Adding a language
@@ -106,8 +106,8 @@ catalogs with `windeployqt --translations ru,pt`; English needs none.
 2. `crates/mf-i18n`: add a `Lang` variant and its code to `DICTIONARIES`, list it in the `LANGS` table of `build.rs`
    (code + number of plural forms), add its plural rule to `plural_index`, and handle it in `parse_lang`,
    `parse_setting` and `dictionary`.
-3. `crates/materialfy/src/bridges/translations.rs`: expose its dictionary to QML as another `#[qproperty]`.
-4. `src/materialfy/qml/Md3/I18n.qml`: map the code in `lang`, `_dictOf` and `_cur`, add a plural rule and a `_loc`
+3. `crates/pixelmusic/src/bridges/translations.rs`: expose its dictionary to QML as another `#[qproperty]`.
+4. `src/pixelmusic/qml/Md3/I18n.qml`: map the code in `lang`, `_dictOf` and `_cur`, add a plural rule and a `_loc`
    block.
 5. Settings page: add the option to the Language button group (labels are written in their own language).
 6. Deploy Qt's catalogs: add the code to `--translations` in `build_windows.ps1`.

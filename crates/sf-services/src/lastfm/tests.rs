@@ -142,7 +142,7 @@ impl Dir {
     fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir()
-            .join(format!("materialfy-lastfm-test-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
+            .join(format!("pixelmusic-lastfm-test-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         Self(path)
@@ -311,6 +311,16 @@ fn scrobble_rule_thresholds() {
     assert_eq!(scrobble_after(Some(s(240))), Some(s(120)));
     assert_eq!(scrobble_after(Some(s(360))), Some(s(180)));
     assert_eq!(scrobble_after(Some(s(3600))), Some(s(180)));
+}
+
+#[test]
+fn custom_scrobble_rule() {
+    let s = Duration::from_secs;
+    let rule = ScrobbleRule { min_track: s(60), percent: 75, cap: s(120) };
+    assert_eq!(rule.after(Some(s(60))), None);
+    assert_eq!(rule.after(Some(s(100))), Some(s(75)));
+    assert_eq!(rule.after(Some(s(400))), Some(s(120)));
+    assert_eq!(rule.after(None), Some(s(120)));
 }
 
 #[test]

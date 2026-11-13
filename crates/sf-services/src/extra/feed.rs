@@ -203,6 +203,7 @@ fn section_shelf(section: &FeedSection) -> Option<HomeShelf> {
         title: section.title.clone(),
         kind: kind.to_owned(),
         items,
+        ..Default::default()
     })
 }
 

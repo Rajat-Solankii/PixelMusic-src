@@ -30,6 +30,8 @@ pub mod library;
 /// Music files on this computer: folder scan, tags and covers, played through the YouTube lane
 pub mod local;
 pub mod lyrics;
+/// Saved past queues ("Replay queue")
+pub mod queue_history;
 /// «Новинки»: «Радар новинок» и свежие релизы исполнителей
 pub mod releases;
 /// Friends (friend activity) and Jam through the session
@@ -191,6 +193,110 @@ fn follow_youtube_data_saver(
     });
 }
 
+/// Settings "Sync Playlists & Liked Songs", "Personalized Explore Feed" and "Personalized Queue & Radios" →
+/// the library's YouTube lists, the home feed (read again when shown) and the radio requests; the Smart Mix
+/// playlist settings (shown in Library, retention) → the library (library/smart_mixes.rs); "Sync local playlists
+/// to YouTube Music" → the library (library/local.rs).
+fn follow_youtube_account_use(
+    rt: &Handle,
+    settings: &Arc<SettingsStore>,
+    youtube: Arc<YouTubeService>,
+    home: Arc<HomeService>,
+    library: Arc<LibraryService>,
+) {
+    youtube.set_personal_home(settings.get_bool(SettingKey::YouTubePersonalHome));
+    youtube.set_personal_radio(settings.get_bool(SettingKey::YouTubePersonalRadio));
+    let settings = settings.clone();
+    let mut changes = settings.subscribe();
+    rt.spawn(async move {
+        loop {
+            match changes.recv().await {
+                Ok(SettingKey::YouTubePersonalHome) => {
+                    youtube.set_personal_home(settings.get_bool(SettingKey::YouTubePersonalHome));
+                    home.reload_youtube_if_shown();
+                }
+                Ok(SettingKey::YouTubePersonalRadio) => {
+                    youtube.set_personal_radio(settings.get_bool(SettingKey::YouTubePersonalRadio))
+                }
+                Ok(SettingKey::YouTubeLibrarySync) => library.youtube_sync_changed(),
+                Ok(SettingKey::LastFmShowMixes) => library.smart_mix_visibility_changed(),
+                Ok(SettingKey::LastFmMixRetentionDays) => library.sweep_smart_mixes(),
+                Ok(SettingKey::LocalPlaylistSync) => library.local_sync_changed(),
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    youtube.set_personal_home(settings.get_bool(SettingKey::YouTubePersonalHome));
+                    youtube.set_personal_radio(settings.get_bool(SettingKey::YouTubePersonalRadio));
+                }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// Setting "Last.fm Smart Mix": Home's Daily Mix (Last.fm "mix" blend, 30 songs) and Your Mix (Last.fm
+/// recommendations, 60 songs), found on YouTube Music, made once a day (checked hourly) and when the setting or
+/// the Last.fm account changes; off or not connected — the mixes from the local history.
+fn follow_lastfm_home_mixes(
+    rt: &Handle,
+    settings: &Arc<SettingsStore>,
+    home: Arc<HomeService>,
+    feed: Arc<lastfm_feed::LastFmFeedService>,
+    lastfm: Arc<lastfm::LastFmService>,
+) {
+    let settings = settings.clone();
+    let mut changes = settings.subscribe();
+    let mut account = lastfm.subscribe();
+    rt.spawn(async move {
+        // the day the shown Last.fm mixes were made for (None — none shown)
+        let mut made: Option<u64> = None;
+        let mut tick = tokio::time::interval(Duration::from_secs(3600));
+        loop {
+            let on = settings.get_bool(SettingKey::LastFmSmartMix) && lastfm.snapshot().connected;
+            let today = home::mixes::day_seed(&jiff::Zoned::now());
+            if !on && made.is_some() {
+                made = None;
+                home.set_lastfm_mixes(None);
+            } else if on && made != Some(today) {
+                let (daily, your) = tokio::join!(
+                    feed.home_mix(lastfm_feed::MixMode::Mix, home::mixes::DAILY_LIMIT),
+                    feed.home_mix(lastfm_feed::MixMode::Recommendations, home::mixes::YOUR_LIMIT),
+                );
+                // the setting may have been turned off meanwhile
+                if settings.get_bool(SettingKey::LastFmSmartMix) {
+                    match (daily, your) {
+                        (Ok(daily), Ok(your)) => {
+                            made = Some(today);
+                            home.set_lastfm_mixes(Some((daily, your)));
+                        }
+                        (daily, your) => {
+                            let error = daily.err().or(your.err()).unwrap_or_default();
+                            tracing::warn!("Last.fm Smart Mix for Home: {error}");
+                        }
+                    }
+                }
+            }
+            tokio::select! {
+                change = changes.recv() => match change {
+                    Ok(SettingKey::LastFmSmartMix) | Err(broadcast::error::RecvError::Lagged(_)) => made = None,
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                event = account.recv() => match event {
+                    // a sign-in, sign-out or another account: made again (or dropped) above
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let on = settings.get_bool(SettingKey::LastFmSmartMix) && lastfm.snapshot().connected;
+                        if on != made.is_some() {
+                            made = None;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                _ = tick.tick() => {}
+            }
+        }
+    });
+}
+
 impl Services {
     /// Порядок: HTTP (прокси из настроек) → ApiGateway → PlayerHandle → Auth → History → Library → Catalog →
     /// Wave → Releases → Home → Lyrics → Devices → glue (настройки → плеер) → медиаклавиши.
@@ -279,6 +385,7 @@ impl Services {
         player.enable_youtube(lane_source, output, http.clone());
         local::follow_folders_setting(rt, &settings, local.clone());
         follow_youtube_data_saver(rt, &settings, youtube.clone(), streams.clone());
+        follow_youtube_account_use(rt, &settings, youtube.clone(), home.clone(), library.clone());
         glue::spawn_settings_glue(rt, settings.clone(), player.clone());
 
         let (app_requests, _) = broadcast::channel(16);
@@ -312,6 +419,8 @@ impl Services {
                 Default::default(),
             )
         };
+
+        follow_lastfm_home_mixes(rt, &settings, home.clone(), lastfm_feed.clone(), lastfm.clone());
 
         Ok(Services {
             settings,

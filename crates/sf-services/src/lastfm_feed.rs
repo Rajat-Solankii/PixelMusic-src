@@ -1202,6 +1202,26 @@ impl LastFmFeedService {
         });
     }
 
+    /// A mix for Home ("Last.fm Smart Mix" setting): the same generation as `generate`, found on YouTube Music,
+    /// without touching the Smart Mix page's snapshot. Err — not connected, or nothing found.
+    pub async fn home_mix(&self, mode: MixMode, count: usize) -> Result<Vec<TrackItem>, String> {
+        let (api, user) = self.api().map_err(|error| error.to_string())?;
+        let search = self.search_for(MixTarget::YouTube).ok_or_else(|| mf_i18n::t("This catalog isn't available."))?;
+        let request = MixRequest {
+            mode,
+            count,
+            period: "3month".to_owned(),
+            seed_track: String::new(),
+            seed_artist: String::new(),
+            seed_artist_input: String::new(),
+            tag: String::new(),
+        };
+        let mut rng = self.rng();
+        let tracks = api.mix_tracks(&user, &request, &mut rng).await.map_err(|error| error.to_string())?;
+        let found = resolve(search.as_ref(), &tracks, count.max(1), |_| {}).await;
+        if found.is_empty() { Err(mf_i18n::t("Couldn't find playable matches for any of the tracks.")) } else { Ok(found) }
+    }
+
     fn finish(&self, generation: u64, result: Result<(), String>) {
         if lock(&self.counters).mix != generation {
             return;

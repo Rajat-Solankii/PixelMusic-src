@@ -106,7 +106,11 @@ impl YouTubeService {
                 body[key] = json!(value);
             }
         }
-        let response = self.client.post(&WEB_REMIX, "next", body, Login::IfSignedIn).await?;
+        // a radio (RD…) or a lone song follows the "personalized queue & radios" setting; a playlist's queue is
+        // the playlist's either way
+        let radio = playlist_id.is_none_or(|id| id.starts_with("RD"));
+        let login = if radio { self.radio_login() } else { Login::IfSignedIn };
+        let response = self.client.post(&WEB_REMIX, "next", body, login).await?;
         parsers::next_page(&response)
     }
 

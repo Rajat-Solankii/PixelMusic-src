@@ -1,6 +1,6 @@
-// Жизненный цикл плейлиста на настоящем мосту (Library из Materialfy.Core):
+// Жизненный цикл плейлиста на настоящем мосту (Library из PixelMusic.Core):
 //   QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 \
-//     target/release/materialfy --offline --new-instance --qml tests/qml/integration/LifecycleHarness.qml
+//     target/release/pixelmusic --offline --new-instance --qml tests/qml/integration/LifecycleHarness.qml
 // Проверяет контракт QML-интеграции: playlistTracks — стабильный экземпляр модели на вызов,
 // releasePlaylist парой к каждому acquire; настоящие TrackListPage/PlaylistPage открываются
 // и закрываются без ошибок QML; шапка/страница не ждут данные. Итог — SMOKE-RESULT PASS/FAIL.
@@ -9,9 +9,9 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Md3
-import Materialfy.Core
-import "../../../src/materialfy/qml/app" as App
-import "../../../src/materialfy/qml/app/pages" as Pages
+import PixelMusic.Core
+import "../../../src/pixelmusic/qml/app" as App
+import "../../../src/pixelmusic/qml/app/pages" as Pages
 
 ApplicationWindow {
     id: win

@@ -13,7 +13,7 @@ use crate::history::PlayRecord;
 use crate::stats::ListenEvent;
 
 /// The `format` field of a backup file.
-pub const FORMAT: &str = "materialfy-backup";
+pub const FORMAT: &str = "pixelmusic-backup";
 /// The newest layout this build writes and reads.
 pub const VERSION: u32 = 1;
 /// Files bigger than this are not backups.
@@ -154,9 +154,10 @@ impl Backup {
     }
 }
 
-/// A file name for today's backup: "materialfy-backup-2026-11-12.json".
+/// A file name for today's backup: "PixelMusic-backup-2026-11-12.json" (the format tag inside stays
+/// "pixelmusic-backup", so older backups still restore).
 pub fn file_name() -> String {
-    format!("materialfy-backup-{}.json", jiff::Zoned::now().date())
+    format!("PixelMusic-backup-{}.json", jiff::Zoned::now().date())
 }
 
 /// What a restore put back.
@@ -227,8 +228,8 @@ mod tests {
     fn foreign_and_newer_files_are_refused() {
         assert!(Backup::parse("{}").is_err());
         assert!(Backup::parse("not json").is_err());
-        assert!(Backup::parse(r#"{"format":"materialfy-backup","version":99}"#).is_err());
-        let ok = Backup::parse("\u{feff}{\"format\":\"materialfy-backup\",\"version\":1}").unwrap();
+        assert!(Backup::parse(r#"{"format":"pixelmusic-backup","version":99}"#).is_err());
+        let ok = Backup::parse("\u{feff}{\"format\":\"pixelmusic-backup\",\"version\":1}").unwrap();
         assert!(ok.settings.is_empty() && ok.history.is_empty());
     }
 

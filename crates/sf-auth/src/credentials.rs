@@ -20,7 +20,10 @@ use crate::lastfm::LastFmAccount;
 use crate::youtube::YouTubeAccount;
 
 /// Имя сервиса в хранилище ОС (Windows Credential Manager и т. п.).
-pub const SERVICE: &str = "materialfy";
+pub const SERVICE: &str = "pixelmusic";
+/// The service name before the rename to Pixel Music: an entry found only there is moved to [`SERVICE`] when it
+/// is first read, and deleting an entry also deletes its old copy (so a sign-out cannot bring an old one back).
+pub const LEGACY_SERVICE: &str = "materialfy";
 const TIMEOUT: Duration = Duration::from_secs(20);
 const RECORD_VERSION: u32 = 1;
 
@@ -193,6 +196,10 @@ struct NativeStore {
 
 impl NativeStore {
     fn entry(&mut self, key: &str) -> Result<keyring_core::Entry, Error> {
+        self.entry_in(SERVICE, key)
+    }
+
+    fn entry_in(&mut self, service: &str, key: &str) -> Result<keyring_core::Entry, Error> {
         if self.store.is_none() {
             #[cfg(target_os = "linux")]
             let store = zbus_secret_service_keyring_store::Store::new();
@@ -205,17 +212,37 @@ impl NativeStore {
                 Err(keyring_core::Error::NotSupportedByStore("platform".into()));
             self.store = Some(store.map_err(native_error)?);
         }
-        self.store.as_ref().ok_or(Error::Unavailable)?.build(SERVICE, key, None).map_err(native_error)
+        self.store.as_ref().ok_or(Error::Unavailable)?.build(service, key, None).map_err(native_error)
+    }
+
+    fn read_in(&mut self, service: &str, key: &str) -> Result<Option<Vec<u8>>, Error> {
+        match self.entry_in(service, key)?.get_secret() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
+            Err(error) => Err(native_error(error)),
+        }
+    }
+
+    fn delete_in(&mut self, service: &str, key: &str) -> Result<(), Error> {
+        match self.entry_in(service, key)?.delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+            Err(error) => Err(native_error(error)),
+        }
     }
 }
 
 impl ProtectedStore for NativeStore {
     fn read(&mut self, key: &str) -> Result<Option<Vec<u8>>, Error> {
-        match self.entry(key)?.get_secret() {
-            Ok(secret) => Ok(Some(secret)),
-            Err(keyring_core::Error::NoEntry) => Ok(None),
-            Err(error) => Err(native_error(error)),
+        if let Some(secret) = self.read_in(SERVICE, key)? {
+            return Ok(Some(secret));
         }
+        // saved before the rename: move it under the new name (the copy is written before the old one goes)
+        let Some(secret) = self.read_in(LEGACY_SERVICE, key)? else { return Ok(None) };
+        self.write(key, &secret)?;
+        if let Err(error) = self.delete_in(LEGACY_SERVICE, key) {
+            tracing::warn!("could not remove the old credential entry: {error:?}");
+        }
+        Ok(Some(secret))
     }
 
     fn write(&mut self, key: &str, secret: &[u8]) -> Result<(), Error> {
@@ -223,10 +250,8 @@ impl ProtectedStore for NativeStore {
     }
 
     fn delete(&mut self, key: &str) -> Result<(), Error> {
-        match self.entry(key)?.delete_credential() {
-            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
-            Err(error) => Err(native_error(error)),
-        }
+        self.delete_in(SERVICE, key)?;
+        self.delete_in(LEGACY_SERVICE, key)
     }
 }
 
@@ -818,6 +843,19 @@ mod tests {
         f.store.revoke(Slot::Proxy).unwrap();
         assert_eq!(f.store.lease(Slot::Proxy).delete().await, Err(Error::Locked));
         assert!(f.restart().lease(Slot::Proxy).load().await.unwrap().grant.is_none());
+    }
+
+    #[test]
+    #[ignore = "writes a dummy entry to the real OS credential store"]
+    fn native_legacy_entry_moves_on_read() {
+        let key = format!("mf-legacy-probe-{}", std::process::id());
+        let mut native = NativeStore::default();
+        native.entry_in(LEGACY_SERVICE, &key).unwrap().set_secret(b"old-probe").unwrap();
+        assert_eq!(native.read(&key).unwrap().as_deref(), Some(b"old-probe".as_slice()));
+        assert_eq!(native.read_in(SERVICE, &key).unwrap().as_deref(), Some(b"old-probe".as_slice()));
+        assert_eq!(native.read_in(LEGACY_SERVICE, &key).unwrap(), None, "the old entry is gone after the move");
+        native.delete(&key).unwrap();
+        assert_eq!(native.read(&key).unwrap(), None);
     }
 
     #[tokio::test]

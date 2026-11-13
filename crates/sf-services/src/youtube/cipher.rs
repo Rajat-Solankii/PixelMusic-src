@@ -104,6 +104,12 @@ impl Cipher {
         Self { worker, state: tokio::sync::Mutex::new(None) }
     }
 
+    /// `signatureTimestamp` of the script already loaded (none loaded, or being loaded: `None`); never waits.
+    pub(crate) fn loaded_sts(&self) -> Option<u64> {
+        let state = self.state.try_lock().ok()?;
+        state.as_ref().filter(|loaded| loaded.at.elapsed() < SCRIPT_TTL).map(|loaded| loaded.script.sts)
+    }
+
     /// Load the current player script unless a recent one is loaded; its `signatureTimestamp` and BotGuard key.
     pub(crate) async fn load(&self, client: &InnerTube) -> Result<Script, String> {
         let mut state = self.state.lock().await;

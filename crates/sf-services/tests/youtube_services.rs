@@ -93,6 +93,9 @@ fn answer(request: &Request) -> Value {
     if target.contains("edit_playlist") {
         return json!({ "status": "STATUS_SUCCEEDED" });
     }
+    if target.contains("playlist/create") {
+        return json!({ "playlistId": "PLmirror" });
+    }
     if target.contains("/browse") {
         if request.body.get("continuation").is_some() {
             return fixture("playlist_tracks_page2.json");
@@ -223,7 +226,9 @@ async fn pasted_cookies_sign_in_save_restore_and_sign_out() {
 fn library(f: &Fixture, auth: &Arc<AuthService>) -> Arc<LibraryService> {
     let rt = tokio::runtime::Handle::current();
     let history = HistoryService::with_file(rt.clone(), auth.clone(), f.player.clone(), f.dir.join("history.json"));
-    LibraryService::new(rt, auth.clone(), f.player.clone(), history, f.settings.clone())
+    let library = LibraryService::new(rt, auth.clone(), f.player.clone(), history, f.settings.clone());
+    library.use_local_playlists_file(f.dir.join("local_playlists.json"));
+    library
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -305,5 +310,50 @@ async fn youtube_uris_route_to_youtube_and_need_an_account_for_likes() {
     let album = catalog.album("youtube:album:MPREb_test").await;
     assert!(album.is_err());
     assert!(f.server.requests_to("/browse").iter().any(|request| request.body["browseId"] == "MPREb_test"));
+    let _ = std::fs::remove_dir_all(&f.dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_playlists_mirror_their_edits_to_youtube_music() {
+    let f = fixture_services().await;
+    let auth = f.auth(f.server.youtube());
+    let library = library(&f, &auth);
+    auth.youtube_sign_in_with_cookies(COOKIES).unwrap();
+    wait_for("sign-in", || auth.is_youtube_signed_in()).await;
+    wait_for("library", || !library.youtube_loading()).await;
+    assert!(f.settings.get_bool(mf_platform::SettingKey::LocalPlaylistSync), "on by default");
+
+    // a new local playlist gets a private mirror with its YouTube songs (the local file is left out)
+    let id = library.create_local_playlist(
+        "Mirror me".into(),
+        vec!["youtube:track:a".into(), "local:track:00ff".into(), "youtube:track:b".into()],
+        None,
+    );
+    wait_for("mirror created", || library.local_playlists()[0].youtube_id.as_deref() == Some("PLmirror")).await;
+    let create = &f.server.requests_to("playlist/create")[0].body;
+    assert_eq!((create["title"].as_str(), create["privacyStatus"].as_str()), (Some("Mirror me"), Some("PRIVATE")));
+    assert_eq!(create["videoIds"], json!(["a", "b"]));
+    assert!(!library.local_playlists()[0].dirty);
+    let entries = library.entries(LibraryKind::Playlists, "all", "");
+    assert!(entries.iter().any(|entry| entry.uri == id.as_str()));
+    assert!(!entries.iter().any(|entry| entry.uri == "youtube:playlist:PLmirror"), "the mirror is not listed twice");
+
+    // an edit: the mirror is read and brought in line (its other songs out, the new one in)
+    library.add_tracks(id.clone(), vec!["youtube:track:c".into()]);
+    wait_for("edit synced", || !library.local_playlists()[0].dirty).await;
+    assert!(f.server.requests_to("/browse").iter().any(|request| request.body["browseId"] == "VLPLmirror"));
+    let edits: Vec<Value> = f.server.requests_to("edit_playlist").into_iter().map(|request| request.body).collect();
+    let actions: Vec<&Value> = edits.iter().flat_map(|edit| edit["actions"].as_array().unwrap()).collect();
+    assert!(actions.iter().any(|action| action["action"] == "ACTION_REMOVE_VIDEO"), "{edits:?}");
+    let added: Vec<&str> = actions.iter().filter_map(|action| action["addedVideoId"].as_str()).collect();
+    assert_eq!(added, ["a", "b", "c"]);
+
+    // the setting off: edits stay local (and wait for the next sync)
+    f.settings.set(mf_platform::SettingKey::LocalPlaylistSync, mf_platform::settings::SettingValue::Bool(false));
+    let before = f.server.requests.lock().unwrap().len();
+    library.rename_playlist(id.clone(), "Offline".into());
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(f.server.requests.lock().unwrap().len(), before);
+    assert!(library.local_playlists()[0].dirty);
     let _ = std::fs::remove_dir_all(&f.dir);
 }

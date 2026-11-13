@@ -53,13 +53,17 @@ pub struct BrowseRef {
 }
 
 /// A titled row of items (home, explore, artist page, search summary).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Shelf {
     pub title: String,
     pub items: Vec<YtItem>,
     /// "see all"
     pub more: Option<BrowseRef>,
     pub continuation: Option<String>,
+    /// the small line above the title ("Similar to" over an artist's name, "Mixed for you"), "" when none
+    pub strapline: String,
+    /// the header's own picture (the artist of a "Similar to" shelf), "" when none
+    pub thumbnail: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

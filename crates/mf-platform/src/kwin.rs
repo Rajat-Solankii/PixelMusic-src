@@ -65,7 +65,7 @@ mod imp {
              }}\n\
              function island() {{ return workspace.windowList().find(w => w.caption === title); }}\n\
              function covers(w, isl) {{\n\
-             \x20   if (w === isl || w.caption.startsWith(\"Materialfy Island\") || !w.normalWindow || w.minimized) return false;\n\
+             \x20   if (w === isl || w.caption.startsWith(\"Pixel Music Island\") || !w.normalWindow || w.minimized) return false;\n\
              \x20   if (w.output !== isl.output) return false;\n\
              \x20   if (!w.onAllDesktops && !w.desktops.includes(workspace.currentDesktop)) return false;\n\
              \x20   if (w.pid === isl.pid) return w.active;\n\
@@ -109,8 +109,8 @@ mod imp {
         PlatformError::DBus(err.to_string())
     }
 
-    const REPORT_PATH: &str = "/MaterialfyIsland";
-    const REPORT_IFACE: &str = "org.materialfy.Island";
+    const REPORT_PATH: &str = "/PixelMusicIsland";
+    const REPORT_IFACE: &str = "org.pixelmusic.Island";
 
     type MovedFn = Box<dyn Fn(String, i32, i32) + Send + Sync>;
     static ON_MOVED: std::sync::OnceLock<MovedFn> = std::sync::OnceLock::new();
@@ -123,7 +123,7 @@ mod imp {
     // сюда скрипт KWin сообщает, куда окно отпустили после перетаскивания
     struct Reports;
 
-    #[zbus::interface(name = "org.materialfy.Island")]
+    #[zbus::interface(name = "org.pixelmusic.Island")]
     impl Reports {
         fn moved(&self, title: String, x: i32, y: i32) {
             if let Some(callback) = ON_MOVED.get() {
@@ -156,7 +156,7 @@ mod imp {
         let conn = connection().await?;
         let report = conn.unique_name().map(|n| n.to_string()).unwrap_or_default();
         let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        let path = dir.join(format!("materialfy-{name}.js"));
+        let path = dir.join(format!("pixelmusic-{name}.js"));
         std::fs::write(&path, script_text(title, spot, &report))?;
         // тот же заголовок мог остаться от прошлого запуска или прошлого размера
         let _ = conn.call_method(Some(SERVICE), SCRIPTING, Some(SCRIPTING_IFACE), "unloadScript", &(name.as_str(),)).await;
@@ -193,7 +193,7 @@ mod imp {
             assert!(text.contains("const moveX = true;\nconst moveY = false;"));
             // поперёк края окно стоит там, куда его поставили
             assert!(text.contains("moveY ? clamp(g.y, area.y, area.y + area.height - g.height) : 0;"));
-            assert!(text.contains("callDBus(\":1.42\", \"/MaterialfyIsland\", \"org.materialfy.Island\", \"Moved\""));
+            assert!(text.contains("callDBus(\":1.42\", \"/PixelMusicIsland\", \"org.pixelmusic.Island\", \"Moved\""));
         }
     }
 }

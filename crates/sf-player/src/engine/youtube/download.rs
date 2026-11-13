@@ -15,6 +15,9 @@ const NEAR_PART: u64 = 4;
 const JUMP_PART: u64 = 16;
 /// A reader that has read this part of a chunk on from where it last seeked is playing, not probing.
 const PLAYING_PART: u64 = 64;
+/// A playing reader that caught up with the download waits for this part of a chunk before it goes on: the output
+/// holds only ~100 ms, so playing each few kilobytes as they trickle in sounds like stop-play-stop-play.
+const REBUFFER_PART: u64 = 8;
 /// How long a read waits for bytes before it gives up.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Further attempts at a chunk after a network failure or an unexpected status.
@@ -86,6 +89,8 @@ struct State {
     near: u64,
     /// [`PLAYING_PART`] of a chunk
     playing: u64,
+    /// [`REBUFFER_PART`] of a chunk
+    rebuffer: u64,
     /// total size, once a response or the stream description names it
     total: Option<u64>,
     done: bool,
@@ -203,6 +208,7 @@ pub fn start(client: reqwest::Client, runtime: &tokio::runtime::Handle, spec: Do
         state.total = spec.content_length.filter(|&length| length > 0);
         state.near = (spec.chunk_bytes / NEAR_PART).max(1);
         state.playing = (spec.chunk_bytes / PLAYING_PART).max(1);
+        state.rebuffer = (spec.chunk_bytes / REBUFFER_PART).max(1);
     }
     let task = runtime.spawn(run(client, spec, shared.clone()));
     StreamReader {
@@ -502,6 +508,8 @@ impl Read for StreamReader {
             return Ok(0);
         }
         let position = self.position;
+        // playing on from a seek, not probing the file: a stall at the download's edge waits for a solid stretch
+        let mut rebuffer = 0;
         {
             let mut state = self.shared.lock();
             let past_end = state.total.is_some_and(|total| position >= total);
@@ -512,6 +520,8 @@ impl Read for StreamReader {
                     let near = position >= state.head && position - state.head <= state.near;
                     if !near {
                         state.want = Some(position);
+                    } else if position.saturating_sub(self.since) >= state.playing {
+                        rebuffer = state.rebuffer;
                     }
                 } else if position.saturating_sub(self.since) >= state.playing {
                     // playing a stretch fetched for another position (a FLAC seek probes the file here and there
@@ -524,7 +534,15 @@ impl Read for StreamReader {
                 }
             }
         }
-        let state = self.wait(|state| state.covers(position) || state.total.is_some_and(|total| position >= total))?;
+        let state = self.wait(|state| {
+            if state.total.is_some_and(|total| position >= total) {
+                return true;
+            }
+            let until = state.gap_from(position);
+            let end = state.total.map_or(u64::MAX, |total| total.min(position.saturating_add(rebuffer)));
+            // a failed download still plays out what arrived
+            until > position && (until >= end || until - position >= rebuffer || state.error.is_some())
+        })?;
         let Some(piece) = state.piece_at(position) else {
             // at or past the end of a finished file
             return Ok(0);
@@ -808,6 +826,42 @@ pub(crate) mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         drop(reader);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_playing_reader_that_caught_up_waits_for_a_stretch_not_for_each_trickle() {
+        let body = sample_body(40_000);
+        // each answer sends 300 bytes, then stalls until the idle timeout asks again
+        let (url, _) = serve(body.clone(), Mode::Stalls(300)).await;
+        let spec = DownloadSpec { idle_timeout: Duration::from_millis(30), ..spec(&url, 16_000) };
+        let mut reader = start(client(), &tokio::runtime::Handle::current(), spec);
+        let status = reader.status();
+        let (out, waits, short) = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            let mut buf = [0u8; 64];
+            // reads on from the start (a 64th of the chunk is 250 bytes): playing, so a wait at the edge holds
+            // until an eighth of the chunk (2 000 bytes) is in
+            let (mut waits, mut short) = (0, 0);
+            while out.len() < 10_000 {
+                let position = out.len() as u64;
+                let waiting = position > 500 && status.arrived_until(position) == position;
+                let count = reader.read(&mut buf).unwrap();
+                out.extend_from_slice(&buf[..count]);
+                if waiting {
+                    waits += 1;
+                    // (a few bytes may land between the look and the read: then the read does not wait)
+                    if status.arrived_until(position) < position + 2_000 {
+                        short += 1;
+                    }
+                }
+            }
+            (out, waits, short)
+        })
+        .await
+        .unwrap();
+        assert_eq!(out[..10_000], body[..10_000]);
+        assert!(waits >= 2, "the reader caught up with the download {waits} times");
+        assert!(short <= 1, "{short} of {waits} waits went on with a few bytes in hand");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

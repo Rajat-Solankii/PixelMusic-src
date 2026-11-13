@@ -10,12 +10,12 @@ members = [
     "crates/mf-lyrics",
     "crates/mf-platform",
     "crates/mf-i18n",
-    "crates/materialfy",
+    "crates/pixelmusic",
 ]
 
 [workspace.package]
 description = "Pixel Music — YouTube Music player on Qt Quick (Material 3 Expressive) and Rust"
-version = "0.5.1"
+version = "1.0.0-beta"
 edition = "2024"
 rust-version = "1.98"
 license = "GPL-3.0-or-later"

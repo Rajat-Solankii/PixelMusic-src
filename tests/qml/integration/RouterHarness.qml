@@ -1,6 +1,6 @@
 // Сценарии навигации Router на настоящем мосту (Md3-синглтоны из приложения):
 //   QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 \
-//     target/release/materialfy --offline --new-instance --qml tests/qml/integration/RouterHarness.qml
+//     target/release/pixelmusic --offline --new-instance --qml tests/qml/integration/RouterHarness.qml
 // 1. Загрузка LibraryPage (дубликат метода prewarmEntry раньше валил весь файл).
 // 2. reset("settings") из плейлиста: settings — keepAlive-страница, её живой экземпляр в глубине
 //    стека; reset обязан заменить стек (depth 1, current settings), а не потеряться.
@@ -9,9 +9,9 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Md3
-import Materialfy.Core
-import "../../../src/materialfy/qml/app" as App
-import "../../../src/materialfy/qml/app/pages" as Pages
+import PixelMusic.Core
+import "../../../src/pixelmusic/qml/app" as App
+import "../../../src/pixelmusic/qml/app/pages" as Pages
 
 ApplicationWindow {
     id: win
@@ -37,10 +37,10 @@ ApplicationWindow {
         // и проходит даже с ломаным reset (in-stack _kept путь не проверяется)
         keepAlive: ["home", "settings"]
         pages: ({
-            home: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/materialfy/qml/app/pages/HomePage.qml")),
-            playlist: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/materialfy/qml/app/pages/PlaylistPage.qml")),
-            settings: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/materialfy/qml/app/pages/SettingsPage.qml")),
-            library: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/materialfy/qml/app/pages/LibraryPage.qml")),
+            home: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/pixelmusic/qml/app/pages/HomePage.qml")),
+            playlist: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/pixelmusic/qml/app/pages/PlaylistPage.qml")),
+            settings: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/pixelmusic/qml/app/pages/SettingsPage.qml")),
+            library: Qt.resolvedUrl(Qt.resolvedUrl("../../../src/pixelmusic/qml/app/pages/LibraryPage.qml")),
         })
         Component.onCompleted: reset("home")
     }
@@ -49,7 +49,7 @@ ApplicationWindow {
     Timer { interval: 400; running: true; onTriggered: {
         let loaded = false
         try {
-            const comp = Qt.createComponent(Qt.resolvedUrl("../../../src/materialfy/qml/app/pages/LibraryPage.qml"))
+            const comp = Qt.createComponent(Qt.resolvedUrl("../../../src/pixelmusic/qml/app/pages/LibraryPage.qml"))
             loaded = comp.status === Component.Ready
             if (comp.status === Component.Error)
                 console.log("LibraryPage error:", comp.errorString())

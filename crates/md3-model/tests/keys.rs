@@ -216,6 +216,7 @@ fn radio_home_search_keys() {
         title: "Ваши любимые".into(),
         kind: "tracks".into(),
         items: vec![serde_json::to_value(track()).unwrap()],
+        ..Default::default()
     };
     roundtrip(&shelf);
     let mut item = serde_json::Map::new();

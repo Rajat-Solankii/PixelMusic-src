@@ -46,6 +46,12 @@ const DEFAULT_TTL_SECS: u64 = 3600;
 const DATA_SAVER_BPS: i64 = 64_000;
 /// Technical failures of the web tier in a row before it rests.
 const WEB_FAILURE_LIMIT: u32 = 2;
+/// How long a tier whose URL was refused for a video is skipped for that video. A tier often hands out the same
+/// kind of refused URL again (an ANDROID_VR URL that YouTube stops serving part-way): the player's retry then
+/// asks the next tier instead of getting another refused URL.
+const REFUSED_TTL: Duration = Duration::from_secs(30 * 60);
+/// `YtStream::source` of a stream ANDROID_VR gave for the account (the preset's own name is ANDROID_VR's).
+const ANDROID_VR_USER_SOURCE: &str = "ANDROID_VR_USER";
 
 type Flight = Shared<BoxFuture<'static, Result<YtStream>>>;
 
@@ -81,6 +87,8 @@ pub(crate) struct Streams {
     tokens: PoTokens,
     /// bumped when the identity changes: a resolution started before is not cached
     generation: AtomicU64,
+    /// per video: the tiers (`YtStream::source`) whose URL stopped playing, and when
+    refused: Mutex<HashMap<String, (Vec<String>, Instant)>>,
 }
 
 impl Default for Streams {
@@ -95,6 +103,7 @@ impl Default for Streams {
             cipher: Cipher::new(js.clone()),
             tokens: PoTokens::new(js),
             generation: AtomicU64::new(0),
+            refused: Mutex::default(),
         }
     }
 }
@@ -141,17 +150,39 @@ impl Streams {
 
     /// Another identity (signed in, out, another account): what the tiers refused, what was resolved and the PO
     /// tokens (and their minter) belonged to the previous one.
+    /// The loaded player script's `signatureTimestamp`, if one is loaded (`tracking.rs`).
+    pub(crate) fn loaded_sts(&self) -> Option<u64> {
+        self.cipher.loaded_sts()
+    }
+
     pub(crate) fn account_changed(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         *lock(&self.tiers) = Tiers::default();
         lock(&self.cache).clear();
+        lock(&self.refused).clear();
         lock(&self.flights).clear();
         self.tokens.reset();
+    }
+
+    /// The tiers whose URL for this video stopped playing lately.
+    fn refused_tiers(&self, video_id: &str) -> Vec<String> {
+        let mut refused = lock(&self.refused);
+        refused.retain(|_, (_, at)| at.elapsed() < REFUSED_TTL);
+        refused.get(video_id).map(|(tiers, _)| tiers.clone()).unwrap_or_default()
     }
 
     fn invalidate(&self, video_id: &str) {
         let removed = lock(&self.cache).remove(video_id);
         self.tokens.forget(video_id);
+        if let Some(entry) = &removed {
+            let mut refused = lock(&self.refused);
+            let (tiers, at) = refused.entry(video_id.to_owned()).or_insert_with(|| (Vec::new(), Instant::now()));
+            if !tiers.contains(&entry.stream.source) {
+                tiers.push(entry.stream.source.clone());
+            }
+            *at = Instant::now();
+            log::info!("youtube streams: {video_id}: the {} URL stopped playing; next time another tier", entry.stream.source);
+        }
         // a refused web URL may come from a stale player script (its signature or `n` transform): load it again
         if removed.is_some_and(|entry| entry.stream.source == WEB_REMIX.name) {
             self.cipher.reset();
@@ -374,8 +405,15 @@ async fn web_attempt(
 async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) -> Result<YtStream> {
     let data_saver = streams.data_saver.load(Ordering::Relaxed);
     let mut last_error = None;
+    // tiers whose URL for this video was refused part-way lately go last (the web tier is always asked)
+    let refused = streams.refused_tiers(&video_id);
+    let skip_vr = refused.iter().any(|tier| tier == ANDROID_VR.name);
+    let skip_vr_user = refused.iter().any(|tier| tier == ANDROID_VR_USER_SOURCE);
+    if skip_vr || skip_vr_user {
+        log::info!("youtube streams: {video_id}: skipping {refused:?}, refused for this song");
+    }
 
-    let vr_resting = {
+    let vr_resting = skip_vr || {
         let tiers = lock(&streams.tiers);
         let resting = tiers.android_vr_until.is_some_and(|until| Instant::now() < until);
         if resting {
@@ -405,10 +443,12 @@ async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) 
 
     // the same client for the user: the account's device is what a bot check asks for
     let user_resting = lock(&streams.tiers).android_vr_user_until.is_some_and(|until| Instant::now() < until);
-    if client.signed_in() && !user_resting {
+    if client.signed_in() && !user_resting && !skip_vr_user {
         match vr_request(&client, &ANDROID_VR_USER, Login::Required, &video_id, data_saver).await {
-            Ok(stream) => {
+            Ok(mut stream) => {
                 lock(&streams.tiers).android_vr_user_strikes = 0;
+                // told apart from the anonymous tier when its URL is refused (`invalidate`)
+                stream.source = ANDROID_VR_USER_SOURCE.to_owned();
                 return Ok(stream);
             }
             Err((error, bot_check)) => {
@@ -615,7 +655,7 @@ impl YouTubeService {
     }
 
     /// Where web-player PO tokens come from: an external bgutil-style provider (`Some(base URL)`), or the built-in
-    /// BotGuard minter (`None`). `MATERIALFY_POT_PROVIDER` sets the provider at start.
+    /// BotGuard minter (`None`). `PIXELMUSIC_POT_PROVIDER` sets the provider at start.
     pub fn set_po_token_server(&self, server: Option<String>) {
         self.streams.tokens.set_server(server);
     }
@@ -705,6 +745,26 @@ mod tests {
         assert_eq!(Ciphered::parse("sp=sig&url=x"), None);
         assert_eq!(Ciphered::parse("s=a%2Bb&url=u").unwrap().sp, "signature");
         assert_eq!(Ciphered::parse("s=a%2Bb&url=u").unwrap().s, "a+b");
+    }
+
+    #[test]
+    fn a_refused_url_sends_that_song_to_another_tier() {
+        let streams = Streams::default();
+        let mut stream = parse_player(&android_vr_response(), &ANDROID_VR, false).unwrap();
+        let now = unix_now();
+        streams.store(&stream, now);
+        streams.invalidate(&stream.video_id);
+        assert_eq!(streams.refused_tiers(&stream.video_id), vec!["ANDROID_VR".to_owned()]);
+        stream.source = ANDROID_VR_USER_SOURCE.into();
+        streams.store(&stream, now);
+        streams.invalidate(&stream.video_id);
+        assert_eq!(streams.refused_tiers(&stream.video_id), vec!["ANDROID_VR".to_owned(), "ANDROID_VR_USER".to_owned()]);
+        assert!(streams.refused_tiers("other").is_empty());
+        // nothing cached: nothing refused
+        streams.invalidate("other");
+        assert!(streams.refused_tiers("other").is_empty());
+        streams.account_changed();
+        assert!(streams.refused_tiers(&stream.video_id).is_empty());
     }
 
     #[test]

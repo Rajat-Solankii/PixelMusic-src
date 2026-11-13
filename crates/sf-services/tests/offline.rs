@@ -72,6 +72,7 @@ async fn pins_and_dislikes_are_local_settings() {
     let history =
         HistoryService::with_file(rt.clone(), f.auth.clone(), f.player.clone(), f.dir.join("history.json"));
     let library = LibraryService::new(rt, f.auth.clone(), f.player.clone(), history, f.settings.clone());
+    library.use_local_playlists_file(f.dir.join("local_playlists.json"));
     let mut events = library.subscribe();
 
     library.toggle_pin("spotify:playlist:p1".into());
@@ -97,6 +98,70 @@ async fn pins_and_dislikes_are_local_settings() {
     assert_eq!(notice.as_deref(), Some("Sign in to your account"));
     assert!(library.entries(LibraryKind::Playlists, "all", "spotify").is_empty());
     assert_eq!(library.loading_pages(), (0, 0));
+    let _ = std::fs::remove_dir_all(&f.dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_playlists_route_edit_and_persist() {
+    use md3_model::{ListChange, PlaylistId};
+    let f = fixture();
+    let rt = tokio::runtime::Handle::current();
+    let history = HistoryService::with_file(rt.clone(), f.auth.clone(), f.player.clone(), f.dir.join("history.json"));
+    let library = LibraryService::new(rt.clone(), f.auth.clone(), f.player.clone(), history.clone(), f.settings.clone());
+    let file = f.dir.join("local_playlists.json");
+    library.use_local_playlists_file(file.clone());
+    let mut events = library.subscribe();
+
+    // no Spotify account: "New playlist" makes a local one
+    let song = |id: &str| TrackItem { uri: format!("youtube:track:{id}"), title: id.to_uppercase(), available: true, ..Default::default() };
+    library.create_playlist("Road trip".into(), Some(song("a")));
+    let entries = library.entries(LibraryKind::Playlists, "all", "spotify");
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert!(entry.uri.starts_with("local:playlist:") && entry.can_edit && !entry.read_only);
+    assert_eq!((entry.title.as_str(), entry.track_count), ("Road trip", 1));
+    assert!(library.entries(LibraryKind::Playlists, "followed", "spotify").is_empty());
+
+    let id = PlaylistId::from_uri_or_id(&entry.id);
+    assert!(id.is_local() && library.can_edit(&id));
+    library.add_tracks(id.clone(), vec!["youtube:track:b".into(), "local:track:00ff".into()]);
+    library.insert_tracks(id.clone(), vec!["youtube:track:c".into()], 0);
+    library.move_tracks(id.clone(), 0, 3);
+    library.remove_tracks(id.clone(), vec![("youtube:track:b".into(), 1)]);
+    library.rename_playlist(id.clone(), "  Drive  ".into());
+    let uris = |library: &LibraryService| -> Vec<String> {
+        library.playlist_tracks(&id).unwrap().into_iter().map(|track| track.uri).collect()
+    };
+    assert_eq!(uris(&library), ["youtube:track:a", "local:track:00ff", "youtube:track:c"]);
+    let info = library.playlist_info(&id).unwrap();
+    assert_eq!((info.item.title.as_str(), info.item.track_count, info.item.can_edit), ("Drive", 3, true));
+
+    library.load_playlist(id.clone());
+    let mut reset = None;
+    while let Ok(event) = events.try_recv() {
+        if let LibraryEvent::PlaylistTracks { id: of, change: ListChange::Reset(rows) } = event
+            && of == id
+        {
+            reset = Some(rows.len());
+        }
+    }
+    assert_eq!(reset, Some(3), "opening sends the rows at once");
+
+    // saved to disk: a new service reads the same playlist
+    let again = LibraryService::new(rt, f.auth.clone(), f.player.clone(), history, f.settings.clone());
+    again.use_local_playlists_file(file.clone());
+    assert_eq!(uris(&again), ["youtube:track:a", "local:track:00ff", "youtube:track:c"]);
+    let saved = again.local_playlists();
+    assert!(saved[0].dirty && saved[0].youtube_id.is_none(), "signed out: waits for a sync");
+
+    library.unfollow_playlist(id.clone());
+    assert!(library.playlist_info(&id).is_none());
+    assert!(library.entries(LibraryKind::Playlists, "all", "spotify").is_empty());
+    library.follow_playlist(id.clone());
+    assert_eq!(uris(&library).len(), 3, "Undo brings it back");
+    library.unfollow_playlist(id.clone());
+    again.use_local_playlists_file(file);
+    assert!(again.local_playlists().is_empty());
     let _ = std::fs::remove_dir_all(&f.dir);
 }
 

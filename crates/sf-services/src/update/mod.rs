@@ -1,4 +1,4 @@
-//! Auto-update from GitHub Releases (fatyzzz/materialfy).
+//! Auto-update from GitHub Releases (Rajat-Solankii/PixelMusic).
 //!
 //! Check: `releases/latest` (stable) or `releases?per_page=20` (beta, pre-releases too) with a User-Agent and
 //! If-None-Match (a 304 doesn't count against GitHub's 60 requests/hour); a rate-limit answer pauses
@@ -10,8 +10,8 @@
 //! Download: to `<cache>/updates/<asset>.part` with resume (Range) and cancel, then SHA-256 against
 //! SHA256SUMS.txt (or GitHub's asset digest), then rename. Install: [`install::install`].
 //!
-//! Testing without a newer release: MATERIALFY_UPDATE_FAKE_VERSION=0.0.1 makes this build report that
-//! version; MATERIALFY_UPDATE_INSTALL_KIND=installer|portable|appimage|mac|manual overrides the detected kind
+//! Testing without a newer release: PIXELMUSIC_UPDATE_FAKE_VERSION=0.0.1 makes this build report that
+//! version; PIXELMUSIC_UPDATE_INSTALL_KIND=installer|portable|appimage|mac|manual overrides the detected kind
 //! (a cargo build is "dev": never replaced automatically).
 pub mod install;
 pub mod progress;
@@ -37,9 +37,9 @@ pub use release::{Channel, InstallKind};
 pub use state::{Event, Offer, Stage, UpdateSnapshot, UpdateState};
 use version::Version;
 
-pub const REPO: &str = "fatyzzz/materialfy";
-const API: &str = "https://api.github.com/repos/fatyzzz/materialfy";
-pub const RELEASES_PAGE: &str = "https://github.com/fatyzzz/materialfy/releases";
+pub const REPO: &str = "Rajat-Solankii/PixelMusic";
+const API: &str = "https://api.github.com/repos/Rajat-Solankii/PixelMusic";
+pub const RELEASES_PAGE: &str = "https://github.com/Rajat-Solankii/PixelMusic/releases";
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 pub const START_DELAY: Duration = Duration::from_secs(10);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
@@ -51,10 +51,10 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(120);
 const QUIT_DELAY: Duration = Duration::from_millis(700);
 const SUMS_NAME: &str = "SHA256SUMS.txt";
 
-pub const FAKE_VERSION_ENV: &str = "MATERIALFY_UPDATE_FAKE_VERSION";
-pub const INSTALL_KIND_ENV: &str = "MATERIALFY_UPDATE_INSTALL_KIND";
+pub const FAKE_VERSION_ENV: &str = "PIXELMUSIC_UPDATE_FAKE_VERSION";
+pub const INSTALL_KIND_ENV: &str = "PIXELMUSIC_UPDATE_INSTALL_KIND";
 
-/// Version of this build (or MATERIALFY_UPDATE_FAKE_VERSION, if it parses).
+/// Version of this build (or PIXELMUSIC_UPDATE_FAKE_VERSION, if it parses).
 pub fn current_version() -> String {
     std::env::var(FAKE_VERSION_ENV)
         .ok()
@@ -67,7 +67,7 @@ pub fn fake_version_set() -> bool {
     std::env::var(FAKE_VERSION_ENV).is_ok_and(|v| Version::parse(&v).is_some())
 }
 
-/// How this copy was installed (MATERIALFY_UPDATE_INSTALL_KIND overrides).
+/// How this copy was installed (PIXELMUSIC_UPDATE_INSTALL_KIND overrides).
 pub fn install_kind() -> InstallKind {
     if let Some(kind) = std::env::var(INSTALL_KIND_ENV).ok().and_then(|k| InstallKind::from_code(&k)) {
         return kind;

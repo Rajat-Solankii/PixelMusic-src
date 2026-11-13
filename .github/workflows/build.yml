@@ -1,4 +1,4 @@
-# Builds, tests and packages Materialfy on every supported platform.
+# Builds, tests and packages PixelMusic on every supported platform.
 # Runs on pushes to main, on pull requests, manually (Actions -> Build -> Run workflow) and is called
 # by release.yml (workflow_call) for tagged releases. Every platform job is required.
 name: Build
@@ -70,7 +70,7 @@ jobs:
     needs: meta
     # Own runner for pushes and tags; pull requests (possibly from forks) never reach it.
     # Set the repository variable USE_SELF_HOSTED=false to build in the cloud while that machine is off.
-    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SELF_HOSTED != 'false') && fromJSON('["self-hosted","Windows","materialfy"]') || 'windows-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' && vars.USE_SELF_HOSTED != 'false') && fromJSON('["self-hosted","Windows","pixelmusic"]') || 'windows-latest' }}
     timeout-minutes: 120
     env:
       VERSION: ${{ needs.meta.outputs.version }}
@@ -117,7 +117,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          $exe = "target\dist\materialfy\materialfy.exe"
+          $exe = "target\dist\pixelmusic\pixelmusic.exe"
           $shot = Join-Path $env:RUNNER_TEMP "shot.png"
           $p = Start-Process $exe -ArgumentList "--new-instance", "--offline", "--screenshot", $shot, "--delay", "3000" -PassThru
           if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "the app did not exit within 90 s" }
@@ -133,10 +133,10 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: materialfy-windows-x86_64
+          name: pixelmusic-windows-x86_64
           path: |
-            target/dist/Materialfy-*-Setup.exe
-            target/dist/Materialfy-*-portable.zip
+            target/dist/PixelMusic-*-Setup.exe
+            target/dist/PixelMusic-*-portable.zip
           if-no-files-found: error
 
   linux:
@@ -213,7 +213,7 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: cargo build
-        run: cargo build --locked --release -p materialfy
+        run: cargo build --locked --release -p pixelmusic
 
       - name: cargo test
         env:
@@ -245,7 +245,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: materialfy-linux-${{ matrix.arch }}
+          name: pixelmusic-linux-${{ matrix.arch }}
           path: |
             target/dist/*.AppImage
             target/dist/*.tar.gz
@@ -288,26 +288,26 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: cargo build (arm64)
-        run: cargo build --locked --release -p materialfy
+        run: cargo build --locked --release -p pixelmusic
 
       - name: cargo build (x86_64)
-        run: cargo build --locked --release -p materialfy --target x86_64-apple-darwin
+        run: cargo build --locked --release -p pixelmusic --target x86_64-apple-darwin
 
       - name: cargo test
         env:
           QT_QPA_PLATFORM: offscreen
         run: cargo test --locked --release --workspace
 
-      # x86_64 first, so the Materialfy.app left behind for the smoke test is the native arm64 one
+      # x86_64 first, so the PixelMusic.app left behind for the smoke test is the native arm64 one
       - name: Package dmg (x86_64)
         env:
-          MATERIALFY_ARCH: x86_64
-          MATERIALFY_EXE: ${{ github.workspace }}/target/x86_64-apple-darwin/release/materialfy
+          PIXELMUSIC_ARCH: x86_64
+          PIXELMUSIC_EXE: ${{ github.workspace }}/target/x86_64-apple-darwin/release/pixelmusic
         run: bash .github/scripts/package_macos.sh "$VERSION"
 
       - name: Package dmg (arm64)
         env:
-          MATERIALFY_ARCH: arm64
+          PIXELMUSIC_ARCH: arm64
         run: bash .github/scripts/package_macos.sh "$VERSION"
 
       - name: Smoke test (window screenshot)
@@ -315,7 +315,7 @@ jobs:
         continue-on-error: true
         run: |
           # macOS has no coreutils timeout; the perl alarm kills the app if it hangs
-          perl -e 'alarm 90; exec @ARGV' target/dist/Materialfy.app/Contents/MacOS/materialfy             --screenshot "$RUNNER_TEMP/shot.png" --offline --new-instance --delay 3000
+          perl -e 'alarm 90; exec @ARGV' target/dist/PixelMusic.app/Contents/MacOS/pixelmusic             --screenshot "$RUNNER_TEMP/shot.png" --offline --new-instance --delay 3000
           test -s "$RUNNER_TEMP/shot.png"
 
       - name: Upload screenshot
@@ -328,6 +328,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: materialfy-macos
+          name: pixelmusic-macos
           path: target/dist/*.dmg
           if-no-files-found: error

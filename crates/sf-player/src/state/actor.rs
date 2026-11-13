@@ -686,6 +686,8 @@ impl Actor {
     /// Handles what belongs to the lane; returns the command for `Core` otherwise.
     fn youtube_command(&mut self, command: Command) -> Option<Command> {
         let active = self.youtube.is_active();
+        // Spotify off (the app): the lane takes all transport and the queue even while it has nothing loaded
+        let lane = active || !self.core.spotify;
         match command {
             Command::PlayItems { items, row, context } if items.get(row).is_some_and(|item| is_lane_track(&item.uri)) => {
                 if self.youtube_takes_over() {
@@ -743,19 +745,19 @@ impl Actor {
             Command::AddToQueue(items) => {
                 let (youtube, spotify): (Vec<TrackItem>, Vec<TrackItem>) =
                     items.into_iter().partition(|item| is_lane_track(&item.uri));
-                let (ours, theirs) = if active { (youtube, spotify) } else { (spotify, youtube) };
+                let (ours, theirs) = if lane { (youtube, spotify) } else { (spotify, youtube) };
                 if !theirs.is_empty() {
                     self.mixed_queue_notice();
                 }
-                if active {
+                if lane {
                     self.youtube.add(ours);
                     None
                 } else {
                     (!ours.is_empty()).then_some(Command::AddToQueue(ours))
                 }
             }
-            Command::AddUriToQueue(uri) if active || is_lane_track(&uri) => {
-                if active && is_lane_track(&uri) {
+            Command::AddUriToQueue(uri) if lane || is_lane_track(&uri) => {
+                if lane && is_lane_track(&uri) {
                     let id = crate::engine::youtube::lane_track_id(&uri).unwrap_or_default().to_owned();
                     self.youtube.add(vec![TrackItem { track_id: id, uri, available: true, ..Default::default() }]);
                 } else {
@@ -763,8 +765,8 @@ impl Actor {
                 }
                 None
             }
-            Command::InsertManual { item, at } if active || is_lane_track(&item.uri) => {
-                if active && is_lane_track(&item.uri) {
+            Command::InsertManual { item, at } if lane || is_lane_track(&item.uri) => {
+                if lane && is_lane_track(&item.uri) {
                     self.youtube.insert_manual(*item, at);
                 } else {
                     self.mixed_queue_notice();
@@ -783,7 +785,11 @@ impl Actor {
                 }
                 Some(Command::SetLevelsWanted(value))
             }
-            command if !active => Some(command),
+            command if !lane => Some(command),
+            Command::TogglePlay | Command::Play if self.youtube.track().is_none() => {
+                self.pending.push(PlayerEvent::Notice(mf_i18n::t("Nothing is playing. Choose something to play first")));
+                None
+            }
             Command::PlayIndex(index) => {
                 self.youtube.play_index(index);
                 None

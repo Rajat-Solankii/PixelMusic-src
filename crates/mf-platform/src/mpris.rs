@@ -1,11 +1,11 @@
-//! MPRIS2 (org.mpris.MediaPlayer2.materialfy, /org/mpris/MediaPlayer2).
+//! MPRIS2 (org.mpris.MediaPlayer2.pixelmusic, /org/mpris/MediaPlayer2).
 //! Только Linux (zbus, сессионная шина); на других ОС `MprisServer::start` возвращает Err(Unsupported).
 //!
 //! Сервер не знает о плеере: читает [`MprisState`] из watch-канала и шлёт [`MprisCommand`] в mpsc.
 //! Связку с плеером делает sf-services (`glue::start_media_controls`).
-//! Свойства/методы/сигналы — как в mpris.py из yamusic-md3: Identity "Materialfy", DesktopEntry "materialfy",
+//! Свойства/методы/сигналы — как в mpris.py из yamusic-md3: Identity "PixelMusic", DesktopEntry "pixelmusic",
 //! CanQuit/CanRaise true, HasTrackList false; Player: PlaybackStatus, LoopStatus (None/Playlist/Track),
-//! Shuffle, Volume, Rate=1 (запись игнорируется), Metadata (mpris:trackid /org/materialfy/track/<id с _ вместо не-алфавитно-цифровых>,
+//! Shuffle, Volume, Rate=1 (запись игнорируется), Metadata (mpris:trackid /org/pixelmusic/track/<id с _ вместо не-алфавитно-цифровых>,
 //! mpris:length, xesam:title, xesam:artist [split ","], xesam:album, xesam:url https://open.spotify.com/track/<id> (выпуск — /episode/),
 //! mpris:artUrl), Position, Min/MaxRate 1, CanGoNext/CanGoPrevious/CanPlay/CanPause/CanSeek = has_track, CanControl true;
 //! PropertiesChanged — только по изменившимся полям (правила _sync в mpris.py); Seeked — при скачке позиции > 2 с.
@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::PlatformError;
 
-pub const BUS_NAME: &str = "org.mpris.MediaPlayer2.materialfy";
+pub const BUS_NAME: &str = "org.mpris.MediaPlayer2.pixelmusic";
 pub const OBJECT_PATH: &str = "/org/mpris/MediaPlayer2";
 pub const NO_TRACK: &str = "/org/mpris/MediaPlayer2/TrackList/NoTrack";
 
@@ -48,7 +48,7 @@ impl MprisState {
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect();
-        if id.is_empty() { NO_TRACK.to_owned() } else { format!("/org/materialfy/track/{id}") }
+        if id.is_empty() { NO_TRACK.to_owned() } else { format!("/org/pixelmusic/track/{id}") }
     }
 
     /// xesam:url — ссылка open.spotify.com; пусто, если трека нет.
@@ -289,7 +289,7 @@ mod imp {
 
         #[zbus(property)]
         fn desktop_entry(&self) -> String {
-            "materialfy".into()
+            "pixelmusic".into()
         }
 
         #[zbus(property)]
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn derived_values() {
         let s = track();
-        assert_eq!(s.track_path(), "/org/materialfy/track/123_45");
+        assert_eq!(s.track_path(), "/org/pixelmusic/track/123_45");
         assert_eq!(MprisState::default().track_path(), NO_TRACK);
         assert_eq!(s.artists(), ["A", "B"]);
         assert_eq!(s.playback_status(), "Playing");

@@ -93,7 +93,41 @@ pub(crate) fn home_shelf(index: usize, shelf: &Shelf) -> HomeShelf {
     } else {
         ("tiles", shelf.items.iter().map(|item| to_value(tile(item))).collect())
     };
-    HomeShelf { key: format!("youtube:{index}:{}", shelf.title), title: shelf.title.clone(), kind: kind.to_owned(), items }
+    let more = shelf.more.as_ref();
+    HomeShelf {
+        key: format!("youtube:{index}:{}", shelf.title),
+        title: shelf.title.clone(),
+        kind: kind.to_owned(),
+        items,
+        strapline: shelf.strapline.clone(),
+        thumbnail: shelf.thumbnail.clone(),
+        browse_id: more.map(|more| more.browse_id.clone()).unwrap_or_default(),
+        browse_params: more.and_then(|more| more.params.clone()).unwrap_or_default(),
+    }
+}
+
+/// Mood and genre buttons grouped by their section, in the page's order.
+fn mood_shelves(moods: &[Mood]) -> Vec<HomeShelf> {
+    let mut out: Vec<HomeShelf> = Vec::new();
+    for mood in moods {
+        let item = serde_json::json!({
+            "kind": "browse",
+            "title": mood.title,
+            "browseId": mood.browse.browse_id,
+            "browseParams": mood.browse.params.clone().unwrap_or_default(),
+        });
+        match out.iter_mut().find(|shelf| shelf.title == mood.group) {
+            Some(shelf) => shelf.items.push(item),
+            None => out.push(HomeShelf {
+                key: format!("youtube:moods:{}", mood.group),
+                title: mood.group.clone(),
+                kind: "moods".to_owned(),
+                items: vec![item],
+                ..Default::default()
+            }),
+        }
+    }
+    out
 }
 
 fn home_shelves(offset: usize, page: &ShelvesPage) -> Vec<HomeShelf> {
@@ -115,17 +149,19 @@ impl HomeService {
                 let Some(service) = me.upgrade() else { return };
                 match event {
                     Ok(YouTubeAuthEvent::SignedIn(_) | YouTubeAuthEvent::SignedOut)
-                    | Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // only a feed someone has looked at is reloaded
-                        let shown = !service.yt_home.borrow().shelves.is_empty() || service.yt_home.borrow().loading;
-                        if shown {
-                            service.refresh_youtube(true);
-                        }
-                    }
+                    | Err(broadcast::error::RecvError::Lagged(_)) => service.reload_youtube_if_shown(),
                     Err(broadcast::error::RecvError::Closed) => return,
                 }
             }
         });
+    }
+
+    /// Read the feed again (another identity, or personalised ↔ anonymous) — only a feed someone has looked at.
+    pub fn reload_youtube_if_shown(&self) {
+        let shown = !self.yt_home.borrow().shelves.is_empty() || self.yt_home.borrow().loading;
+        if shown {
+            self.refresh_youtube(true);
+        }
     }
 
     pub fn youtube_snapshot(&self) -> YouTubeHomeSnapshot {
@@ -225,7 +261,15 @@ impl HomeService {
     }
 
     /// A "see all" / mood / genre page as home shelves.
+    /// Charts and Moods & genres (the Search page's Browse tiles) go through their own readers: charts retry with
+    /// the fallback params, and the mood/genre buttons become "moods" shelves (one per group) whose items open
+    /// their own browse page ({kind: "browse", title, browseId, browseParams}).
     pub async fn youtube_browse(&self, target: &BrowseRef) -> Result<Vec<HomeShelf>, ServiceError> {
+        match target.browse_id.as_str() {
+            "FEmusic_charts" if target.params.is_none() => return self.youtube_charts(None).await,
+            "FEmusic_moods_and_genres" => return Ok(mood_shelves(&self.youtube_moods().await?)),
+            _ => {}
+        }
         let page = self.auth.youtube().browse_shelves(target).await.map_err(yt_error)?;
         Ok(home_shelves(0, &page))
     }
@@ -238,7 +282,7 @@ mod tests {
     use super::*;
 
     fn shelf(items: Vec<YtItem>) -> Shelf {
-        Shelf { title: "Quick picks".into(), items, more: None, continuation: None }
+        Shelf { title: "Quick picks".into(), items, more: None, continuation: None, ..Default::default() }
     }
 
     #[test]
@@ -253,5 +297,32 @@ mod tests {
         assert_eq!(mixed.kind, "tiles");
         assert_eq!(mixed.items[0]["kind"], "track");
         assert_eq!(mixed.items[1]["uri"], "youtube:artist:UC");
+    }
+
+    #[test]
+    fn a_similar_to_shelf_keeps_its_strapline_picture_and_full_page() {
+        let album = YtItem::Album(md3_model::AlbumItem { uri: "youtube:album:MPREb".into(), ..Default::default() });
+        let similar = Shelf {
+            title: "Daft Punk".into(),
+            items: vec![album],
+            more: Some(BrowseRef { browse_id: "UCdaft".into(), params: Some("ggMIegYIARoCAQI=".into()) }),
+            strapline: "Similar to".into(),
+            thumbnail: "https://lh3.googleusercontent.com/a=w240-h240-l90-rj".into(),
+            ..Default::default()
+        };
+        let shelf = home_shelf(3, &similar);
+        assert_eq!((shelf.strapline.as_str(), shelf.title.as_str()), ("Similar to", "Daft Punk"));
+        assert_eq!(shelf.browse_id, "UCdaft");
+        assert_eq!(shelf.browse_params, "ggMIegYIARoCAQI=");
+        let json = serde_json::to_value(&shelf).unwrap();
+        assert_eq!(json["browseId"], "UCdaft");
+        assert_eq!(json["thumbnail"], "https://lh3.googleusercontent.com/a=w240-h240-l90-rj");
+        // a shelf with no full page leaves the keys out
+        let plain = serde_json::to_value(home_shelf(0, &shelf_of_one())).unwrap();
+        assert!(plain.get("browseId").is_none() && plain.get("strapline").is_none());
+    }
+
+    fn shelf_of_one() -> Shelf {
+        shelf(vec![YtItem::Track(TrackItem { uri: "youtube:track:v".into(), ..Default::default() })])
     }
 }

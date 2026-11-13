@@ -19,7 +19,7 @@ use crate::lock;
 const URL: &str = "https://api-partner.spotify.com/pathfinder/v1/query";
 const WEB_PLAYER: &str = "https://open.spotify.com/";
 /// pathfinder отвечает 403 «Client/request not allowed» на клиент, не похожий на Spotify (User-Agent
-/// «Materialfy/…», curl), — запросы идут от имени браузера, как у веб-плеера, чьи хэши и используются.
+/// «PixelMusic/…», curl), — запросы идут от имени браузера, как у веб-плеера, чьи хэши и используются.
 pub const USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const TIMEOUT: Duration = Duration::from_secs(10);

@@ -7,8 +7,8 @@
   <img src="docs/brand/wordmark.svg" width="420" alt="Pixel Music">
 </picture>
 
-[![Release build](https://github.com/fatyzzz/materialfy/actions/workflows/release.yml/badge.svg)](https://github.com/fatyzzz/materialfy/actions/workflows/release.yml)
-[![Release](https://img.shields.io/github/v/release/fatyzzz/materialfy?label=release)](https://github.com/fatyzzz/materialfy/releases/latest)
+[![Release build](https://github.com/Rajat-Solankii/PixelMusic/actions/workflows/release.yml/badge.svg)](https://github.com/Rajat-Solankii/PixelMusic/actions/workflows/release.yml)
+[![Release](https://img.shields.io/github/v/release/Rajat-Solankii/PixelMusic?label=release)](https://github.com/Rajat-Solankii/PixelMusic/releases/latest)
 
 Cliente desktop do Spotify feito com Rust e Qt Quick, com interface Material 3 Expressive.<br>
 Windows e Linux; o macOS é experimental.
@@ -39,16 +39,16 @@ O projeto é montado a partir de dois projetos com licença MIT: a parte do Spot
 
 ## Download
 
-Os builds prontos de todas as versões estão na [página de Releases](https://github.com/fatyzzz/materialfy/releases).
-Pegue o arquivo para o seu sistema na [última release](https://github.com/fatyzzz/materialfy/releases/latest):
+Os builds prontos de todas as versões estão na [página de Releases](https://github.com/Rajat-Solankii/PixelMusic/releases).
+Pegue o arquivo para o seu sistema na [última release](https://github.com/Rajat-Solankii/PixelMusic/releases/latest):
 
 | Sistema | Arquivo |
 | --- | --- |
-| Windows 10/11, x64 | `Materialfy-<version>-Setup.exe` (instalador, não precisa de direitos de administrador) ou `Materialfy-<version>-windows-x64-portable.zip` |
-| Linux x86_64 | `Materialfy-<version>-x86_64.AppImage` ou `materialfy-<version>-linux-x86_64.tar.gz` |
-| Linux aarch64 | `Materialfy-<version>-aarch64.AppImage` ou `materialfy-<version>-linux-aarch64.tar.gz` |
-| macOS 13+, Apple silicon | `Materialfy-<version>-macos-arm64.dmg` (experimental) |
-| macOS 13+, Intel | `Materialfy-<version>-macos-x86_64.dmg` (experimental) |
+| Windows 10/11, x64 | `PixelMusic-<version>-Setup.exe` (instalador, não precisa de direitos de administrador) ou `PixelMusic-<version>-windows-x64-portable.zip` |
+| Linux x86_64 | `PixelMusic-<version>-x86_64.AppImage` ou `pixelmusic-<version>-linux-x86_64.tar.gz` |
+| Linux aarch64 | `PixelMusic-<version>-aarch64.AppImage` ou `pixelmusic-<version>-linux-aarch64.tar.gz` |
+| macOS 13+, Apple silicon | `PixelMusic-<version>-macos-arm64.dmg` (experimental) |
+| macOS 13+, Intel | `PixelMusic-<version>-macos-x86_64.dmg` (experimental) |
 
 O `SHA256SUMS.txt` da mesma release lista os checksums. A partir da 0.2.1, o app verifica sozinho se há novas
 versões em Releases (Configurações → Atualizações). O instalador, a pasta portable e o AppImage baixam e
@@ -61,27 +61,27 @@ Feitas com uma conta Premium e música tocando; as cores seguem a capa da faixa 
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/materialfy/home-dark.png" alt="Início, tema escuro"></td>
-    <td width="50%"><img src="docs/screenshots/materialfy/home-light.png" alt="Início, tema claro"></td>
+    <td width="50%"><img src="docs/screenshots/pixelmusic/home-dark.png" alt="Início, tema escuro"></td>
+    <td width="50%"><img src="docs/screenshots/pixelmusic/home-light.png" alt="Início, tema claro"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/materialfy/now-playing.png" alt="Tocando agora com letras sincronizadas"></td>
-    <td><img src="docs/screenshots/materialfy/artist.png" alt="Página do artista"></td>
+    <td><img src="docs/screenshots/pixelmusic/now-playing.png" alt="Tocando agora com letras sincronizadas"></td>
+    <td><img src="docs/screenshots/pixelmusic/artist.png" alt="Página do artista"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/materialfy/releases.png" alt="Novos lançamentos"></td>
-    <td><img src="docs/screenshots/materialfy/settings.png" alt="Configurações"></td>
+    <td><img src="docs/screenshots/pixelmusic/releases.png" alt="Novos lançamentos"></td>
+    <td><img src="docs/screenshots/pixelmusic/settings.png" alt="Configurações"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/materialfy/account.png" alt="Conta do Spotify"></td>
-    <td><img src="docs/screenshots/materialfy/playback.png" alt="Reprodução neste computador"></td>
+    <td><img src="docs/screenshots/pixelmusic/account.png" alt="Conta do Spotify"></td>
+    <td><img src="docs/screenshots/pixelmusic/playback.png" alt="Reprodução neste computador"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/materialfy/compact-900x640.png" alt="Janela de 900×640 com barra lateral estreita"></td>
-    <td><img src="docs/screenshots/materialfy/compact-640x720.png" alt="Layout compacto, 640×720"></td>
+    <td><img src="docs/screenshots/pixelmusic/compact-900x640.png" alt="Janela de 900×640 com barra lateral estreita"></td>
+    <td><img src="docs/screenshots/pixelmusic/compact-640x720.png" alt="Layout compacto, 640×720"></td>
   </tr>
   <tr>
-    <td valign="top"><img src="docs/screenshots/materialfy/mini-300x120.png" alt="Mini player, 300×120"></td>
+    <td valign="top"><img src="docs/screenshots/pixelmusic/mini-300x120.png" alt="Mini player, 300×120"></td>
     <td valign="top"><sub>O mini player: a janela muda para ele quando fica mais estreita que 480 ou mais baixa que
       400 pixels.</sub></td>
   </tr>
@@ -169,26 +169,26 @@ Você precisa de Rust, Qt 6.12 e Build Tools for Visual Studio (detalhes em [Com
 gera o app e o instalador:
 
 ```powershell
-git clone https://github.com/fatyzzz/materialfy
-cd materialfy
+git clone https://github.com/Rajat-Solankii/PixelMusic-src
+cd pixelmusic
 .\build_windows.ps1 -QtDir C:\Qt\6.12.0\msvc2022_64
 ```
 
-Em `target\dist\` ficarão `Materialfy-<version>-Setup.exe` e uma pasta portable `materialfy\`. O instalador
-não precisa de direitos de administrador e instala em `%LocalAppData%\Programs\Materialfy`.
+Em `target\dist\` ficarão `PixelMusic-<version>-Setup.exe` e uma pasta portable `pixelmusic\`. O instalador
+não precisa de direitos de administrador e instala em `%LocalAppData%\Programs\PixelMusic`.
 
 ### Linux
 
 ```bash
-git clone https://github.com/fatyzzz/materialfy
-cd materialfy
+git clone https://github.com/Rajat-Solankii/PixelMusic-src
+cd pixelmusic
 ./install.sh
 ```
 
 O script funciona com apt, pacman, dnf e zypper. Primeiro ele mostra quais pacotes do sistema vai instalar com
 sudo e espera confirmação. O Rust é instalado com rustup em `~/.cargo`. Se o sistema não tiver o Qt 6.12 com
 módulos QML, o script baixa um ao lado do código-fonte, cerca de 250 MB. O primeiro build leva de 5 a 15
-minutos; depois disso você tem o comando `~/.local/bin/materialfy` e uma entrada no menu de aplicativos.
+minutos; depois disso você tem o comando `~/.local/bin/pixelmusic` e uma entrada no menu de aplicativos.
 Rodar o script de novo atualiza o app.
 
 ```bash
@@ -266,12 +266,12 @@ página do artista.
 
 | O quê | Windows | Linux | macOS |
 |---|---|---|---|
-| Configurações | registro `HKCU\Software\materialfy\Materialfy` | `~/.config/materialfy/Materialfy.conf` | `~/Library/Preferences/materialfy/Materialfy.conf` |
-| Dados (sessão do player, histórico) | `%APPDATA%\materialfy\Materialfy` | `~/.local/share/materialfy/Materialfy` | `~/Library/Application Support/materialfy/Materialfy` |
-| Cache (áudio, capas, letras) | `%LOCALAPPDATA%\materialfy\Materialfy\cache` | `~/.cache/materialfy/Materialfy` | `~/Library/Caches/materialfy/Materialfy` |
+| Configurações | registro `HKCU\Software\pixelmusic\PixelMusic` | `~/.config/pixelmusic/PixelMusic.conf` | `~/Library/Preferences/pixelmusic/PixelMusic.conf` |
+| Dados (sessão do player, histórico) | `%APPDATA%\pixelmusic\PixelMusic` | `~/.local/share/pixelmusic/PixelMusic` | `~/Library/Application Support/pixelmusic/PixelMusic` |
+| Cache (áudio, capas, letras) | `%LOCALAPPDATA%\pixelmusic\PixelMusic\cache` | `~/.cache/pixelmusic/PixelMusic` | `~/Library/Caches/pixelmusic/PixelMusic` |
 | Tokens e senha do proxy | Credential Manager | Secret Service (keyring) | Keychain |
 
-Os segredos ficam guardados apenas no repositório do sistema, com o nome `materialfy`. Sair da conta em
+Os segredos ficam guardados apenas no repositório do sistema, com o nome `pixelmusic`. Sair da conta em
 Configurações remove todas as permissões do Spotify desse repositório. O cache permanece; ele pode ser limpo
 em Configurações → Armazenamento.
 
@@ -314,7 +314,7 @@ Requisitos comuns:
 - Python 3 para o `install_qt.py`.
 
 O cxx-qt encontra o Qt pela variável `QMAKE` (o caminho do `qmake6`). O app compilado procura o QML nesta
-ordem: `$MATERIALFY_QML_DIR`, depois `qml/` ao lado do executável, depois `src/materialfy/qml` no repositório,
+ordem: `$PIXELMUSIC_QML_DIR`, depois `qml/` ao lado do executável, depois `src/pixelmusic/qml` no repositório,
 de modo que `cargo run` funciona a partir da árvore de código-fonte.
 
 Compile com `--locked`. O `Cargo.lock` fixa o `vergen 9.0.6`; a versão 9.1 quebra o build script do `librespot-core`.
@@ -331,16 +331,16 @@ python .github\scripts\install_qt.py --out C:\Qt\6.12.0\msvc2022_64   # se o Qt 
 .\build_windows.ps1 -QtDir C:\Qt\6.12.0\msvc2022_64
 ```
 
-O [`build_windows.ps1`](build_windows.ps1) executa `cargo build --locked --release -p materialfy`, monta o exe,
-`qml\`, `assets\`, as bibliotecas do Qt (via windeployqt) e o runtime do MSVC em `target\dist\materialfy\`, e
+O [`build_windows.ps1`](build_windows.ps1) executa `cargo build --locked --release -p pixelmusic`, monta o exe,
+`qml\`, `assets\`, as bibliotecas do Qt (via windeployqt) e o runtime do MSVC em `target\dist\pixelmusic\`, e
 depois chama o Inno Setup se o encontrar. Sem `-QtDir`, o script procura o Qt em `$env:QTDIR`, ao lado de
 `$env:QMAKE`, em `C:\Qt\6.12.0\msvc2022_64` e em `~\Qt\6.12.0\msvc2022_64`.
 
 | Flag | O que faz |
 |---|---|
 | `-SkipInstaller` | pula a etapa do Inno Setup |
-| `-Portable` | também gera `Materialfy-<version>-windows-x64-portable.zip` |
-| `-SkipBuild` | usa um `target\<profile>\materialfy.exe` existente |
+| `-Portable` | também gera `PixelMusic-<version>-windows-x64-portable.zip` |
+| `-SkipBuild` | usa um `target\<profile>\pixelmusic.exe` existente |
 | `-CargoProfile debug` | build de debug |
 | `-Version 1.2.3` | versão do instalador (por padrão vem do `Cargo.toml`) |
 | `-OutDir DIR` | diretório de saída (`target\dist` por padrão) |
@@ -356,7 +356,7 @@ ou manualmente:
 ```powershell
 $env:QMAKE = "C:\Qt\6.12.0\msvc2022_64\bin\qmake6.exe"
 $env:PATH = "C:\Qt\6.12.0\msvc2022_64\bin;$env:PATH"
-cargo run --locked -p materialfy
+cargo run --locked -p pixelmusic
 ```
 
 ### Linux
@@ -370,7 +370,7 @@ sudo apt install build-essential pkg-config lld python3 7zip libasound2-dev libp
 python3 .github/scripts/install_qt.py --out ~/Qt/6.12.0/gcc_64
 export QMAKE=~/Qt/6.12.0/gcc_64/bin/qmake6 LD_LIBRARY_PATH=~/Qt/6.12.0/gcc_64/lib
 
-cargo run --locked --release -p materialfy
+cargo run --locked --release -p pixelmusic
 ```
 
 Em versões mais antigas do Ubuntu, o pacote `7zip` se chama `p7zip-full`. No Arch:
@@ -390,8 +390,8 @@ bash .github/scripts/package_linux.sh 0.1.0
 brew install sevenzip
 python3 .github/scripts/install_qt.py --host mac --out ~/Qt/6.12.0/macos
 export QMAKE=~/Qt/6.12.0/macos/bin/qmake6
-cargo build --locked --release -p materialfy
-bash .github/scripts/package_macos.sh 0.1.0   # target/dist/Materialfy.app e .dmg
+cargo build --locked --release -p pixelmusic
+bash .github/scripts/package_macos.sh 0.1.0   # target/dist/PixelMusic.app e .dmg
 ```
 
 ### Flags de linha de comando e variáveis
@@ -407,9 +407,9 @@ bash .github/scripts/package_macos.sh 0.1.0   # target/dist/Materialfy.app e .dm
 | `--set key=value` | propriedade inicial da janela, por exemplo `--set startPage=settings` |
 | `--gallery` | galeria de componentes do Material 3 |
 
-Variáveis de ambiente: `MATERIALFY_QML_DIR` define um diretório QML personalizado, `MATERIALFY_SESSION_FILE`
+Variáveis de ambiente: `PIXELMUSIC_QML_DIR` define um diretório QML personalizado, `PIXELMUSIC_SESSION_FILE`
 define o arquivo de sessão do player, `RUST_LOG` controla o logging (por exemplo
-`RUST_LOG=materialfy=debug,sf_player=debug`).
+`RUST_LOG=pixelmusic=debug,sf_player=debug`).
 
 ### Testes e CI
 
@@ -423,7 +423,7 @@ macOS são compilados em regime de melhor esforço; a falha deles não reprova a
 
 ## Como funciona
 
-A interface é escrita em QML; os componentes Material 3 Expressive ficam em `src/materialfy/qml/Md3`. O núcleo
+A interface é escrita em QML; os componentes Material 3 Expressive ficam em `src/pixelmusic/qml/Md3`. O núcleo
 em Rust é conectado ao QML por meio do [cxx-qt](https://github.com/KDAB/cxx-qt). O código assíncrono roda em um
 único runtime tokio, e a thread de UI do Qt recebe snapshots de estado já prontos.
 
@@ -438,7 +438,7 @@ em Rust é conectado ao QML por meio do [cxx-qt](https://github.com/KDAB/cxx-qt)
 | `mf-lyrics` | letras de várias fontes, parsing de LRC, cache |
 | `mf-platform` | diretórios, configurações, MPRIS, instância única |
 | `mf-i18n` | tradução da interface: strings em inglês no código, dicionários em russo e português de `i18n/ru/*.json` e `i18n/pt/*.json` |
-| `materialfy` | o executável: pontes QML, flags de linha de comando, cache de imagens, moldura de janela no Windows |
+| `pixelmusic` | o executável: pontes QML, flags de linha de comando, cache de imagens, moldura de janela no Windows |
 
 ## Origem e licença
 
@@ -448,7 +448,7 @@ O Pixel Music é baseado em dois projetos com licença MIT:
   reprodução pelo librespot, Spotify Connect, fila, biblioteca e rádio (`crates/sf-*`).
 - [yamusic-md3](https://github.com/yaskorinov/yamusic-md3) (yaskorinov e colaboradores): a interface QML e
   a biblioteca de componentes Material 3 Expressive, o shell cxx-qt, tema a partir da capa, letras, serviços de
-  plataforma, scripts de build (`src/materialfy/qml`, `crates/materialfy`, `crates/mf-*`).
+  plataforma, scripts de build (`src/pixelmusic/qml`, `crates/pixelmusic`, `crates/mf-*`).
 
 Componentes de terceiros: [librespot](https://github.com/librespot-org/librespot) (MIT, nosso próprio fork
 [fatyzzz/librespot](https://github.com/fatyzzz/librespot) com os patches do crmne),

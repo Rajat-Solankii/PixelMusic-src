@@ -70,7 +70,9 @@ impl PlayerHandle {
             let rt = rt.clone();
             Arc::new(move |config, volume, load| host.restart(&rt, Some(config), volume, load))
         };
-        let core = Core::new(config.volume, config.session_file.is_some());
+        let mut core = Core::new(config.volume, config.session_file.is_some());
+        // Spotify was cut from the app: transport, volume and the queue belong to the YouTube lane
+        core.spotify = false;
         let session_file = config.session_file.clone();
         {
             let snapshot = snapshot.clone();

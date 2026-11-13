@@ -10,7 +10,7 @@ archives are relocatable, so no qt.conf or path patching is needed.
 
 Only the qmake path goes to stdout (the log goes to stderr). --github appends QTDIR/QMAKE to
 $GITHUB_ENV and bin/ to $GITHUB_PATH. If --out already holds the same package set (the
-.materialfy-qt marker), nothing is downloaded - this is what makes the CI cache work.
+.pixelmusic-qt marker), nothing is downloaded - this is what makes the CI cache work.
 """
 from __future__ import annotations
 
@@ -28,8 +28,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-BASE = "https://download.qt.io/online/qtsdkrepository"
-MARKER = ".materialfy-qt"
+# QT_MIRROR picks a faster mirror's qtsdkrepository root, e.g. https://mirrors.dotsrc.org/qtproject/online/qtsdkrepository
+BASE = os.environ.get("QT_MIRROR", "https://download.qt.io/online/qtsdkrepository").rstrip("/")
+MARKER = ".pixelmusic-qt"
 
 # host -> (OS directory in the repository, default arch, package name suffix)
 HOSTS = {
@@ -47,7 +48,7 @@ def log(msg: str) -> None:
 
 def fetch_with_curl(url: str, dest: Path | None) -> bytes | None:
     """Download through the system curl, which verifies with the OS certificate store; None on failure."""
-    cmd = ["curl", "-fsSL", "--retry", "3", "-A", "materialfy-ci", url]
+    cmd = ["curl", "-fsSL", "--retry", "3", "-A", "pixelmusic-ci", url]
     if dest is not None:
         cmd += ["-o", str(dest)]
     result = subprocess.run(cmd, capture_output=True)
@@ -61,7 +62,7 @@ def fetch(url: str, dest: Path | None = None, attempts: int = 5) -> bytes:
     err: Exception | None = None
     for i in range(1, attempts + 1):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "materialfy-ci"})
+            req = urllib.request.Request(url, headers={"User-Agent": "pixelmusic-ci"})
             with urllib.request.urlopen(req, timeout=120) as resp:
                 if dest is None:
                     return resp.read()

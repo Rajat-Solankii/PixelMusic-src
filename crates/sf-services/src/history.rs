@@ -3,6 +3,9 @@
 //! недавнее Spotify, слияние (data::journal::merged). Перенос spotifast/src/history.rs.
 //! Недавнее Spotify — через сессию librespot (spclient recently-played + подписи GraphQL, data::home_feed);
 //! /me/player/recently-played Web API — только без сессии или при её сбое, с таймаутом.
+//! YouTube Music (setting `youtubeHistorySync`, signed in): a YouTube song that counts as played is reported to the
+//! account's history (`YouTubeService::report_play`), and the account's history (`FEmusic_history`, read on sign-in
+//! and on `refresh`) joins the recent plays — songs this PC already has in its journal are not listed twice.
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
@@ -13,7 +16,7 @@ use sf_player::{PlayerEvent, PlayerHandle};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 
-use crate::auth::{AuthEvent, AuthService};
+use crate::auth::{AuthEvent, AuthService, YouTubeAuthEvent};
 use crate::data::journal::{self, Journal};
 use crate::data::{home_feed, known, route};
 use crate::extra::feed;
@@ -45,6 +48,10 @@ pub enum HistoryEvent {
 struct State {
     journal: Journal,
     remote: Vec<PlayRecord>,
+    /// the YouTube Music account's history, newest first, with estimated times (`youtube_records`)
+    youtube: Vec<PlayRecord>,
+    /// bumped by every YouTube history read and sign-out: a late answer for an older one is dropped
+    youtube_generation: u64,
     /// поздний ответ Web API после выхода отбрасывается
     generation: u64,
     /// чтение в полёте: повторные refresh (вход, главная) его не дублируют
@@ -116,6 +123,31 @@ impl HistoryService {
                 }
             }
         });
+        let mut youtube = self.auth.subscribe_youtube();
+        let me = self.me.clone();
+        self.rt.spawn(async move {
+            loop {
+                match youtube.recv().await {
+                    Ok(YouTubeAuthEvent::SignedIn(_)) => {
+                        let Some(service) = me.upgrade() else { return };
+                        service.refresh_youtube();
+                    }
+                    Ok(YouTubeAuthEvent::SignedOut) => {
+                        let Some(service) = me.upgrade() else { return };
+                        let had = {
+                            let mut state = lock(&service.state);
+                            state.youtube_generation += 1;
+                            !std::mem::take(&mut state.youtube).is_empty()
+                        };
+                        if had {
+                            let _ = service.events.send(HistoryEvent::Changed);
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
         let mut auth = self.auth.subscribe();
         let me = self.me.clone();
         self.rt.spawn(async move {
@@ -159,6 +191,9 @@ impl HistoryService {
         let started = jiff::Timestamp::now()
             .checked_sub(jiff::SignedDuration::from_secs_f64(played.max(0.0)))
             .unwrap_or_else(|_| jiff::Timestamp::now());
+        if let Some(video_id) = track.uri.strip_prefix("youtube:track:") {
+            self.report_to_youtube(video_id.to_owned(), &context);
+        }
         let record = PlayRecord { track, context, played_at: started.to_string() };
         lock(&self.state).journal.record(record);
         self.save_later();
@@ -177,7 +212,16 @@ impl HistoryService {
     /// Последние прослушивания (локальные + Web API), новые первыми.
     pub fn recent(&self, limit: usize) -> Vec<PlayRecord> {
         let state = lock(&self.state);
-        let mut plays = journal::merged(state.journal.plays(), &state.remote);
+        let mut plays = if state.youtube.is_empty() {
+            journal::merged(state.journal.plays(), &state.remote)
+        } else {
+            // a song this PC played (and reported) is in the journal with its real time
+            let local: HashSet<&str> = state.journal.plays().iter().map(|play| play.track.uri.as_str()).collect();
+            let mut remote = state.remote.clone();
+            remote.extend(state.youtube.iter().filter(|play| !local.contains(play.track.uri.as_str())).cloned());
+            remote.sort_by(|a, b| b.played_at.cmp(&a.played_at));
+            journal::merged(state.journal.plays(), &remote)
+        };
         plays.truncate(limit);
         plays
     }
@@ -225,7 +269,9 @@ impl HistoryService {
     }
 
     /// Недавнее Spotify (до 50): через сессию, без неё — Web API фоном. Идущее чтение не дублируется.
+    /// The YouTube Music history is read again too (signed in, sync on).
     pub fn refresh(&self) {
+        self.refresh_youtube();
         let generation = {
             let mut state = lock(&self.state);
             if state.loading {
@@ -381,7 +427,106 @@ async fn session_recent(http: &sf_api::Http, session: &sf_player::Session) -> an
     Ok(feed::recent_records(&recent, &cards))
 }
 
+/// Each history shelf is a day group ("Today", "Yesterday", "This week", "Last week", a month…) with the newest song
+/// first; YouTube gives no times. A song gets `now` minus the group's day offset minus one minute per place in the
+/// group, so the list keeps YouTube's order and sorts sensibly against this PC's plays.
+pub fn youtube_records(page: &crate::youtube::ShelvesPage, now: jiff::Timestamp) -> Vec<PlayRecord> {
+    let mut out = Vec::new();
+    let mut day: i64 = -1;
+    for shelf in &page.shelves {
+        day = match shelf.title.trim().to_lowercase().as_str() {
+            "today" => 0,
+            "yesterday" => 1,
+            "this week" => 2,
+            "last week" => 7,
+            _ if day < 0 => 0,
+            _ => day + 7,
+        }
+        .max(day);
+        for (place, item) in page_tracks(shelf).enumerate() {
+            let ago = jiff::SignedDuration::from_secs(day * 86_400 + (place as i64 + 1) * 60);
+            let at = now.checked_sub(ago).unwrap_or(now);
+            out.push(PlayRecord {
+                track: item.clone(),
+                context: PlayContext::new(contexts::TRACKS),
+                played_at: at.to_string(),
+            });
+        }
+    }
+    out
+}
+
+fn page_tracks(shelf: &crate::youtube::Shelf) -> impl Iterator<Item = &TrackItem> {
+    shelf.items.iter().filter_map(|item| match item {
+        crate::youtube::YtItem::Track(track) if !track.uri.is_empty() => Some(track),
+        _ => None,
+    })
+}
+
 impl HistoryService {
+    fn youtube_sync(&self) -> bool {
+        self.auth.settings().get_bool(mf_platform::settings::SettingKey::YouTubeHistorySync)
+    }
+
+    /// Report a YouTube song played here to the account's history (sync on, signed in), in the background.
+    fn report_to_youtube(&self, video_id: String, context: &PlayContext) {
+        let youtube = self.auth.youtube();
+        if !youtube.signed_in() || !self.youtube_sync() {
+            return;
+        }
+        let playlist = context
+            .context_uri
+            .as_deref()
+            .and_then(|uri| uri.strip_prefix("youtube:playlist:"))
+            .map(str::to_owned);
+        self.rt.spawn(async move {
+            if let Err(error) = youtube.report_play(&video_id, playlist.as_deref()).await {
+                tracing::debug!("YouTube Music history: {video_id} was not reported: {error}");
+            }
+        });
+    }
+
+    /// Read the YouTube Music account's history into the recent plays (sync on, signed in).
+    pub fn refresh_youtube(&self) {
+        let youtube = self.auth.youtube();
+        if !youtube.signed_in() || !self.youtube_sync() {
+            return;
+        }
+        let generation = {
+            let mut state = lock(&self.state);
+            state.youtube_generation += 1;
+            state.youtube_generation
+        };
+        let me = self.me.clone();
+        self.rt.spawn(async move {
+            let page = match tokio::time::timeout(READ_TIMEOUT, youtube.history()).await {
+                Ok(Ok(page)) => page,
+                Ok(Err(error)) => {
+                    tracing::debug!("YouTube Music history failed to load: {error}");
+                    return;
+                }
+                Err(_) => return,
+            };
+            let records = youtube_records(&page, jiff::Timestamp::now());
+            let Some(service) = me.upgrade() else { return };
+            let changed = {
+                let mut state = lock(&service.state);
+                if state.youtube_generation != generation {
+                    return;
+                }
+                let old: Vec<&str> = state.youtube.iter().map(|play| play.track.uri.as_str()).collect();
+                let new: Vec<&str> = records.iter().map(|play| play.track.uri.as_str()).collect();
+                let changed = old != new;
+                state.youtube = records;
+                state.youtube.truncate(REMOTE_KEPT);
+                changed
+            };
+            if changed {
+                let _ = service.events.send(HistoryEvent::Changed);
+            }
+        });
+    }
+
     /// The YouTube Music account's listening history (`FEmusic_history`), grouped as YouTube groups it
     /// ("Today", "Yesterday", …) into home shelves. Plays of YouTube songs in this app are also kept in the
     /// local history (`note_played`), like Spotify ones.

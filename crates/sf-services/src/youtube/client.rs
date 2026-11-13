@@ -228,6 +228,38 @@ impl InnerTube {
         parse_visitor_data(&response.text().await.ok()?)
     }
 
+    /// `https://music.youtube.com/` (a test server's address with `with_base_url`).
+    pub(crate) fn site_base(&self) -> &str {
+        &self.site_base
+    }
+
+    /// `GET` an absolute address as the signed-in web player (cookie, SAPISIDHASH, the account's visitor id):
+    /// the play report of `tracking.rs`. Any 2xx answer is success; the body is not read.
+    pub(crate) async fn get_signed(&self, url: &str) -> Result<()> {
+        let account = self.account().ok_or(YouTubeError::NotSignedIn)?;
+        let mut request = self
+            .http_client()?
+            .get(url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT_WEB)
+            .header(reqwest::header::ORIGIN, ORIGIN)
+            .header(reqwest::header::REFERER, REFERER)
+            .header("X-Origin", ORIGIN)
+            .header(reqwest::header::COOKIE, &account.cookie);
+        if let Some(authorization) = account.authorization(ORIGIN) {
+            request = request.header(reqwest::header::AUTHORIZATION, authorization);
+        }
+        if let Some(visitor) = self.visitor_data(true).await {
+            request = request.header("X-Goog-Visitor-Id", visitor);
+        }
+        let response = request.send().await.map_err(|error| YouTubeError::Network(error.without_url().to_string()))?;
+        match response.status().as_u16() {
+            200..=299 => Ok(()),
+            401 => Err(YouTubeError::SessionExpired),
+            429 => Err(YouTubeError::RateLimited),
+            code => Err(YouTubeError::Http(code)),
+        }
+    }
+
     /// `GET` a page or script of the site (`path` relative to music.youtube.com), as the web browser.
     pub(crate) async fn get_text(&self, path: &str) -> Result<String> {
         let url = format!("{}{}", self.site_base, path.trim_start_matches('/'));

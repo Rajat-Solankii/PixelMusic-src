@@ -307,7 +307,7 @@ impl DevicesService {
         });
     }
 
-    /// Имя этого устройства по умолчанию: «Materialfy · <имя ПК>».
+    /// Имя этого устройства по умолчанию: «PixelMusic · <имя ПК>».
     pub fn default_device_name() -> String {
         let host = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
         if host.is_empty() { "Pixel Music".to_owned() } else { format!("Pixel Music · {host}") }

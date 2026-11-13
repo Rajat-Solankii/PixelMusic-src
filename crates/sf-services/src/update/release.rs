@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(probe("linux", "/usr/bin/pixelmusic", Some(""), false), InstallKind::Manual);
         assert_eq!(probe("macos", "/Applications/PixelMusic.app/Contents/MacOS/pixelmusic", None, false), InstallKind::MacApp);
         assert_eq!(probe("macos", "/Users/me/src/pixelmusic/target/release/pixelmusic", None, false), InstallKind::Dev);
-        assert_eq!(probe("freebsd", "/usr/local/bin/materialfy", None, false), InstallKind::Manual);
+        assert_eq!(probe("freebsd", "/usr/local/bin/pixelmusic", None, false), InstallKind::Manual);
         for kind in ["installer", "portable", "appimage", "mac", "manual", "dev"] {
             assert_eq!(InstallKind::from_code(kind).map(InstallKind::code), Some(kind));
         }

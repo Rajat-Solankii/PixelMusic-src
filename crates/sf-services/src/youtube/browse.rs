@@ -32,7 +32,7 @@ impl YouTubeService {
         if !force_refresh && let Some(page) = self.cached_home() {
             return Ok(page);
         }
-        let mut page = parsers::shelves_page(&self.browse(HOME, None, Login::IfSignedIn).await?);
+        let mut page = parsers::shelves_page(&self.browse(HOME, None, self.feed_login()).await?);
         self.fill_durations(&mut page).await;
         *crate::lock(&self.home_cache) = Some((Instant::now(), page.clone()));
         Ok(page)
@@ -51,19 +51,19 @@ impl YouTubeService {
 
     /// More home shelves. An empty page ends the feed.
     pub async fn home_continuation(&self, continuation: &str) -> Result<ShelvesPage> {
-        let mut page = self.shelves_continuation(continuation).await?;
+        let mut page = self.shelves_continuation_as(continuation, self.feed_login()).await?;
         self.fill_durations(&mut page).await;
         Ok(page)
     }
 
     /// The explore page (new releases, charts, moods teasers).
     pub async fn explore(&self) -> Result<ShelvesPage> {
-        Ok(parsers::shelves_page(&self.browse(EXPLORE, None, Login::IfSignedIn).await?))
+        Ok(parsers::shelves_page(&self.browse(EXPLORE, None, self.feed_login()).await?))
     }
 
     /// New albums and singles.
     pub async fn new_releases(&self) -> Result<Vec<AlbumItem>> {
-        let page = parsers::shelves_page(&self.browse(NEW_RELEASES, None, Login::IfSignedIn).await?);
+        let page = parsers::shelves_page(&self.browse(NEW_RELEASES, None, self.feed_login()).await?);
         let mut seen = std::collections::HashSet::new();
         Ok(page
             .shelves
@@ -99,7 +99,7 @@ impl YouTubeService {
 
     /// Mood and genre tiles.
     pub async fn moods(&self) -> Result<Vec<Mood>> {
-        Ok(parsers::moods(&self.browse(MOODS, None, Login::IfSignedIn).await?))
+        Ok(parsers::moods(&self.browse(MOODS, None, self.feed_login()).await?))
     }
 
     /// Any page made of shelves: a mood's playlists, a "see all", an artist's "more", related items.
@@ -110,7 +110,11 @@ impl YouTubeService {
 
     /// More shelves of a page; an empty page has no continuation.
     pub async fn shelves_continuation(&self, continuation: &str) -> Result<ShelvesPage> {
-        let mut page = parsers::shelves_page(&self.browse_continuation(continuation, Login::IfSignedIn).await?);
+        self.shelves_continuation_as(continuation, Login::IfSignedIn).await
+    }
+
+    async fn shelves_continuation_as(&self, continuation: &str, login: Login) -> Result<ShelvesPage> {
+        let mut page = parsers::shelves_page(&self.browse_continuation(continuation, login).await?);
         if page.shelves.is_empty() {
             page.continuation = None;
         }

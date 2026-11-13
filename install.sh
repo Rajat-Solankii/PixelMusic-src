@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Installs Materialfy (a Material 3 Expressive Spotify client) on Linux by building it from source:
+# Installs PixelMusic (a Material 3 Expressive Spotify client) on Linux by building it from source:
 #
 #   ./install.sh                                         # from an already cloned repository
-#   MATERIALFY_REPO=<git-url> bash install.sh             # clone the sources into ~/.local/share/materialfy
+#   PIXELMUSIC_REPO=<git-url> bash install.sh             # clone the sources into ~/.local/share/pixelmusic
 #
 # What it does: installs system packages (C++ compiler, ALSA/PulseAudio/OpenGL/xkb headers; asks for
 # confirmation and the sudo password), installs Rust (rustup, into ~/.cargo, no sudo) and Qt 6.12 (if the
 # system Qt is older, downloads it next to the sources), runs cargo build --release and installs the
-# ~/.local/bin/materialfy command and a menu entry. Running it again updates the app.
+# ~/.local/bin/pixelmusic command and a menu entry. Running it again updates the app.
 # Uninstall: install.sh --uninstall (settings and sign-in are kept).
 #
-# Variables: MATERIALFY_REPO - git URL of the sources, MATERIALFY_DIR - where to put them (when the script
-# is not run from the repository), MATERIALFY_QMAKE - your own qmake6, MATERIALFY_YES=1 - no questions,
-# MATERIALFY_KEEP_BUILD=1 - keep the target/ build directory (faster updates, but +3-5 GB).
+# Variables: PIXELMUSIC_REPO - git URL of the sources, PIXELMUSIC_DIR - where to put them (when the script
+# is not run from the repository), PIXELMUSIC_QMAKE - your own qmake6, PIXELMUSIC_YES=1 - no questions,
+# PIXELMUSIC_KEEP_BUILD=1 - keep the target/ build directory (faster updates, but +3-5 GB).
 set -euo pipefail
 PATH_ORIG="$PATH"
 
-APP="materialfy"
+APP="pixelmusic"
 BIN="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor/scalable/apps"
@@ -30,21 +30,21 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # версия a >= b (через sort -V)
 ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
 
-# Запуск из репозитория — собираем на месте; иначе — клон в MATERIALFY_DIR
+# Запуск из репозитория — собираем на месте; иначе — клон в PIXELMUSIC_DIR
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
-if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/crates/materialfy/Cargo.toml" ]; then
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/crates/pixelmusic/Cargo.toml" ]; then
     DIR="$SELF_DIR"
     IN_PLACE=1
 else
-    DIR="${MATERIALFY_DIR:-$HOME/.local/share/materialfy}"
+    DIR="${PIXELMUSIC_DIR:-$HOME/.local/share/pixelmusic}"
     IN_PLACE=0
 fi
 
 if [ "${1:-}" = "--uninstall" ]; then
     [ "$IN_PLACE" = "1" ] || rm -rf "$DIR"
     rm -f "$BIN/$APP" "$APPS/$APP.desktop" "$ICONS/$APP.svg" "$ICONS_PNG/$APP.png"
-    say "Materialfy removed. Settings (~/.config/materialfy), data (~/.local/share/materialfy),"
-    echo "    cache (~/.cache/materialfy), the sign-in in the keyring and Rust (~/.cargo) were kept."
+    say "PixelMusic removed. Settings (~/.config/pixelmusic), data (~/.local/share/pixelmusic),"
+    echo "    cache (~/.cache/pixelmusic), the sign-in in the keyring and Rust (~/.cargo) were kept."
     exit 0
 fi
 
@@ -57,7 +57,7 @@ esac
 [ "$(id -u)" != "0" ] || fail "Run this as a regular user, without sudo: the password will be asked for when needed."
 
 confirm() {
-    [ "${MATERIALFY_YES:-}" = "1" ] && return 0
+    [ "${PIXELMUSIC_YES:-}" = "1" ] && return 0
     printf '    Continue? [Y/n] '
     local answer
     read -r answer </dev/tty || answer=n
@@ -78,7 +78,7 @@ qt_full() {
     [ -e "$qml/QtQuick/qmldir" ] && [ -e "$qml/QtQuick/Effects/qmldir" ] && [ -e "$qml/Qt/labs/platform/qmldir" ]
 }
 
-QMAKE="${MATERIALFY_QMAKE:-}"
+QMAKE="${PIXELMUSIC_QMAKE:-}"
 if [ -z "$QMAKE" ]; then
     for q in "$(command -v qmake6 || true)" /usr/lib/qt6/bin/qmake6 /usr/lib64/qt6/bin/qmake6 /usr/lib/qt6/bin/qmake; do
         if [ -n "$q" ] && qt_ok "$q" && qt_full "$q"; then QMAKE="$q"; break; fi
@@ -131,13 +131,13 @@ export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 if [ "$IN_PLACE" = "1" ]; then
     say "Building from $DIR"
 elif [ -d "$DIR/.git" ]; then
-    say "Updating Materialfy in $DIR"
+    say "Updating PixelMusic in $DIR"
     git -C "$DIR" pull --ff-only --quiet || fail "Could not update $DIR (does it have local changes?). Delete the folder and run the script again."
 else
-    [ -n "${MATERIALFY_REPO:-}" ] || fail "Set the source URL: MATERIALFY_REPO=<git-url> bash install.sh (or run the script from the repository)."
-    say "Downloading Materialfy into $DIR"
+    [ -n "${PIXELMUSIC_REPO:-}" ] || fail "Set the source URL: PIXELMUSIC_REPO=<git-url> bash install.sh (or run the script from the repository)."
+    say "Downloading PixelMusic into $DIR"
     mkdir -p "$(dirname "$DIR")"
-    git clone --depth 1 --quiet "$MATERIALFY_REPO" "$DIR"
+    git clone --depth 1 --quiet "$PIXELMUSIC_REPO" "$DIR"
 fi
 
 # --- Qt 6.12 ----------------------------------------------------------------
@@ -149,7 +149,7 @@ if [ -z "$QMAKE" ]; then
     QMAKE="$(python3 "$DIR/.github/scripts/install_qt.py" --host "$QT_HOST" --version "$QT_VERSION" \
         --addons qtshadertools qtimageformats --out "$QT_PRIVATE" | tail -n1)"
 fi
-qt_ok "$QMAKE" || fail "Qt ${QT_VERSION%.*}+ not found ($QMAKE). Point to your own: MATERIALFY_QMAKE=/path/to/qmake6"
+qt_ok "$QMAKE" || fail "Qt ${QT_VERSION%.*}+ not found ($QMAKE). Point to your own: PIXELMUSIC_QMAKE=/path/to/qmake6"
 say "Qt $("$QMAKE" -query QT_VERSION): $QMAKE"
 
 # --- Rust -------------------------------------------------------------------
@@ -172,15 +172,15 @@ say "$(rustc --version)"
 
 # --- Сборка -----------------------------------------------------------------
 
-say "Building Materialfy (5-15 minutes the first time)"
+say "Building PixelMusic (5-15 minutes the first time)"
 # --locked: Cargo.lock держит vergen 9.0.6 (9.1 ломает build-скрипт librespot-core)
 (cd "$DIR" && QMAKE="$QMAKE" cargo build --locked --release -p "$APP" --quiet) || fail "Build failed (see the output above)."
 mkdir -p "$DIR/bin"
 install -m755 "$DIR/target/release/$APP" "$DIR/bin/$APP"
-[ "${MATERIALFY_KEEP_BUILD:-}" = "1" ] || [ "$IN_PLACE" = "1" ] || rm -rf "$DIR/target"
+[ "${PIXELMUSIC_KEEP_BUILD:-}" = "1" ] || [ "$IN_PLACE" = "1" ] || rm -rf "$DIR/target"
 
 # --- Запуск: команда и значок в меню ----------------------------------------
-# QML и ресурсы exe находит сам: $DIR/src/materialfy/qml — вверх от $DIR/bin
+# QML и ресурсы exe находит сам: $DIR/src/pixelmusic/qml — вверх от $DIR/bin
 
 mkdir -p "$BIN" "$APPS" "$ICONS" "$ICONS_PNG"
 {
@@ -189,12 +189,12 @@ mkdir -p "$BIN" "$APPS" "$ICONS" "$ICONS_PNG"
     echo "exec \"$DIR/bin/$APP\" \"\$@\""
 } > "$BIN/$APP"
 chmod +x "$BIN/$APP"
-cp "$DIR/src/materialfy/assets/$APP.svg" "$ICONS/$APP.svg"
+cp "$DIR/src/pixelmusic/assets/$APP.svg" "$ICONS/$APP.svg"
 cp "$DIR/$APP.png" "$ICONS_PNG/$APP.png"
 cat > "$APPS/$APP.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Materialfy
+Name=PixelMusic
 GenericName=Music Player
 GenericName[ru]=Музыкальный плеер
 GenericName[pt_BR]=Reprodutor de música
@@ -209,7 +209,7 @@ StartupWMClass=$APP
 DESKTOP
 have update-desktop-database && update-desktop-database "$APPS" >/dev/null 2>&1 || true
 
-say "Done. Launch it from the Materialfy entry in the application menu or with the command: $APP"
+say "Done. Launch it from the PixelMusic entry in the application menu or with the command: $APP"
 case ":$PATH_ORIG:" in
     *":$BIN:"*) ;;
     *) echo "    If the $APP command is not found, $BIN is not in PATH: run $BIN/$APP or use the menu." ;;

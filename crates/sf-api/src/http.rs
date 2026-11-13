@@ -174,7 +174,7 @@ mod tests {
         let http = Http::default();
         let clone = http.clone();
         let replacement = reqwest::Client::builder()
-            .user_agent("materialfy-test")
+            .user_agent("pixelmusic-test")
             .build()
             .unwrap();
         http.replace(replacement.clone());

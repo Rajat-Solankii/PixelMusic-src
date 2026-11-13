@@ -3,7 +3,8 @@
 //!
 //! The service is split by area: `library.rs` (the user's library), `playlist.rs` (pages and the guarded
 //! full read), `search.rs`, `browse.rs` (home, explore, charts, moods), `catalog.rs` (album, artist, queue,
-//! lyrics, account), `mutations.rs` (likes, subscriptions, playlist edits) and `import.rs`.
+//! lyrics, account), `mutations.rs` (likes, subscriptions, playlist edits), `tracking.rs` (plays reported to the
+//! account's history) and `import.rs`.
 
 pub mod client;
 pub mod duration_cache;
@@ -22,6 +23,7 @@ mod mutations;
 mod playlist;
 mod search;
 mod stream;
+mod tracking;
 
 #[cfg(test)]
 mod client_tests;
@@ -55,6 +57,10 @@ pub struct YouTubeService {
     home_gate: tokio::sync::Mutex<()>,
     /// song lengths the home feed leaves out (`duration_cache.rs`)
     duration_cache: duration_cache::DurationCache,
+    /// setting `youtubePersonalHome`: home / explore / moods as the user (off — anonymously)
+    personal_home: std::sync::atomic::AtomicBool,
+    /// setting `youtubePersonalRadio`: radios and autoplay as the user (off — anonymously)
+    personal_radio: std::sync::atomic::AtomicBool,
 }
 
 impl YouTubeService {
@@ -70,6 +76,8 @@ impl YouTubeService {
             home_cache: Mutex::new(None),
             home_gate: tokio::sync::Mutex::new(()),
             duration_cache: Default::default(),
+            personal_home: std::sync::atomic::AtomicBool::new(true),
+            personal_radio: std::sync::atomic::AtomicBool::new(true),
         }
     }
 
@@ -94,6 +102,26 @@ impl YouTubeService {
     }
 
     /// `POST browse` for a page.
+    /// Home / explore / moods personalised (`true`) or anonymous; a change drops the cached home feed.
+    pub fn set_personal_home(&self, on: bool) {
+        if self.personal_home.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
+            self.invalidate_home();
+        }
+    }
+
+    /// Radios and autoplay personalised (`true`) or built from the song alone.
+    pub fn set_personal_radio(&self, on: bool) {
+        self.personal_radio.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn feed_login(&self) -> Login {
+        if self.personal_home.load(std::sync::atomic::Ordering::Relaxed) { Login::IfSignedIn } else { Login::Never }
+    }
+
+    fn radio_login(&self) -> Login {
+        if self.personal_radio.load(std::sync::atomic::Ordering::Relaxed) { Login::IfSignedIn } else { Login::Never }
+    }
+
     async fn browse(&self, browse_id: &str, params: Option<&str>, login: Login) -> Result<Value> {
         let mut body = json!({ "browseId": browse_id });
         if let Some(params) = params {

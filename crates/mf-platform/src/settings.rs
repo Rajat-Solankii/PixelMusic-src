@@ -3,7 +3,7 @@
 //! Хранилище в формате QSettings (тот же, что пишет QSettings оболочки):
 //! - Linux/macOS, а также при --config-dir на любой ОС: INI-файл (`[General]`, `ключ=значение`;
 //!   bool — "true"/"false", числа — текстом, строки с запятой/спецсимволами — в кавычках, как пишет QSettings);
-//! - Windows без --config-dir: реестр HKCU\Software\materialfy\Materialfy (строки, bool и float — REG_SZ,
+//! - Windows без --config-dir: реестр HKCU\Software\pixelmusic\PixelMusic (строки, bool и float — REG_SZ,
 //!   int — REG_DWORD; при чтении REG_SZ числа тоже принимаются).
 //!
 //! Чтение как `_read` в Python: нет значения или не приводится к типу — значение по умолчанию.
@@ -72,8 +72,10 @@ pub enum SettingKey {
     LyricsAnimate,
     /// показывать метку источника текста
     LyricsShowSource,
-    /// сдвиг синхронизации в миллисекундах (-500..500)
+    /// сдвиг синхронизации в миллисекундах (-3000..3000)
     LyricsSyncMs,
+    /// romanized line under each lyric line (Devanagari, Gurmukhi, Hangul, kana, Cyrillic, Greek)
+    LyricsRomanize,
     /// "system" | "full" | "reduced" → Theme.reducedMotion
     Animations,
     /// режим для слабых ПК: "auto" (сам, когда кадры рисует процессор) | "on" | "off" → Theme.lowPower
@@ -128,15 +130,41 @@ pub enum SettingKey {
     LastFmScrobble,
     /// Last.fm: send "now playing" when a track starts; changes on the fly
     LastFmNowPlaying,
+    /// Last.fm: tracks this many seconds long or shorter are never scrobbled (0…120)
+    LastFmMinTrackS,
+    /// Last.fm: a listen counts after this percent of the track has played (25…100)
+    LastFmThresholdPct,
+    /// Last.fm: …but never later than this many seconds (30…600)
+    LastFmMaxThresholdS,
     /// YouTube Music: lower-bitrate audio (about 64 kbps) to save data; changes on the fly
     YouTubeDataSaver,
+    /// YouTube Music: report songs played here to the account's history and show that history in Recently played
+    YouTubeHistorySync,
+    /// YouTube Music: read the account's playlists, saved albums/artists and Liked Music into the library
+    YouTubeLibrarySync,
+    /// YouTube Music: Home / Explore / moods as the signed-in user; off — anonymously, without account history
+    YouTubePersonalHome,
+    /// YouTube Music: radios and autoplay as the signed-in user; off — anonymously, from the current song only
+    YouTubePersonalRadio,
+    /// Last.fm: Home gets shelves from the Last.fm feed (recent tracks, top albums, friends)
+    LastFmExplore,
+    /// Last.fm: Home's Daily Mix / Your Mix come from Last.fm recommendations instead of the local history
+    LastFmSmartMix,
+    /// Last.fm: saved Smart Mix playlists show in the Library playlists list
+    LastFmShowMixes,
+    /// Last.fm: delete saved Smart Mix playlists after this many days; 0 — keep them (0…365)
+    LastFmMixRetentionDays,
+    /// Last.fm: saved Smart Mix playlists, JSON `[{"uri","created"}]` (created: unix seconds)
+    LastFmMixPlaylists,
+    /// local playlists: mirror every edit to a linked YouTube Music playlist
+    LocalPlaylistSync,
     /// YouTube Music tracks: play a lossless copy (FLAC from the free Monochrome server) when one matches;
     /// changes on the fly
     LosslessStreams,
     /// YouTube Music tracks: play JioSaavn's AAC copy (320 kbps) when one matches; changes on the fly
     JioSaavnStreams,
     // Spotify Connect и сеть
-    /// имя Connect-устройства; "" — «Materialfy · <имя ПК>»
+    /// имя Connect-устройства; "" — «PixelMusic · <имя ПК>»
     DeviceName,
     /// свой Client ID (личное приложение Web API); "" — нет
     WebClientId,
@@ -229,7 +257,7 @@ pub enum SettingType {
 }
 
 impl SettingKey {
-    pub const ALL: [SettingKey; 105] = [
+    pub const ALL: [SettingKey; 119] = [
         SettingKey::ThemeMode,
         SettingKey::SchemeVariant,
         SettingKey::AccentFromCover,
@@ -261,6 +289,7 @@ impl SettingKey {
         SettingKey::LyricsAnimate,
         SettingKey::LyricsShowSource,
         SettingKey::LyricsSyncMs,
+        SettingKey::LyricsRomanize,
         SettingKey::Animations,
         SettingKey::LowPowerMode,
         SettingKey::GpuPreference,
@@ -293,7 +322,20 @@ impl SettingKey {
         SettingKey::DjVoice,
         SettingKey::LastFmScrobble,
         SettingKey::LastFmNowPlaying,
+        SettingKey::LastFmMinTrackS,
+        SettingKey::LastFmThresholdPct,
+        SettingKey::LastFmMaxThresholdS,
         SettingKey::YouTubeDataSaver,
+        SettingKey::YouTubeHistorySync,
+        SettingKey::YouTubeLibrarySync,
+        SettingKey::YouTubePersonalHome,
+        SettingKey::YouTubePersonalRadio,
+        SettingKey::LastFmExplore,
+        SettingKey::LastFmSmartMix,
+        SettingKey::LastFmShowMixes,
+        SettingKey::LastFmMixRetentionDays,
+        SettingKey::LastFmMixPlaylists,
+        SettingKey::LocalPlaylistSync,
         SettingKey::LosslessStreams,
         SettingKey::JioSaavnStreams,
         SettingKey::DeviceName,
@@ -372,6 +414,7 @@ impl SettingKey {
             LyricsAnimate => "lyricsAnimate",
             LyricsShowSource => "lyricsShowSource",
             LyricsSyncMs => "lyricsSyncMs",
+            LyricsRomanize => "lyricsRomanize",
             Animations => "animations",
             LowPowerMode => "lowPowerMode",
             GpuPreference => "gpuPreference",
@@ -404,7 +447,20 @@ impl SettingKey {
             DjVoice => "djVoice",
             LastFmScrobble => "lastfmScrobble",
             LastFmNowPlaying => "lastfmNowPlaying",
+            LastFmMinTrackS => "lastfmMinTrackS",
+            LastFmThresholdPct => "lastfmThresholdPct",
+            LastFmMaxThresholdS => "lastfmMaxThresholdS",
             YouTubeDataSaver => "youtubeDataSaver",
+            YouTubeHistorySync => "youtubeHistorySync",
+            YouTubeLibrarySync => "youtubeLibrarySync",
+            YouTubePersonalHome => "youtubePersonalHome",
+            YouTubePersonalRadio => "youtubePersonalRadio",
+            LastFmExplore => "lastfmExplore",
+            LastFmSmartMix => "lastfmSmartMix",
+            LastFmShowMixes => "lastfmShowMixes",
+            LastFmMixRetentionDays => "lastfmMixRetentionDays",
+            LastFmMixPlaylists => "lastfmMixPlaylists",
+            LocalPlaylistSync => "localPlaylistSync",
             LosslessStreams => "losslessStreams",
             JioSaavnStreams => "jioSaavnStreams",
             DeviceName => "deviceName",
@@ -467,9 +523,9 @@ impl SettingKey {
         use SettingValue::{Bool, Float, Int, Str};
         match self {
             ThemeMode => Str("dark".into()),
-            SchemeVariant => Str("content".into()),
+            SchemeVariant => Str("tonalSpot".into()),
             AccentFromCover => Bool(true),
-            CustomSeed => Str("#8C6DFF".into()), // Ultraviolet, фирменный акцент Materialfy
+            CustomSeed => Str("#8C6DFF".into()), // Ultraviolet, фирменный акцент PixelMusic
             WindowButtons => Bool(false),
             TrackTransition => Str("wipe".into()),
             BackdropMode => Str("gauss".into()),
@@ -497,6 +553,7 @@ impl SettingKey {
             LyricsAnimate => Bool(true),
             LyricsShowSource => Bool(true),
             LyricsSyncMs => Int(0),
+            LyricsRomanize => Bool(false),
             Animations => Str("system".into()),
             LowPowerMode => Str("auto".into()),
             GpuPreference => Str("auto".into()),
@@ -529,7 +586,20 @@ impl SettingKey {
             DjVoice => Bool(true),
             LastFmScrobble => Bool(true),
             LastFmNowPlaying => Bool(true),
+            LastFmMinTrackS => Int(30),
+            LastFmThresholdPct => Int(50),
+            LastFmMaxThresholdS => Int(180),
             YouTubeDataSaver => Bool(false),
+            YouTubeHistorySync => Bool(true),
+            YouTubeLibrarySync => Bool(true),
+            YouTubePersonalHome => Bool(true),
+            YouTubePersonalRadio => Bool(true),
+            LastFmExplore => Bool(true),
+            LastFmSmartMix => Bool(false),
+            LastFmShowMixes => Bool(true),
+            LastFmMixRetentionDays => Int(0),
+            LastFmMixPlaylists => Str(String::new()),
+            LocalPlaylistSync => Bool(true),
             LosslessStreams => Bool(false),
             JioSaavnStreams => Bool(false),
             DeviceName => Str(String::new()),
@@ -593,6 +663,10 @@ impl SettingKey {
                 SettingValue::Float(((speed.clamp(0.5, 2.0) * 20.0).round() / 20.0).clamp(0.5, 2.0))
             }
             (SettingKey::Crossfade, SettingValue::Int(seconds)) => SettingValue::Int(seconds.clamp(0, CROSSFADE_MAX_S)),
+            (SettingKey::LastFmMinTrackS, SettingValue::Int(seconds)) => SettingValue::Int(seconds.clamp(0, 120)),
+            (SettingKey::LastFmThresholdPct, SettingValue::Int(percent)) => SettingValue::Int(percent.clamp(25, 100)),
+            (SettingKey::LastFmMaxThresholdS, SettingValue::Int(seconds)) => SettingValue::Int(seconds.clamp(30, 600)),
+            (SettingKey::LastFmMixRetentionDays, SettingValue::Int(days)) => SettingValue::Int(days.clamp(0, 365)),
             (SettingKey::LyricsFontScale, SettingValue::Float(v)) => {
                 SettingValue::Float(if v.is_finite() { v.clamp(0.7, 1.6) } else { 1.0 })
             }
@@ -624,7 +698,7 @@ impl SettingKey {
                 SettingValue::Float(if v.is_finite() { v.clamp(0.8, 1.6) } else { 1.0 })
             }
             (SettingKey::LyricsSyncMs, SettingValue::Int(ms)) => {
-                SettingValue::Int(ms.clamp(-500, 500))
+                SettingValue::Int(ms.clamp(-3000, 3000))
             }
             (SettingKey::UiScale, SettingValue::Int(percent)) => {
                 // пресеты из настроек; значение из конфига вне пресетов — ближайший
@@ -861,6 +935,7 @@ impl SettingsStore {
     pub fn open(config_override: Option<PathBuf>) -> Arc<Self> {
         #[cfg(target_os = "windows")]
         if config_override.is_none() {
+            registry::migrate_legacy();
             return Self::with_backend(Box::new(registry::RegistryBackend::new()));
         }
         let path = crate::dirs::settings_ini_file(config_override.as_deref());
@@ -1301,7 +1376,37 @@ mod registry {
 
     use super::{Backend, SettingValue};
 
-    const KEY_PATH: &str = r"Software\materialfy\Materialfy";
+    const KEY_PATH: &str = r"Software\pixelmusic\PixelMusic";
+    /// Where settings lived before the rename to Pixel Music.
+    const LEGACY_KEY_PATH: &str = r"Software\materialfy\Materialfy";
+
+    /// First start after the rename: copy the Materialfy settings key (values and any subkeys) when the Pixel Music
+    /// key does not exist yet. The old key stays as it was, as a backup.
+    pub fn migrate_legacy() {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if hkcu.open_subkey(KEY_PATH).is_ok() {
+            return;
+        }
+        let Ok(old) = hkcu.open_subkey(LEGACY_KEY_PATH) else { return };
+        let copied = hkcu.create_subkey(KEY_PATH).and_then(|(new, _)| copy_tree(&old, &new));
+        match copied {
+            Ok(()) => tracing::info!("settings copied from HKCU\\{LEGACY_KEY_PATH}"),
+            Err(err) => tracing::warn!("could not copy settings from HKCU\\{LEGACY_KEY_PATH}: {err}"),
+        }
+    }
+
+    fn copy_tree(from: &RegKey, to: &RegKey) -> std::io::Result<()> {
+        for value in from.enum_values() {
+            let (name, value) = value?;
+            to.set_raw_value(&name, &value)?;
+        }
+        for sub in from.enum_keys() {
+            let sub = sub?;
+            let (child, _) = to.create_subkey(&sub)?;
+            copy_tree(&from.open_subkey(&sub)?, &child)?;
+        }
+        Ok(())
+    }
 
     /// HKCU\<path>; по умолчанию — ключ QSettings оболочки.
     pub struct RegistryBackend {
@@ -1450,10 +1555,11 @@ mod tests {
         assert_eq!(SettingKey::LyricsStaggerMs.normalize(Int(-5)), Int(0));
         assert_eq!(SettingKey::LyricsStaggerMs.normalize(Int(30)), Int(30));
         assert_eq!(SettingKey::LyricsStaggerMs.normalize(Int(150)), Int(80));
-        assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(-600)), Int(-500));
+        assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(-3600)), Int(-3000));
         assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(0)), Int(0));
         assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(250)), Int(250));
-        assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(800)), Int(500));
+        assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(800)), Int(800));
+        assert_eq!(SettingKey::LyricsSyncMs.normalize(Int(4000)), Int(3000));
     }
 
     #[test]
@@ -1525,8 +1631,8 @@ mod tests {
     fn temp_ini(name: &str) -> PathBuf {
         std::env::temp_dir()
             .join(format!("mf-platform-test-{}-{name}", std::process::id()))
-            .join("materialfy")
-            .join("Materialfy.conf")
+            .join("pixelmusic")
+            .join("PixelMusic.conf")
     }
 
     #[test]
@@ -1574,7 +1680,7 @@ mod tests {
     fn registry_python_compat() {
         use winreg::RegKey;
         use winreg::enums::HKEY_CURRENT_USER;
-        let path = format!(r"Software\materialfy\Materialfy-mf-platform-test-{}", std::process::id());
+        let path = format!(r"Software\pixelmusic\PixelMusic-mf-platform-test-{}", std::process::id());
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         {
             // так значения пишет QSettings из Python-версии
@@ -1712,14 +1818,14 @@ mod tests {
             "lyricsTextAlign", "lyricsFillMode", "lyricsVisibleLines", "lyricsHighlight",
             "lyricsActiveScale", "lyricsIdleScale", "lyricsWordBounce", "lyricsDimOpacity",
             "lyricsScrollMs", "lyricsStaggerMs", "lyricsBlurAmount",
-            "lyricsLineSpacing", "lyricsAnimate", "lyricsShowSource", "lyricsSyncMs",
+            "lyricsLineSpacing", "lyricsAnimate", "lyricsShowSource", "lyricsSyncMs", "lyricsRomanize",
             "animations", "lowPowerMode", "gpuPreference", "rightPanelOpen", "rightPanelTab", "sidebarCollapsed", "windowWidth",
             "windowHeight", "windowX", "windowY", "windowMaximized", "closeToTray", "wheelStep", "floatingPlayer", "floatingPlayerStyle",
             "taskbarWidgetPos", "floatingKeyHints", "floatingHideFullscreen", "floatingHideMaximized", "floatingOffsetX", "floatingEdge", "floatingFreeX", "floatingFreeY", "libraryView",
             "librarySort", "homeHidden", "homeRadioHidden", "sidebarLibrary", "bitrate", "normalisation", "gapless", "autoplay", "volume", "audioDevice",
             "audioCache", "audioCacheMb", "playbackAuthorized", "deviceName", "webClientId", "apiLimitTipDismissed", "proxyMode", "proxyHost",
             "proxyPort", "proxyUsername", "coversBypassProxy", "pins", "hiddenTracks", "radioSeeds", "language", "uiScale", "autoUpdateCheck",
-            "updateChannel", "skippedVersion", "localFolders", "youtubeDataSaver", "lastfmScrobble", "lastfmNowPlaying",
+            "updateChannel", "skippedVersion", "localFolders", "youtubeDataSaver", "youtubeHistorySync", "lastfmScrobble", "lastfmNowPlaying",
         ] {
             assert!(names.contains(&name), "{name}");
         }

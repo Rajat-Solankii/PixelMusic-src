@@ -4,6 +4,7 @@
 //! альбомы/исполнители/подкасты/выпуски, локальные закрепления и «не рекомендовать».
 //! Правила перенесены из spotifast (src/app.rs).
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use md3_model::{
@@ -27,7 +28,10 @@ use sf_player::engine::session_playlists::Change;
 use crate::history::HistoryService;
 use crate::lock;
 
+mod local;
+mod smart_mixes;
 mod yt;
+pub use local::LocalPlaylist;
 pub use yt::ImportProgress;
 
 /// Страница Liked Songs у Web API.
@@ -286,6 +290,14 @@ pub struct LibraryService {
     /// YouTube Music library (library/yt.rs)
     yt: Mutex<yt::YtState>,
     yt_import: Arc<tokio::sync::watch::Sender<ImportProgress>>,
+    /// local playlists (library/local.rs), read from disk on first use
+    local: Mutex<local::LocalState>,
+    /// one sync to YouTube Music at a time (library/local.rs)
+    local_sync_lock: tokio::sync::Mutex<()>,
+    /// Bumped on every LikesChanged / SavedChanged sent (the YouTube library has no revision of its own), so
+    /// `likes_revision`/`saved_revision` change and the hearts in the UI re-read `is_liked`.
+    sent_likes: AtomicU64,
+    sent_saved: AtomicU64,
     me: Weak<LibraryService>,
 }
 
@@ -702,6 +714,10 @@ impl LibraryService {
             state: Mutex::new(state),
             yt: Mutex::default(),
             yt_import: Arc::new(tokio::sync::watch::channel(ImportProgress::default()).0),
+            local: Mutex::default(),
+            local_sync_lock: tokio::sync::Mutex::new(()),
+            sent_likes: AtomicU64::new(0),
+            sent_saved: AtomicU64::new(0),
             me: me.clone(),
         });
         service.spawn_listeners();
@@ -788,6 +804,11 @@ impl LibraryService {
 
     fn send(&self, events: impl IntoIterator<Item = LibraryEvent>) {
         for event in events {
+            match event {
+                LibraryEvent::LikesChanged => _ = self.sent_likes.fetch_add(1, Ordering::Relaxed),
+                LibraryEvent::SavedChanged => _ = self.sent_saved.fetch_add(1, Ordering::Relaxed),
+                _ => {}
+            }
             let _ = self.events.send(event);
         }
     }
@@ -1101,10 +1122,14 @@ impl LibraryService {
         if yt::is_youtube(track_id_or_uri) {
             return self.yt_is_liked(track_id_or_uri);
         }
+        // QML asks by `trackId`, which for a YouTube song is the bare video id (its URI is `youtube:track:<id>`)
+        if !track_id_or_uri.contains(':') && self.yt_is_liked(&crate::youtube::models::track_uri(track_id_or_uri)) {
+            return true;
+        }
         lock(&self.state).is_liked(&known::track_uri(track_id_or_uri))
     }
     pub fn likes_revision(&self) -> u64 {
-        lock(&self.state).likes_revision
+        lock(&self.state).likes_revision + self.sent_likes.load(Ordering::Relaxed)
     }
 
     /// Оптимистично: UI сразу, откат + Notice при ошибке.
@@ -1502,6 +1527,9 @@ impl LibraryService {
     /// Открыть плейлист (сессия librespot для чужих, Web API для своих) → PlaylistTracks.
     /// Без дублей: чтение уже идёт — не перезапускается; кэш уже показан — ни Reset, ни сети.
     pub fn load_playlist(&self, id: PlaylistId) {
+        if id.is_local() {
+            return self.local_open(id);
+        }
         if id.is_youtube() {
             return self.yt_open_playlist(id, false);
         }
@@ -1510,6 +1538,9 @@ impl LibraryService {
 
     /// Явное обновление (кнопка «Обновить», перечитывание после правок): идущее чтение отменяется.
     pub fn refresh_playlist(&self, id: PlaylistId) {
+        if id.is_local() {
+            return self.local_open(id);
+        }
         if id.is_youtube() {
             return self.yt_open_playlist(id, true);
         }
@@ -1564,6 +1595,9 @@ impl LibraryService {
 
     /// Экран закрылся: отменить чтение, которое больше никому не нужно (записи и воспроизведение не трогает).
     pub fn cancel_playlist(&self, id: &PlaylistId) {
+        if id.is_local() {
+            return;
+        }
         if id.is_youtube() {
             return self.yt_cancel_playlist(id);
         }
@@ -1593,6 +1627,9 @@ impl LibraryService {
     /// его кусками. События уходят в очередь под блокировкой состояния — чтение, начавшееся параллельно,
     /// допишет свои куски после, устаревший Reset не догонит свежие строки.
     pub fn replay_playlist(&self, id: &PlaylistId) {
+        if id.is_local() {
+            return self.local_open(id.clone());
+        }
         if id.is_youtube() {
             return self.yt_replay_playlist(id);
         }
@@ -1799,12 +1836,18 @@ impl LibraryService {
     }
 
     pub fn playlist_tracks(&self, id: &PlaylistId) -> Option<Vec<TrackItem>> {
+        if id.is_local() {
+            return self.local_tracks(id);
+        }
         if id.is_youtube() {
             return self.yt_playlist_tracks(id);
         }
         lock(&self.state).pages.get(id).map(|page| page.rows.clone())
     }
     pub fn playlist_info(&self, id: &PlaylistId) -> Option<PlaylistInfo> {
+        if id.is_local() {
+            return self.local_info(id);
+        }
         if id.is_youtube() {
             return self.yt_playlist_info(id);
         }
@@ -1812,6 +1855,9 @@ impl LibraryService {
     }
     /// Свой, совместный или по приглашению (rootlist).
     pub fn can_edit(&self, id: &PlaylistId) -> bool {
+        if id.is_local() {
+            return self.local_info(id).is_some();
+        }
         if id.is_youtube() {
             return self.yt_can_edit(id);
         }
@@ -2101,6 +2147,11 @@ impl LibraryService {
     }
 
     pub fn add_to_playlist(&self, track: TrackItem, id: PlaylistId) {
+        if id.is_local() {
+            known::remember([&track]);
+            let uri = track.play_uri();
+            return self.local_add(id, vec![uri], None, Some(track));
+        }
         if id.is_youtube() {
             return self.yt_add_tracks(id, vec![track.uri]);
         }
@@ -2110,6 +2161,9 @@ impl LibraryService {
     }
     /// Добавить в конец (AddTracksPanel); дубли разрешены.
     pub fn add_tracks(&self, id: PlaylistId, uris: Vec<String>) {
+        if id.is_local() {
+            return self.local_add(id, uris, None, None);
+        }
         if id.is_youtube() {
             return self.yt_add_tracks(id, uris);
         }
@@ -2117,6 +2171,9 @@ impl LibraryService {
     }
     /// Вставить на позицию (Web API `position`; «Вернуть» после удаления строк).
     pub fn insert_tracks(&self, id: PlaylistId, uris: Vec<String>, position: usize) {
+        if id.is_local() {
+            return self.local_add(id, uris, Some(position), None);
+        }
         if id.is_youtube() {
             // YouTube Music adds at the end only
             return self.yt_add_tracks(id, uris);
@@ -2126,6 +2183,9 @@ impl LibraryService {
 
     /// (uri, позиция) — по snapshot_id. Web API снимает все вхождения URI — строки снимаются так же.
     pub fn remove_tracks(&self, id: PlaylistId, rows: Vec<(String, usize)>) {
+        if id.is_local() {
+            return self.local_remove(id, rows);
+        }
         if id.is_youtube() {
             return self.yt_remove_tracks(id, rows);
         }
@@ -2171,6 +2231,9 @@ impl LibraryService {
     }
 
     pub fn move_tracks(&self, id: PlaylistId, from: usize, to: usize) {
+        if id.is_local() {
+            return self.local_move(id, from, to);
+        }
         if id.is_youtube() {
             return self.yt_move_tracks(id, from, to);
         }
@@ -2249,7 +2312,18 @@ impl LibraryService {
         true
     }
 
+    /// No Spotify account: new playlists are local ones (library/local.rs), mirrored to YouTube Music while
+    /// "Sync local playlists to YouTube Music" is on.
+    fn creates_local(&self) -> bool {
+        lock(&self.state).account.is_none()
+    }
+
     pub fn create_playlist(&self, title: String, track: Option<TrackItem>) {
+        if self.creates_local() {
+            let uris = track.iter().map(TrackItem::play_uri).collect();
+            self.create_local_playlist(title, uris, track);
+            return;
+        }
         // a YouTube song can only go to a YouTube Music playlist
         if let Some(track) = track.as_ref().filter(|track| yt::is_youtube(&track.uri)) {
             let title = if title.trim().is_empty() { mf_i18n::t("New playlist") } else { title.trim().to_owned() };
@@ -2287,6 +2361,10 @@ impl LibraryService {
 
     /// Создать из списка URI (очередь, радио).
     pub fn create_playlist_from(&self, title: String, uris: Vec<String>) {
+        if self.creates_local() {
+            self.create_local_playlist(title, uris, None);
+            return;
+        }
         if !uris.is_empty() && uris.iter().all(|uri| yt::is_youtube(uri)) {
             let title = if title.trim().is_empty() { mf_i18n::t("New playlist") } else { title.trim().to_owned() };
             return self.create_youtube_playlist(title, uris);
@@ -2415,6 +2493,9 @@ impl LibraryService {
     }
 
     pub fn rename_playlist(&self, id: PlaylistId, title: String) {
+        if id.is_local() {
+            return self.local_rename(id, title);
+        }
         if id.is_youtube() {
             return self.yt_rename_playlist(id, title.trim().to_owned());
         }
@@ -2426,6 +2507,9 @@ impl LibraryService {
         self.edit_details(id, Some(title), None, None);
     }
     pub fn set_description(&self, id: PlaylistId, text: String) {
+        if id.is_local() {
+            return self.local_set_description(id, text);
+        }
         if id.is_youtube() {
             return self.notice(mf_i18n::t("This can't be changed for a YouTube Music playlist."));
         }
@@ -2437,6 +2521,9 @@ impl LibraryService {
         self.edit_details(id, None, Some(text), None);
     }
     pub fn set_public(&self, id: PlaylistId, public: bool) {
+        if id.is_local() {
+            return self.notice(mf_i18n::t("A local playlist stays on this computer."));
+        }
         if id.is_youtube() {
             return self.notice(mf_i18n::t("This can't be changed for a YouTube Music playlist."));
         }
@@ -2447,7 +2534,7 @@ impl LibraryService {
     /// (локальная копия); картинка Spotify принимается, только когда её пиксели совпали с выбранной
     /// (до 3 перепроверок, как в spotifast).
     pub fn upload_cover(&self, id: PlaylistId, path: std::path::PathBuf) {
-        if id.is_youtube() {
+        if id.is_youtube() || id.is_local() {
             return self.notice(mf_i18n::t("This can't be changed for a YouTube Music playlist."));
         }
         let path = match path.to_str().and_then(|text| text.strip_prefix("file:///").or(text.strip_prefix("file://"))) {
@@ -2591,6 +2678,9 @@ impl LibraryService {
     }
 
     pub fn follow_playlist(&self, id: PlaylistId) {
+        if id.is_local() {
+            return self.local_restore(id);
+        }
         if id.is_youtube() {
             return self.yt_follow_playlist(id);
         }
@@ -2644,6 +2734,9 @@ impl LibraryService {
 
     /// Отписаться (для своего — «удалить»).
     pub fn unfollow_playlist(&self, id: PlaylistId) {
+        if id.is_local() {
+            return self.local_delete(id);
+        }
         if id.is_youtube() {
             return self.yt_unfollow_playlist(id);
         }
@@ -3037,7 +3130,7 @@ impl LibraryService {
         lock(&self.state).is_saved(uri)
     }
     pub fn saved_revision(&self) -> u64 {
-        lock(&self.state).saved_revision
+        lock(&self.state).saved_revision + self.sent_saved.load(Ordering::Relaxed)
     }
 
     /// Сохранить/удалить (альбом, шоу, выпуск) или подписаться/отписаться (исполнитель).
@@ -3248,7 +3341,17 @@ impl LibraryService {
                 })
                 .collect(),
         };
+        // local playlists right after Liked Music, before the other YouTube Music playlists (the order the
+        // stable sorts keep for rows without a time)
+        let yt_start = entries.len();
         self.yt_entries(kind, owner, &state.pins, &mut entries);
+        let mut local = Vec::new();
+        self.local_entries(kind, owner, &state.pins, &times, &mut local);
+        let at = entries[yt_start..]
+            .iter()
+            .position(|entry| entry.uri == "youtube:playlist:LM")
+            .map_or(yt_start, |liked| yt_start + liked + 1);
+        entries.splice(at..at, local);
         for entry in &mut entries {
             entry.covers.retain(|cover| !cover.is_empty());
         }

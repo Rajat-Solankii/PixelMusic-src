@@ -19,7 +19,7 @@ from fontTools import subset
 from fontTools.ttLib import TTFont
 
 REPO = Path(__file__).resolve().parents[1]
-ROOT = REPO / "src" / "materialfy"
+ROOT = REPO / "src" / "pixelmusic"
 SRC = ROOT / "assets" / "fonts-src"
 OUT = ROOT / "assets" / "fonts"
 CRATES = REPO / "crates"

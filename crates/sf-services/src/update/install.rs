@@ -13,7 +13,7 @@ pub enum Outcome {
     HandedOff,
 }
 
-/// Inno Setup flags of a silent update; /RELAUNCH starts the app again (materialfy.iss, [Run]).
+/// Inno Setup flags of a silent update; /RELAUNCH starts the app again (pixelmusic.iss, [Run]).
 pub const SETUP_ARGS: [&str; 6] = ["/SILENT", "/SP-", "/NOCANCEL", "/NORESTART", "/CLOSEAPPLICATIONS", "/RELAUNCH"];
 
 pub fn install(kind: InstallKind, file: &Path, work_dir: &Path) -> Result<Outcome, String> {
@@ -22,7 +22,7 @@ pub fn install(kind: InstallKind, file: &Path, work_dir: &Path) -> Result<Outcom
         InstallKind::WindowsPortable => replace_portable(file, work_dir),
         InstallKind::AppImage => replace_appimage(file),
         InstallKind::MacApp => open_dmg(file),
-        InstallKind::Manual | InstallKind::Dev => Err(mf_i18n::t("This copy of Materialfy can't update itself")),
+        InstallKind::Manual | InstallKind::Dev => Err(mf_i18n::t("This copy of Pixel Music can't update itself")),
     }
 }
 
@@ -58,7 +58,7 @@ fn run_setup(file: &Path) -> Result<Outcome, String> {
     Ok(Outcome::Quit)
 }
 
-/// Directory with materialfy(.exe) inside an unpacked archive: the root or its only subdirectory.
+/// Directory with pixelmusic(.exe) inside an unpacked archive: the root or its only subdirectory.
 pub fn app_root(extracted: &Path, exe_name: &str) -> Option<PathBuf> {
     if extracted.join(exe_name).is_file() {
         return Some(extracted.to_path_buf());
@@ -102,9 +102,9 @@ if ($ok) { Remove-Item -LiteralPath $Source -Recurse -Force -ErrorAction Silentl
 fn replace_portable(file: &Path, work_dir: &Path) -> Result<Outcome, String> {
     let exe = std::env::current_exe().map_err(io_text)?;
     let target = exe.parent().ok_or("no exe directory")?.to_path_buf();
-    let exe_name = exe.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "materialfy.exe".into());
+    let exe_name = exe.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "pixelmusic.exe".into());
     // the app directory must be writable, or the helper would fail after the app is gone
-    let probe = target.join(".materialfy-update-probe");
+    let probe = target.join(".pixelmusic-update-probe");
     std::fs::write(&probe, b"").map_err(|e| mf_i18n::tr!("Can't write to {0}: {1}", target.display(), e))?;
     let _ = std::fs::remove_file(&probe);
 
@@ -112,7 +112,7 @@ fn replace_portable(file: &Path, work_dir: &Path) -> Result<Outcome, String> {
     let _ = std::fs::remove_dir_all(&extract);
     std::fs::create_dir_all(&extract).map_err(io_text)?;
     unzip(file, &extract)?;
-    let source = app_root(&extract, &exe_name).ok_or_else(|| mf_i18n::t("The archive doesn't contain Materialfy"))?;
+    let source = app_root(&extract, &exe_name).ok_or_else(|| mf_i18n::t("The archive doesn't contain Pixel Music"))?;
 
     let script = work_dir.join("apply-portable-update.ps1");
     std::fs::write(&script, PORTABLE_HELPER).map_err(io_text)?;
@@ -224,18 +224,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         let flat = base.join("flat");
         std::fs::create_dir_all(flat.join("qml")).unwrap();
-        std::fs::write(flat.join("materialfy.exe"), b"").unwrap();
-        assert_eq!(app_root(&flat, "materialfy.exe"), Some(flat.clone()));
+        std::fs::write(flat.join("pixelmusic.exe"), b"").unwrap();
+        assert_eq!(app_root(&flat, "pixelmusic.exe"), Some(flat.clone()));
 
         let nested = base.join("nested");
-        std::fs::create_dir_all(nested.join("Materialfy")).unwrap();
-        std::fs::write(nested.join("Materialfy").join("materialfy.exe"), b"").unwrap();
-        assert_eq!(app_root(&nested, "materialfy.exe"), Some(nested.join("Materialfy")));
+        std::fs::create_dir_all(nested.join("PixelMusic")).unwrap();
+        std::fs::write(nested.join("PixelMusic").join("pixelmusic.exe"), b"").unwrap();
+        assert_eq!(app_root(&nested, "pixelmusic.exe"), Some(nested.join("PixelMusic")));
 
         let empty = base.join("empty");
         std::fs::create_dir_all(empty.join("a")).unwrap();
         std::fs::create_dir_all(empty.join("b")).unwrap();
-        assert_eq!(app_root(&empty, "materialfy.exe"), None);
+        assert_eq!(app_root(&empty, "pixelmusic.exe"), None);
         let _ = std::fs::remove_dir_all(&base);
     }
 

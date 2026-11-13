@@ -404,9 +404,9 @@ mod tests {
     fn feed_tracks_come_from_track_shelves_only() {
         let value = |t: TrackItem| serde_json::to_value(t).unwrap();
         let shelves = vec![
-            HomeShelf { key: "a".into(), title: "Quick picks".into(), kind: "tracks".into(), items: vec![value(track("1", "x")), value(track("2", "y"))] },
-            HomeShelf { key: "b".into(), title: "Albums".into(), kind: "tiles".into(), items: vec![serde_json::json!({ "kind": "album", "uri": "youtube:album:z" })] },
-            HomeShelf { key: "c".into(), title: "More".into(), kind: "tracks".into(), items: vec![value(track("2", "y")), value(track("3", "z"))] },
+            HomeShelf { key: "a".into(), title: "Quick picks".into(), kind: "tracks".into(), items: vec![value(track("1", "x")), value(track("2", "y"))], ..Default::default() },
+            HomeShelf { key: "b".into(), title: "Albums".into(), kind: "tiles".into(), items: vec![serde_json::json!({ "kind": "album", "uri": "youtube:album:z" })], ..Default::default() },
+            HomeShelf { key: "c".into(), title: "More".into(), kind: "tracks".into(), items: vec![value(track("2", "y")), value(track("3", "z"))], ..Default::default() },
         ];
         assert_eq!(ids(&feed_tracks(&shelves)), ["1", "2", "3"]);
     }

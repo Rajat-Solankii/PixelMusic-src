@@ -1,14 +1,14 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Builds Materialfy (Rust + Qt 6.12) for Windows: the exe, a portable folder and an Inno Setup installer.
+    Builds PixelMusic (Rust + Qt 6.12) for Windows: the exe, a portable folder and an Inno Setup installer.
 
 .DESCRIPTION
     1. Finds Qt 6.12 MSVC (qmake6.exe, windeployqt.exe) and sets QMAKE/PATH for cxx-qt.
-    2. cargo build --release -p materialfy (or -CargoProfile debug).
-    3. Assembles target\dist\materialfy\: materialfy.exe, qml\ (src\materialfy\qml), assets\ (fonts,
+    2. cargo build --release -p pixelmusic (or -CargoProfile debug).
+    3. Assembles target\dist\pixelmusic\: pixelmusic.exe, qml\ (src\pixelmusic\qml), assets\ (fonts,
        icons), Qt through windeployqt --qmldir, the MSVC runtime.
-    4. Builds the installer with Inno Setup -> target\dist\Materialfy-<version>-Setup.exe.
+    4. Builds the installer with Inno Setup -> target\dist\PixelMusic-<version>-Setup.exe.
 
     Audio is played by librespot inside the exe (cpal/WASAPI opens the device); there are no external player DLLs.
 
@@ -26,13 +26,13 @@
     Cargo profile: release (default) or debug.
 
 .PARAMETER SkipBuild
-    Do not run cargo (use an existing target\<profile>\materialfy.exe).
+    Do not run cargo (use an existing target\<profile>\pixelmusic.exe).
 
 .PARAMETER SkipInstaller
     Skip the Inno Setup step.
 
 .PARAMETER Portable
-    Also pack the folder into Materialfy-<version>-windows-x64-portable.zip.
+    Also pack the folder into PixelMusic-<version>-windows-x64-portable.zip.
 #>
 param(
     [string]$QtDir,
@@ -108,7 +108,7 @@ Write-Ok "$QtDir ($(& $Qmake -query QT_VERSION))"
 # ─── 2. cargo build ───────────────────────────────────────────────────────────
 $Exe = Join-Path $ProjectRoot "target\$CargoProfile\$ExeName"
 if (-not $SkipBuild) {
-    Write-Step "cargo build ($CargoProfile) -p materialfy"
+    Write-Step "cargo build ($CargoProfile) -p pixelmusic"
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Abort "cargo not found. Install Rust: https://rustup.rs (toolchain stable-x86_64-pc-windows-msvc)"
     }
@@ -116,9 +116,9 @@ if (-not $SkipBuild) {
     try {
         # --locked: Cargo.lock держит vergen 9.0.6 (9.1 ломает build-скрипт librespot-core)
         if ($CargoProfile -eq "release") {
-            cargo build --locked --release -p materialfy --bin pixelmusic
+            cargo build --locked --release -p pixelmusic --bin pixelmusic
         } else {
-            cargo build --locked -p materialfy --bin pixelmusic
+            cargo build --locked -p pixelmusic --bin pixelmusic
         }
         if ($LASTEXITCODE -ne 0) { Abort "cargo build failed" }
     } finally {
@@ -135,8 +135,8 @@ New-Item -ItemType Directory -Force $Stage | Out-Null
 Copy-Item $Exe $Stage
 
 # QML и ресурсы — рядом с exe: оболочка ищет <exe>\qml, assets — соседний каталог
-$srcQml = Join-Path $ProjectRoot "src\materialfy\qml"
-$srcAssets = Join-Path $ProjectRoot "src\materialfy\assets"
+$srcQml = Join-Path $ProjectRoot "src\pixelmusic\qml"
+$srcAssets = Join-Path $ProjectRoot "src\pixelmusic\assets"
 Copy-Item $srcQml (Join-Path $Stage "qml") -Recurse
 Get-ChildItem (Join-Path $Stage "qml") -Recurse -Directory -Filter "__pycache__" |
     Remove-Item -Recurse -Force
@@ -210,7 +210,7 @@ Write-Ok $iscc
 Write-Step "Building the installer"
 # VersionInfoVersion — только числа: 0.2.0-rc1 → 0.2.0
 $numVersion = ($Version -split '[-+]')[0]
-& $iscc "/Qp" "/DAppVersion=$Version" "/DAppNumVersion=$numVersion" "/DDistDir=$Stage" "/O$OutDir" (Join-Path $ProjectRoot "materialfy.iss")
+& $iscc "/Qp" "/DAppVersion=$Version" "/DAppNumVersion=$numVersion" "/DDistDir=$Stage" "/O$OutDir" (Join-Path $ProjectRoot "pixelmusic.iss")
 if ($LASTEXITCODE -ne 0) { Abort "Inno Setup failed with exit code $LASTEXITCODE" }
 
 $setupExe = Join-Path $OutDir "$FilePrefix-$Version-Setup.exe"

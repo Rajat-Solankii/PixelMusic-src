@@ -2421,10 +2421,22 @@ mod actor {
         events: broadcast::Receiver<PlayerEvent>,
         engine: Arc<FakeEngine>,
         model: Vec<QueueRow>,
+        web: Arc<FakeWeb>,
     }
 
     impl Rig {
         fn new() -> Self {
+            Self::with_core(Core::new(0.5, false))
+        }
+
+        /// As the app runs it: Spotify cut, no Spotify engine.
+        fn without_spotify() -> Self {
+            let mut core = Core::new(0.5, false);
+            core.spotify = false;
+            Self::with_core(core)
+        }
+
+        fn with_core(core: Core) -> Self {
             let (tx, rx) = mpsc::unbounded_channel();
             let (snapshot, receiver) = watch::channel(PlayerSnapshot::default());
             let snapshot = Arc::new(snapshot);
@@ -2434,17 +2446,17 @@ mod actor {
                 Some(FetchedQueue { current: Some(song("spotify:track:a")), next: vec![song("spotify:track:ctx")], context: None });
             let actor =
                 Actor::new(
-                    Core::new(0.5, false),
+                    core,
                     rx,
                     tx.clone(),
                     snapshot,
                     events,
-                    web,
+                    web.clone(),
                     Arc::new(|_| {}),
                     Arc::new(|_, _, _| {}),
                     None,
                 );
-            Self { actor, tx, snapshot: receiver, events: receiver_events, engine: Arc::default(), model: Vec::new() }
+            Self { actor, tx, snapshot: receiver, events: receiver_events, engine: Arc::default(), model: Vec::new(), web }
         }
 
         /// Обработать сообщение и опубликовать снимок; события — в «модель моста».
@@ -2701,6 +2713,37 @@ mod actor {
     }
 
     #[tokio::test]
+    async fn without_spotify_volume_seek_and_the_queue_never_take_the_spotify_path() {
+        let notices = |events: &[PlayerEvent]| -> Vec<String> {
+            events.iter().filter_map(|event| match event { PlayerEvent::Notice(text) => Some(text.clone()), _ => None }).collect()
+        };
+        let mut rig = Rig::without_spotify();
+        let (_source, player) = rig.youtube().await;
+        // nothing loaded yet: a YouTube song goes to the lane's queue (not "can't share a queue")
+        let events = rig.send(Msg::Command(Command::AddToQueue(vec![yt("later")]))).await;
+        assert!(notices(&events).is_empty(), "{events:?}");
+        // and Play says there is nothing to play
+        let events = rig.send(Msg::Command(Command::TogglePlay)).await;
+        assert_eq!(notices(&events), ["Nothing is playing. Choose something to play first"]);
+
+        rig.send(Msg::Command(Command::PlayItems { items: vec![yt("v1"), yt("v2")], row: 0, context: PlayContext::new("tracks") }))
+            .await;
+        rig.settle().await;
+        let seq = player.last_load().unwrap();
+        rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Playing { position_ms: 0 } })).await;
+        // the bug: volume (and transport) while a YouTube song played went to Spotify's remote path
+        let mut events = Vec::new();
+        for command in [Command::SetVolume(0.3), Command::Seek(0.5), Command::SetShuffle(true), Command::CycleRepeat] {
+            events.extend(rig.send(Msg::Command(command)).await);
+        }
+        events.extend(rig.settle().await);
+        assert!(notices(&events).is_empty(), "{events:?}");
+        assert!(player.take().iter().any(|command| matches!(command, YtCommand::Volume(_))));
+        assert!(rig.web.calls.lock().unwrap().is_empty(), "{:?}", rig.web.calls.lock().unwrap());
+        assert_eq!(rig.track_uri().as_deref(), Some("youtube:track:v1"));
+    }
+
+    #[tokio::test]
     async fn a_restored_youtube_song_plays_in_the_lane_not_through_spotify() {
         let mut rig = Rig::new();
         rig.ready().await;
@@ -2858,14 +2901,21 @@ mod actor {
         assert_eq!(source.invalidated.lock().unwrap().as_slice(), ["v1"]);
         assert!(player.last_load().unwrap() > seq);
         assert!(rig.snapshot.borrow().error_text.is_empty());
-        // the retried load failing too is the listener's: the player's own text, no third attempt
+        // a second failure gets one more fresh URL (the resolver has moved on to another tier)
+        let second = player.last_load().unwrap();
+        rig.send(Msg::YouTube(YtMsg::Event { seq: second, event: YtEvent::Error("HTTP 403".into()) })).await;
+        rig.settle().await;
+        assert_eq!(source.invalidated.lock().unwrap().len(), 2);
+        assert!(player.last_load().unwrap() > second);
+        assert!(rig.snapshot.borrow().error_text.is_empty());
+        // the third failure is the listener's: the player's own text, no fourth attempt
         let retried = player.last_load().unwrap();
         let text = "YouTube didn't send this song's audio. Try again in a moment.";
         rig.send(Msg::YouTube(YtMsg::Event { seq: retried, event: YtEvent::Error(text.into()) })).await;
         rig.settle().await;
         assert_eq!(rig.snapshot.borrow().error_text, text);
         assert_eq!(player.last_load(), Some(retried));
-        assert_eq!(source.invalidated.lock().unwrap().len(), 1);
+        assert_eq!(source.invalidated.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

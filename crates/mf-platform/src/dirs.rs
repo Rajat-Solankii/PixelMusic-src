@@ -1,14 +1,87 @@
-//! Каталоги приложения (organization "materialfy", application "Materialfy" — как у QCoreApplication в оболочке).
+//! Каталоги приложения (organization "pixelmusic", application "PixelMusic" — как у QCoreApplication в оболочке).
 //!
 //! | что                    | Linux                                   | Windows                                        | macOS                                                   |
 //! |------------------------|-----------------------------------------|------------------------------------------------|---------------------------------------------------------|
-//! | app_data_dir (AppData) | ~/.local/share/materialfy/Materialfy  | %APPDATA%\materialfy\Materialfy              | ~/Library/Application Support/materialfy/Materialfy   |
-//! | cache_dir (Cache)      | ~/.cache/materialfy/Materialfy        | %LOCALAPPDATA%\materialfy\Materialfy\cache    | ~/Library/Caches/materialfy/Materialfy                |
-//! | settings INI           | ~/.config/materialfy/Materialfy.conf  | (реестр HKCU\Software\materialfy\Materialfy) | ~/Library/Preferences/materialfy/Materialfy.conf      |
+//! | app_data_dir (AppData) | ~/.local/share/pixelmusic/PixelMusic  | %APPDATA%\pixelmusic\PixelMusic              | ~/Library/Application Support/pixelmusic/PixelMusic   |
+//! | cache_dir (Cache)      | ~/.cache/pixelmusic/PixelMusic        | %LOCALAPPDATA%\pixelmusic\PixelMusic\cache    | ~/Library/Caches/pixelmusic/PixelMusic                |
+//! | settings INI           | ~/.config/pixelmusic/PixelMusic.conf  | (реестр HKCU\Software\pixelmusic\PixelMusic) | ~/Library/Preferences/pixelmusic/PixelMusic.conf      |
 use std::path::{Path, PathBuf};
 
-pub const ORGANIZATION: &str = "materialfy";
-pub const APPLICATION: &str = "Materialfy";
+pub const ORGANIZATION: &str = "pixelmusic";
+pub const APPLICATION: &str = "PixelMusic";
+
+/// The names the app used before it was renamed to Pixel Music (Materialfy). [`migrate_legacy`] moves what was
+/// stored under them; sf-auth reads the credential store the same way (`LEGACY_SERVICE`).
+pub const LEGACY_ORGANIZATION: &str = "materialfy";
+pub const LEGACY_APPLICATION: &str = "Materialfy";
+
+/// One-time move from the Materialfy names, run at start before anything opens these paths: the data folder and
+/// the cache folder are renamed, and on Linux/macOS the settings INI is copied (Windows keeps settings in the
+/// registry: `settings::migrate_legacy_registry`). Nothing happens when the new location already exists, so the
+/// move runs once and never overwrites newer data. Failures are logged; the app then starts with empty folders.
+pub fn migrate_legacy() {
+    let data = ::dirs::data_dir().unwrap_or_else(|| home().join(".local").join("share"));
+    if move_legacy_dir(&data) {
+        keep_credential_profile(&data.join(LEGACY_ORGANIZATION).join(LEGACY_APPLICATION).join("state"), &state_dir());
+    }
+    #[cfg(target_os = "windows")]
+    let cache = ::dirs::data_local_dir().unwrap_or_else(|| home().join("AppData").join("Local"));
+    #[cfg(not(target_os = "windows"))]
+    let cache = ::dirs::cache_dir().unwrap_or_else(|| home().join(".cache"));
+    move_legacy_dir(&cache);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let base = default_config_base();
+        let old = base.join(LEGACY_ORGANIZATION).join(format!("{LEGACY_APPLICATION}.conf"));
+        let new = settings_ini_file(None);
+        if !new.exists() && old.is_file() {
+            let copied = new.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::copy(&old, &new));
+            match copied {
+                Ok(_) => tracing::info!("settings copied from {}", old.display()),
+                Err(err) => tracing::warn!("could not copy settings from {}: {err}", old.display()),
+            }
+        }
+    }
+}
+
+/// <base>/materialfy/Materialfy → <base>/pixelmusic/PixelMusic (and the empty "materialfy" folder goes).
+/// true — moved now.
+fn move_legacy_dir(base: &Path) -> bool {
+    let old_org = base.join(LEGACY_ORGANIZATION);
+    let old = old_org.join(LEGACY_APPLICATION);
+    let new = app_subdir(base.to_path_buf());
+    if new.exists() || !is_real_dir(&old) {
+        return false;
+    }
+    let moved = new.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::rename(&old, &new));
+    match moved {
+        Ok(()) => {
+            tracing::info!("moved {} to {}", old.display(), new.display());
+            let _ = std::fs::remove_dir(&old_org); // only when empty
+            true
+        }
+        Err(err) => {
+            tracing::warn!("could not move {} to {}: {err}", old.display(), new.display());
+            false
+        }
+    }
+}
+
+/// sf-auth names its credential entries by a profile: the `credential-profile` file in the state folder, or else
+/// the SHA-256 of the state folder's path. Moving the folder changes that path, so the old profile is recorded
+/// here; without it the saved sign-ins would no longer be found. A profile already recorded is kept.
+fn keep_credential_profile(old_state: &Path, new_state: &Path) {
+    use sha2::{Digest, Sha256};
+    let file = new_state.join("credential-profile");
+    if file.exists() {
+        return;
+    }
+    let profile = format!("{:x}", Sha256::digest(old_state.to_string_lossy().as_bytes()));
+    let written = std::fs::create_dir_all(new_state).and_then(|()| std::fs::write(&file, profile));
+    if let Err(err) = written {
+        tracing::warn!("could not record the credential profile in {}: {err}", file.display());
+    }
+}
 
 fn home() -> PathBuf {
     ::dirs::home_dir().unwrap_or_else(std::env::temp_dir)
@@ -48,9 +121,9 @@ pub fn cache_subdir(sub: &str) -> PathBuf {
     dir
 }
 
-/// Файл сессии плеера: $MATERIALFY_SESSION_FILE или app_data_dir()/session.json.
+/// Файл сессии плеера: $PIXELMUSIC_SESSION_FILE или app_data_dir()/session.json.
 pub fn session_file() -> PathBuf {
-    match std::env::var_os("MATERIALFY_SESSION_FILE") {
+    match std::env::var_os("PIXELMUSIC_SESSION_FILE") {
         Some(path) if !path.is_empty() => PathBuf::from(path),
         _ => app_data_dir().join("session.json"),
     }
@@ -196,7 +269,7 @@ fn is_real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
-/// Файл настроек INI. `config_override` — каталог из --config-dir: тогда <dir>/materialfy/Materialfy.conf на любой ОС
+/// Файл настроек INI. `config_override` — каталог из --config-dir: тогда <dir>/pixelmusic/PixelMusic.conf на любой ОС
 /// (так QSettings::setPath раскладывает INI). Без него: Linux/macOS — путь из таблицы; на Windows INI не используется.
 pub fn settings_ini_file(config_override: Option<&Path>) -> PathBuf {
     let base = match config_override {
@@ -224,11 +297,38 @@ mod tests {
 
     #[test]
     fn layout() {
-        assert!(app_data_dir().ends_with(Path::new("materialfy").join("Materialfy")));
+        assert!(app_data_dir().ends_with(Path::new("pixelmusic").join("PixelMusic")));
         let ini = settings_ini_file(Some(Path::new("cfg")));
-        assert_eq!(ini, Path::new("cfg").join("materialfy").join("Materialfy.conf"));
+        assert_eq!(ini, Path::new("cfg").join("pixelmusic").join("PixelMusic.conf"));
         #[cfg(target_os = "windows")]
-        assert!(cache_dir().ends_with(Path::new("materialfy").join("Materialfy").join("cache")));
+        assert!(cache_dir().ends_with(Path::new("pixelmusic").join("PixelMusic").join("cache")));
+    }
+
+    #[test]
+    fn legacy_folder_moves_once() {
+        let base = temp_root("legacy");
+        let old = base.join(LEGACY_ORGANIZATION).join(LEGACY_APPLICATION);
+        std::fs::create_dir_all(old.join("state")).unwrap();
+        std::fs::write(old.join("history.json"), b"[1]").unwrap();
+        move_legacy_dir(&base);
+        let new = base.join(ORGANIZATION).join(APPLICATION);
+        assert_eq!(std::fs::read(new.join("history.json")).unwrap(), b"[1]");
+        assert!(new.join("state").is_dir());
+        assert!(!base.join(LEGACY_ORGANIZATION).exists());
+        // the credential profile stays the one derived from the old state folder (sf-auth's fallback)
+        keep_credential_profile(&old.join("state"), &new.join("state"));
+        let profile = std::fs::read_to_string(new.join("state").join("credential-profile")).unwrap();
+        use sha2::{Digest, Sha256};
+        assert_eq!(profile, format!("{:x}", Sha256::digest(old.join("state").to_string_lossy().as_bytes())));
+        std::fs::write(new.join("state").join("credential-profile"), "kept").unwrap();
+        keep_credential_profile(&old.join("state"), &new.join("state"));
+        assert_eq!(std::fs::read_to_string(new.join("state").join("credential-profile")).unwrap(), "kept");
+        // a second legacy folder never overwrites what is already there
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("history.json"), b"[2]").unwrap();
+        move_legacy_dir(&base);
+        assert_eq!(std::fs::read(new.join("history.json")).unwrap(), b"[1]");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     fn temp_root(name: &str) -> PathBuf {

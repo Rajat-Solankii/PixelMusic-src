@@ -6,7 +6,7 @@
 //! Signing in or out drops the tokens and the minter (`reset`).
 //!
 //! An external bgutil-style provider can be used instead: `POST {server}/get_pot` with `{"content_binding": id}`
-//! answers `{"poToken": ...}` (`YouTubeService::set_po_token_server`, or `MATERIALFY_POT_PROVIDER`).
+//! answers `{"poToken": ...}` (`YouTubeService::set_po_token_server`, or `PIXELMUSIC_POT_PROVIDER`).
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -30,7 +30,7 @@ const REFUSAL_REST: Duration = Duration::from_secs(15 * 60);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(20);
 const MINT_TIMEOUT: Duration = Duration::from_secs(10);
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(20);
-pub(crate) const PROVIDER_ENV: &str = "MATERIALFY_POT_PROVIDER";
+pub(crate) const PROVIDER_ENV: &str = "PIXELMUSIC_POT_PROVIDER";
 /// Overrides the BotGuard API key read from the player script.
 pub(crate) const KEY_ENV: &str = "BOTGUARD_API_KEY";
 

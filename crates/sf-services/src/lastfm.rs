@@ -4,7 +4,7 @@
 //! credential store (sf-auth, `Slot::LastFm`). Sign-in is the web-token flow: auth.getToken → the approval page in
 //! the browser → auth.getSession polled until approved (180 s). Then "now playing" when a track starts and a
 //! scrobble once half of it (at most 3 minutes) has played; the played time pauses with playback, tracks of 30 s
-//! or less are never scrobbled. Each call has its own toggle (SettingKey::LastFmScrobble / LastFmNowPlaying).
+//! or less are never scrobbled (all three adjustable: `ScrobbleRule`, SettingKey::LastFm*). Each call has its own toggle (SettingKey::LastFmScrobble / LastFmNowPlaying).
 //! Error 9 (invalid session) forgets the session. Like the Kotlin code there is no offline queue: a scrobble that
 //! fails is logged and dropped.
 //!
@@ -175,14 +175,49 @@ impl Song {
     }
 }
 
-/// How much has to play before a listen counts: half the track, at most 3 minutes; unknown length — 3 minutes;
+/// When a listen counts (Settings → Accounts → Scrobbling configuration). Default: tracks of 30 s or less never,
+/// otherwise after half the track but at most 3 minutes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrobbleRule {
+    /// tracks this long or shorter are never scrobbled
+    pub min_track: Duration,
+    /// percent of the track that has to play (1…100)
+    pub percent: u32,
+    /// …but never later than this
+    pub cap: Duration,
+}
+
+impl Default for ScrobbleRule {
+    fn default() -> Self {
+        Self { min_track: MIN_TRACK, percent: 50, cap: SCROBBLE_CAP }
+    }
+}
+
+impl ScrobbleRule {
+    /// The rule from the user's settings (LastFmMinTrackS / LastFmThresholdPct / LastFmMaxThresholdS).
+    pub fn from_settings(settings: &SettingsStore) -> Self {
+        let secs = |key| Duration::from_secs(u64::try_from(settings.get_int(key)).unwrap_or(0));
+        Self {
+            min_track: secs(SettingKey::LastFmMinTrackS),
+            percent: u32::try_from(settings.get_int(SettingKey::LastFmThresholdPct)).unwrap_or(50).clamp(1, 100),
+            cap: secs(SettingKey::LastFmMaxThresholdS).max(Duration::from_secs(1)),
+        }
+    }
+
+    /// How much has to play before a listen counts; unknown length — the cap; too short — never (None).
+    pub fn after(&self, duration: Option<Duration>) -> Option<Duration> {
+        match duration {
+            None => Some(self.cap),
+            Some(duration) if duration <= self.min_track => None,
+            Some(duration) => Some((duration * self.percent / 100).min(self.cap)),
+        }
+    }
+}
+
+/// [`ScrobbleRule::after`] with the default rule: half the track, at most 3 minutes; unknown length — 3 minutes;
 /// 30 s or shorter — never (None).
 pub fn scrobble_after(duration: Option<Duration>) -> Option<Duration> {
-    match duration {
-        None => Some(SCROBBLE_CAP),
-        Some(duration) if duration <= MIN_TRACK => None,
-        Some(duration) => Some((duration / 2).min(SCROBBLE_CAP)),
-    }
+    ScrobbleRule::default().after(duration)
 }
 
 /// One listen of one track (LastFmScrobbler's timer): counts played time only while playing.
@@ -201,7 +236,11 @@ pub struct Listen {
 
 impl Listen {
     pub fn new(song: Song) -> Self {
-        let remaining = scrobble_after(song.duration);
+        Self::with_rule(song, ScrobbleRule::default())
+    }
+
+    pub fn with_rule(song: Song, rule: ScrobbleRule) -> Self {
+        let remaining = rule.after(song.duration);
         Self { song, started_at: None, remaining, since: None, done: false }
     }
 
@@ -676,7 +715,8 @@ impl LastFmService {
     pub fn track_started(&self, track: &TrackItem, playing: bool) {
         {
             let mut state = lock(&self.state);
-            state.listen = Song::from_track(track).map(|song| (track.uri.clone(), Listen::new(song)));
+            let rule = ScrobbleRule::from_settings(&self.settings);
+            state.listen = Song::from_track(track).map(|song| (track.uri.clone(), Listen::with_rule(song, rule)));
             state.timer += 1;
             state.armed = None;
         }

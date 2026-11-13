@@ -100,6 +100,9 @@ pub struct HomeService {
     yt_generation: AtomicU64,
     /// "Recently played", "Daily Mix" and "Your Mix" from the local history (home/mixes.rs)
     mixes: watch::Sender<HomeMixes>,
+    /// Daily Mix / Your Mix from Last.fm (setting `lastfmSmartMix`, lib.rs `follow_lastfm_home_mixes`); None —
+    /// from the local history
+    lastfm_mixes: Mutex<Option<(Arc<Vec<TrackItem>>, Arc<Vec<TrackItem>>)>>,
     mix_key: Mutex<mixes::MixKey>,
     me: Weak<HomeService>,
 }
@@ -129,6 +132,7 @@ impl HomeService {
             yt_state: Mutex::default(),
             yt_generation: AtomicU64::new(0),
             mixes: watch::channel(HomeMixes::default()).0,
+            lastfm_mixes: Mutex::default(),
             mix_key: Mutex::default(),
             me: me.clone(),
         });
@@ -252,8 +256,12 @@ impl HomeService {
         let liked = |track: &TrackItem| self.library.is_liked(&track.uri);
         let mut key = lock(&self.mix_key);
         let previous = self.mixes.borrow().clone();
-        let (next, next_key) = mixes::build(&plays, &feed, &liked, &jiff::Zoned::now(), &previous, *key);
+        let (mut next, next_key) = mixes::build(&plays, &feed, &liked, &jiff::Zoned::now(), &previous, *key);
         *key = next_key;
+        if let Some((daily, your)) = lock(&self.lastfm_mixes).clone() {
+            next.daily = daily;
+            next.your = your;
+        }
         self.mixes.send_if_modified(|shown| {
             if *shown == next {
                 return false;
@@ -261,6 +269,12 @@ impl HomeService {
             *shown = next;
             true
         });
+    }
+
+    /// Daily Mix and Your Mix from Last.fm (Some) or back to the local history (None).
+    pub fn set_lastfm_mixes(&self, mixes: Option<(Vec<TrackItem>, Vec<TrackItem>)>) {
+        *lock(&self.lastfm_mixes) = mixes.map(|(daily, your)| (Arc::new(daily), Arc::new(your)));
+        self.publish_mixes();
     }
 
     // --- внутреннее ----------------------------------------------------------------------------

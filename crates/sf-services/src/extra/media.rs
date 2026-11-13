@@ -1,5 +1,5 @@
 //! Системная панель «Сейчас играет» и медиаклавиши через fastframe-now-playing: SMTC на Windows, Now Playing на macOS,
-//! MPRIS на Linux (org.mpris.MediaPlayer2.materialfy). Свой поток: туда приходят снимки плеера (из задачи tokio)
+//! MPRIS на Linux (org.mpris.MediaPlayer2.pixelmusic). Свой поток: туда приходят снимки плеера (из задачи tokio)
 //! и пробуждения «есть команды»; команды уходят в PlayerHandle, Raise/Quit — в AppRequest.
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -12,9 +12,9 @@ use tokio::sync::broadcast;
 
 use crate::AppRequest;
 
-pub const BUS_NAME: &str = "materialfy";
-pub const IDENTITY: &str = "Materialfy";
-pub const DESKTOP_ENTRY: &str = "materialfy";
+pub const BUS_NAME: &str = "pixelmusic";
+pub const IDENTITY: &str = "Pixel Music";
+pub const DESKTOP_ENTRY: &str = "pixelmusic";
 /// расхождение позиции, которое считается перемоткой, а не игрой
 const SEEK_JUMP_MS: i64 = 2000;
 

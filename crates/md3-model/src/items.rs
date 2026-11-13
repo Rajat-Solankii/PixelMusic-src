@@ -372,6 +372,17 @@ pub struct HomeShelf {
     pub title: String,
     pub kind: String,
     pub items: Vec<serde_json::Value>,
+    /// YouTube Music: the small line over the title ("Similar to" above an artist's name)
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub strapline: String,
+    /// YouTube Music: the header picture (the artist of a "Similar to" shelf)
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub thumbnail: String,
+    /// YouTube Music: the shelf's full page ("see all"), "" when the shelf holds everything itself
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub browse_id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub browse_params: String,
 }
 
 /// Счётчики поиска: tracks, albums, artists, playlists, shows, episodes.

@@ -61,6 +61,7 @@ impl From<AndroidHomeSection> for HomeShelf {
             title: section.title,
             kind: section.kind,
             items: section.items,
+            ..Default::default()
         }
     }
 }

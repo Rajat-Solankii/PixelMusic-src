@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: materialfy-*
+          pattern: pixelmusic-*
           path: dist
           merge-multiple: true
 
@@ -37,7 +37,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          name: Materialfy ${{ github.ref_name }}
+          name: PixelMusic ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

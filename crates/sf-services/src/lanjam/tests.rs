@@ -412,7 +412,7 @@ fn config(code: &str, beacon_targets: Vec<SocketAddr>) -> HostConfig {
         room_id: code.into(),
         host_id: "desktop-host".into(),
         host_name: "Host PC".into(),
-        device: "Materialfy for Windows".into(),
+        device: "PixelMusic for Windows".into(),
         lan_ip: Some("127.0.0.1".into()),
         bind: LOOPBACK,
         beacon_targets,

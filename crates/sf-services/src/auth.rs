@@ -151,6 +151,13 @@ pub struct AuthService {
     me: Weak<AuthService>,
 }
 
+impl AuthService {
+    /// The settings store (services that only hold the auth service read their switches here).
+    pub fn settings(&self) -> Arc<SettingsStore> {
+        self.settings.clone()
+    }
+}
+
 /// Прокси из применённых настроек (+ пароль из слота).
 pub(crate) fn settings_proxy(settings: &SettingsStore, password: Option<&ProxyPassword>) -> ProxyConfig {
     let mode = ProxyMode::from_setting(&settings.get_str(SettingKey::ProxyMode));

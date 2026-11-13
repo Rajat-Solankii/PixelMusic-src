@@ -1,5 +1,8 @@
 //! Search history (local): recent queries stored in app data dir as JSON.
 //! Cap of ~20 queries, deduplicated, newest first. Recorded when search is run or result is opened.
+//! A song played from the results, or an artist opened from them, is kept instead of the text that found it
+//! (`add_track`, `add_artist`): the entry then holds the song or artist, and choosing it plays the song again or
+//! opens the artist.
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -18,6 +21,37 @@ pub struct SearchQuery {
     pub query: String,
     /// ISO timestamp
     pub searched_at: String,
+    /// the song played from this search's results; None — a text query
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track: Option<md3_model::TrackItem>,
+    /// the artist opened from this search's results
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist: Option<SavedArtist>,
+}
+
+/// An artist opened from search results.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SavedArtist {
+    /// as the results give it (QML passes it to `Catalog.openArtist`)
+    pub artist_id: String,
+    pub name: String,
+    pub cover: String,
+}
+
+impl SearchQuery {
+    /// What the entry is known by in the UI (remove): a song's URI, `artist:<id>`, else the query text.
+    pub fn key(&self) -> String {
+        match (&self.track, &self.artist) {
+            (Some(track), _) => track.uri.clone(),
+            (None, Some(artist)) => format!("artist:{}", artist.artist_id),
+            (None, None) => self.query.clone(),
+        }
+    }
+
+    fn is_text(&self) -> bool {
+        self.track.is_none() && self.artist.is_none()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,16 +99,16 @@ impl SearchHistoryService {
         let query = query.trim().to_owned();
         let searched_at = jiff::Timestamp::now().to_string();
         let mut state = lock(&self.state);
-        // Remove duplicate if exists
-        state.queries.retain(|q| q.query != query);
+        // Remove duplicate if exists (a played song with the same title stays: it is a different entry)
+        state.queries.retain(|q| !q.is_text() || q.query != query);
         // Search-as-you-type records "be", "beat", "beatles" one after another: the newest entry that this
         // query merely continues is replaced, not kept beside it
         let lower = query.to_lowercase();
-        if state.queries.first().is_some_and(|newest| lower.starts_with(&newest.query.to_lowercase())) {
+        if state.queries.first().is_some_and(|newest| newest.is_text() && lower.starts_with(&newest.query.to_lowercase())) {
             state.queries.remove(0);
         }
         // Add new query at the front
-        state.queries.insert(0, SearchQuery { query, searched_at });
+        state.queries.insert(0, SearchQuery { query, searched_at, track: None, artist: None });
         // Cap the list
         state.queries.truncate(KEPT);
         state.dirty = true;
@@ -83,11 +117,50 @@ impl SearchHistoryService {
         let _ = self.events.send(SearchHistoryEvent::Changed);
     }
 
-    /// Remove a specific query.
+    /// A song was played from the results of `query`: it takes the query's place at the top (the text entries of
+    /// that search, and of the queries typed on the way to it, go; the same song played again moves up).
+    pub fn add_track(&self, query: &str, track: md3_model::TrackItem) {
+        if track.uri.is_empty() {
+            return;
+        }
+        let title = track.title.clone();
+        self.add_found(query, SearchQuery { query: title, track: Some(track), ..Default::default() });
+    }
+
+    /// An artist was opened from the results of `query`: kept as `add_track` keeps a song.
+    pub fn add_artist(&self, query: &str, artist: SavedArtist) {
+        if artist.artist_id.is_empty() {
+            return;
+        }
+        let name = artist.name.clone();
+        self.add_found(query, SearchQuery { query: name, artist: Some(artist), ..Default::default() });
+    }
+
+    fn add_found(&self, query: &str, mut entry: SearchQuery) {
+        let query = query.trim().to_lowercase();
+        entry.searched_at = jiff::Timestamp::now().to_string();
+        let key = entry.key();
+        let mut state = lock(&self.state);
+        state.queries.retain(|q| {
+            if !q.is_text() {
+                return q.key() != key;
+            }
+            let text = q.query.to_lowercase();
+            query.is_empty() || !(text == query || query.starts_with(&text))
+        });
+        state.queries.insert(0, entry);
+        state.queries.truncate(KEPT);
+        state.dirty = true;
+        drop(state);
+        self.save_later();
+        let _ = self.events.send(SearchHistoryEvent::Changed);
+    }
+
+    /// Remove an entry by its `key` (a query's text, a song's URI).
     pub fn remove_query(&self, query: &str) {
         let mut state = lock(&self.state);
         let before_len = state.queries.len();
-        state.queries.retain(|q| q.query != query);
+        state.queries.retain(|q| q.key() != query);
         if state.queries.len() != before_len {
             state.dirty = true;
             drop(state);
@@ -332,6 +405,52 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(rx.try_recv().is_err());
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn a_played_song_replaces_the_query_that_found_it() {
+        let path = temp_file();
+        let service = SearchHistoryService::with_file(Handle::current(), path.clone());
+        service.add_query("older".to_string());
+        service.add_query("bohemian".to_string());
+        let song = md3_model::TrackItem { uri: "youtube:track:abc".into(), title: "Bohemian Rhapsody".into(), ..Default::default() };
+        service.add_track("Bohemian rhap", song.clone());
+        let entries = service.queries();
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert_eq!(entries[0].track.as_ref().map(|t| t.uri.as_str()), Some("youtube:track:abc"));
+        assert_eq!((entries[0].query.as_str(), entries[0].key().as_str()), ("Bohemian Rhapsody", "youtube:track:abc"));
+        assert_eq!(entries[1].query, "older");
+        // played again from another search: one entry, at the top
+        service.add_query("queen".to_string());
+        service.add_track("queen", song);
+        assert_eq!(service.queries().len(), 2);
+        // typing a title that matches the song's does not swallow the song
+        service.add_query("Bohemian".to_string());
+        assert!(service.queries().iter().any(|q| q.track.is_some()));
+        service.remove_query("youtube:track:abc");
+        assert!(service.queries().iter().all(|q| q.track.is_none()));
+        // survives a restart
+        service.add_track("x", md3_model::TrackItem { uri: "youtube:track:z".into(), title: "Z".into(), ..Default::default() });
+        service.flush();
+        let again = SearchHistoryService::with_file(Handle::current(), path.clone());
+        assert_eq!(again.queries()[0].track.as_ref().map(|t| t.title.as_str()), Some("Z"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn an_opened_artist_replaces_the_query_too() {
+        let path = temp_file();
+        let service = SearchHistoryService::with_file(Handle::current(), path.clone());
+        service.add_query("diljit".to_string());
+        let artist = SavedArtist { artist_id: "UCabc".into(), name: "Diljit Dosanjh".into(), cover: "https://x/y.jpg".into() };
+        service.add_artist("diljit", artist.clone());
+        service.add_artist("diljit dos", artist);
+        let entries = service.queries();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!((entries[0].query.as_str(), entries[0].key().as_str()), ("Diljit Dosanjh", "artist:UCabc"));
+        service.remove_query("artist:UCabc");
+        assert!(service.queries().is_empty());
         let _ = std::fs::remove_file(&path);
     }
 }

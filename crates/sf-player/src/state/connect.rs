@@ -897,7 +897,7 @@ pub(crate) fn play_body(request: &PlayRequest, shuffle: bool) -> Option<Value> {
         "play",
         json!({
             "context": context,
-            "play_origin": { "feature_identifier": "materialfy" },
+            "play_origin": { "feature_identifier": "pixelmusic" },
             "options": Value::Object(options),
         }),
     ))
