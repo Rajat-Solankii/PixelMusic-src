@@ -17,7 +17,7 @@ use crate::{RESTART_BEFORE_PREVIOUS_MS, Repeat};
 /// Queue row ids of the lane start high so they never meet the ids `Core` hands out.
 const FIRST_UID: u64 = 1 << 48;
 /// How many times a failed load is resolved again: the anonymous ANDROID_VR, the account's, then the web player.
-const MAX_RETRIES: u8 = 2;
+const MAX_RETRIES: u8 = 4;
 
 /// What the actor does for the lane.
 #[derive(Clone, Debug, PartialEq)]

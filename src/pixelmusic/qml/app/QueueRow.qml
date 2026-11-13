@@ -5,7 +5,7 @@ import PixelMusic.Core
 
 // Queue row as a PixelPlayer-style card (the row height keeps a 4 px gap between cards): cover · title/artists ·
 // length 36 px (the menu on hover) · drag handle on the right (rows that can move, on this computer). The playing
-// song is a secondary-container card with a cookie cover; a lifted card grows, rises and gets an outline.
+// song is a primary-container card with a cookie cover; a lifted card grows, rises and gets an outline.
 Item {
     id: root
 
@@ -39,8 +39,8 @@ Item {
         return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")
     }
 
-    readonly property color fg: current ? Theme.fgSecondaryContainer : Theme.fgSurface
-    readonly property color fgVariant: current ? Qt.alpha(Theme.fgSecondaryContainer, 0.78) : Theme.fgSurfaceVariant
+    readonly property color fg: current ? Theme.fgPrimaryContainer : Theme.fgSurface
+    readonly property color fgVariant: current ? Qt.alpha(Theme.fgPrimaryContainer, 0.78) : Theme.fgSurfaceVariant
 
     Rectangle {
         id: bg
@@ -50,7 +50,7 @@ Item {
         radius: root.current ? Theme.shape.extraLarge : Theme.shape.large
         // translucent: the queue also sits on Now Playing's cover backdrop
         color: root.dragging ? Theme.surfaceContainerHighest
-             : root.current ? Theme.secondaryContainer : Qt.alpha(Theme.surfaceContainerHigh, 0.55)
+             : root.current ? Theme.primaryContainer : Qt.alpha(Theme.surfaceContainerHigh, 0.55)
         border.width: root.dragging ? 1 : 0
         border.color: Qt.alpha(Theme.primary, 0.5)
         Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsDefault } }
@@ -104,7 +104,7 @@ Item {
                     implicitWidth: 16
                     implicitHeight: 16
                     radius: 4
-                    color: root.current ? Qt.alpha(Theme.fgSecondaryContainer, 0.14) : Theme.surfaceContainerHighest
+                    color: root.current ? Qt.alpha(Theme.fgPrimaryContainer, 0.14) : Theme.surfaceContainerHighest
                     Label { anchors.centerIn: parent; text: "E"; type: "labelSmall"; color: root.fgVariant }
                 }
                 Item { Layout.fillWidth: true }

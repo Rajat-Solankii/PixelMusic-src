@@ -16,8 +16,8 @@ Row {
     // small Layout.preferredWidth); false — each segment as wide as its content
     property bool fill: false
     // selected segment: container and content colours (Expressive accent: Theme.primary / Theme.fgPrimary)
-    property color selectedColor: Theme.secondaryContainer
-    property color selectedContentColor: Theme.fgSecondaryContainer
+    property color selectedColor: Theme.primaryContainer
+    property color selectedContentColor: Theme.fgPrimaryContainer
     // Expressive width change: the selected segment grows by this many px, its neighbours give way
     property real selectedGrow: 0
 

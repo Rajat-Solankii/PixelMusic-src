@@ -1165,7 +1165,10 @@ impl Sink for RodioSink {
             // and then nothing would ever make room. Start it over.
             log::warn!("the audio output stopped playing for {STALL:?}; opening it again");
             self.output = None;
-            self.ensure_open()?;
+            if let Err(e) = self.ensure_open() {
+                log::warn!("could not reopen audio output after stall: {e}; will retry on next write");
+                return Ok(());
+            }
         }
         self.apply_volume();
         Ok(())

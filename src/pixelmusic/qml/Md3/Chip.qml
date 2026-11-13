@@ -26,7 +26,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: root.cornerRadius
-        color: root.selected ? Theme.secondaryContainer : "transparent"
+        color: root.selected ? Theme.primaryContainer : "transparent"
         border.width: root.selected ? 0 : 1
         border.color: Theme.outlineVariant
         Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsDefault } }
@@ -44,14 +44,14 @@ Item {
             tight: true
             name: root.selected ? "check" : root.icon
             size: 18
-            color: root.selected ? Theme.fgSecondaryContainer : Theme.primary
+            color: root.selected ? Theme.fgPrimaryContainer : Theme.primary
             anchors.verticalCenter: parent.verticalCenter
         }
         Label {
             visible: root.text !== ""
             text: root.text
             type: "labelLarge"
-            color: root.selected ? Theme.fgSecondaryContainer : Theme.fgSurfaceVariant
+            color: root.selected ? Theme.fgPrimaryContainer : Theme.fgSurfaceVariant
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -60,7 +60,7 @@ Item {
         id: area
         anchors.fill: parent
         radius: root.cornerRadius
-        color: root.selected ? Theme.fgSecondaryContainer : Theme.fgSurfaceVariant
+        color: root.selected ? Theme.fgPrimaryContainer : Theme.fgSurfaceVariant
         onClicked: root.clicked()
     }
 }

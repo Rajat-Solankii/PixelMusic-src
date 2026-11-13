@@ -321,9 +321,9 @@ ColumnLayout {
                 // until a cover's own colours arrive (CoverTones) — or when the cover cannot be read — the pills take the
                 // tones of the theme in turn
                 readonly property var tones: [
+                    [Theme.primaryContainer, Theme.fgPrimaryContainer],
                     [Theme.secondaryContainer, Theme.fgSecondaryContainer],
                     [Theme.tertiaryContainer, Theme.fgTertiaryContainer],
-                    [Theme.primaryContainer, Theme.fgPrimaryContainer],
                     [Theme.surfaceContainerHighest, Theme.fgSurface]
                 ]
                 Layout.fillWidth: true
