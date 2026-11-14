@@ -23,6 +23,9 @@ Item {
     readonly property bool ready: _palette || img.status === Image.Ready
     readonly property real _blur: _palette ? 1 : Math.max(0, Math.min(1, blur))
     readonly property bool _flowing: flow > 0 && _blur > 0.2   // чёткую обложку «переливать» нечего
+    // glass (grain) and blobs (no cubic smoothing) exist only in the shader: those modes always draw through it,
+    // also without drift; only a still "Soft" background uses the cheap stretched copy
+    readonly property bool _shader: _palette || _flowing || mode === "glass" || mode === "blobs"
     property real _t: 0
 
     readonly property int _side: {
@@ -68,7 +71,8 @@ Item {
                 required property string modelData
                 width: 1
                 height: 1
-                color: Theme[modelData]
+                // the player's colours (the cover's, also when the app keeps its own accent)
+                color: PlayerTheme[modelData]
             }
         }
     }
@@ -82,7 +86,7 @@ Item {
         source: img.source
         sourceSize: Qt.size(root._side, root._side)
         asynchronous: true
-        visible: !root._palette && staticImg.status === Image.Ready && root.ready && !root._flowing
+        visible: !root._shader && staticImg.status === Image.Ready && root.ready
         fillMode: Image.PreserveAspectCrop
         smooth: true
     }
@@ -91,7 +95,7 @@ Item {
         anchors.fill: parent
         // Без «плавания» шейдер не нужен: он каждый кадр семплирует и смешивает всю площадь окна.
         // Статичная копия обложки (та же кубическая интерполяция блюра) дешевле на порядки.
-        visible: root.ready && (root._palette || root._flowing)
+        visible: root.ready && root._shader
         property var source: root._palette ? swatches : img
         property real time: root._t
         property real amp: root._flowing ? 0.08 * root._blur : 0

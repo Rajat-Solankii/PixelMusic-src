@@ -27,7 +27,7 @@ Item {
     readonly property bool dropZoneShown: Player.isLocal && Player.hasTrack && Player.manualCount === 0
     // the list reaches this far past the panel padding on each side, so a lifted card (scaled, with a shadow) is not
     // cut by the list's clip; rows keep the panel's width inside it
-    readonly property real _bleed: 8
+    readonly property real _bleed: 12
 
     function recount() {
         if (!queue) {
@@ -44,20 +44,21 @@ Item {
         target: Player
         function onQueueChanged() {
             root.recount()
-            // an update while the card is still gliding (autoplay adding songs) must not drop the pending move
-            if (!glideTimer.running)
+            // an update while the card is still gliding or its move is on the way (autoplay adding songs) must not
+            // drop the pending move
+            if (!glideTimer.running && !root._committing)
                 root._resetDrag()
         }
     }
     Connections {
         target: root.queue
         function onCountChanged() { root.recount() }
-        function onModelReset() { root.recount() }
+        function onModelReset() { root.recount(); root._checkCommitted() }
         function onRowsInserted() { root.recount() }
         function onRowsRemoved() { root.recount() }
-        function onRowsMoved() { root.recount() }
-        // Also react to data changes in the model (section changes)
-        function onDataChanged() { Qt.callLater(root.recount) }
+        function onRowsMoved() { root.recount(); root._checkCommitted() }
+        // Also react to data changes in the model (section changes, rows replaced in place)
+        function onDataChanged() { Qt.callLater(() => { root.recount(); root._checkCommitted() }) }
     }
     // новый контекст — снова свёрнут
     readonly property string _contextUri: Player.contextUri
@@ -74,10 +75,20 @@ Item {
     property real _dy: 0
     property real _scrollStart: 0
     property real _pointerY: -1            // in list coordinates, -1 = not dragging
+    // the dragged song: after the move the drag ends only once the model shows it in its new place, so the card
+    // never flashes back to its old slot
+    property var _dragUid: undefined
+    // the move is on its way to the player: the list's own move/displaced transitions stay off, the rows already
+    // stand where the move puts them
+    property bool _committing: false
     readonly property int dragRows: dragSection === "manual" ? manualRows : dragSection === "context" ? contextShown : 0
 
     function beginDrag(section, m) {
+        commitTimer.stop()
+        _committing = false
         shiftAnimated = true
+        const start = section === "manual" ? manualStart : contextStart
+        _dragUid = start >= 0 && queue ? queue.get(start + m).uid : undefined
         dragSection = section
         dragFrom = m
         dragTo = m
@@ -103,8 +114,8 @@ Item {
         if (dragFrom < 0)
             return
         if (dragTo !== dragFrom && Player.queueReorderable) {
-            // the card glides into its slot first (settling before the offset, so the change animates); the move
-            // goes to the player when it is there, and the rows stay put until the updated queue arrives
+            // the slot is already open under the card: it glides into it; the move goes to the player when it is
+            // there, and the rows stay put until the model shows the song in its new place
             settleTimer.restart()
             glideTimer.restart()
             dragOffset = (dragTo - dragFrom) * rowHeight
@@ -117,8 +128,11 @@ Item {
         }
     }
     function _resetDrag() {
-        if (dragFrom < 0)
+        commitTimer.stop()
+        if (dragFrom < 0) {
+            _committing = false
             return
+        }
         settleTimer.stop()
         settleTimer.interval = 1000
         glideTimer.stop()
@@ -127,15 +141,32 @@ Item {
         dragFrom = -1
         dragTo = -1
         dragOffset = 0
+        _dragUid = undefined
         Qt.callLater(() => root.shiftAnimated = true)
+        // a few frames later: the list lays the moved rows out first, without its move/displaced transitions
+        if (_committing)
+            uncommitTimer.restart()
     }
-    Timer { id: settleTimer; interval: 1000; onTriggered: root._resetDrag() }
+    // the model has the moved song at the drop slot: the offsets go and the layout takes over in the same frame
+    function _checkCommitted() {
+        if (!_committing || dragFrom < 0 || !queue)
+            return
+        const start = dragSection === "manual" ? manualStart : contextStart
+        if (start >= 0 && start + dragTo < count && queue.get(start + dragTo).uid === _dragUid)
+            _resetDrag()
+    }
+    Timer { id: settleTimer; interval: 1000; onTriggered: if (!root._committing) root._resetDrag() }
+    // the player never answered the move (a refused reorder): put everything back
+    Timer { id: commitTimer; interval: 1500; onTriggered: root._resetDrag() }
+    Timer { id: uncommitTimer; interval: 80; onTriggered: root._committing = false }
     Timer {
         id: glideTimer
         interval: Theme.motion.spatialFast + 20
         onTriggered: {
             if (root.dragFrom < 0 || root.dragTo === root.dragFrom)
                 return
+            root._committing = true
+            commitTimer.restart()
             if (root.dragSection === "manual")
                 Player.moveManual(root.dragFrom, root.dragTo)
             else
@@ -162,10 +193,8 @@ Item {
     function shiftFor(section, m) {
         if (dragFrom < 0 || section !== dragSection || m < 0 || m === dragFrom)
             return 0
-        // while the card is held it floats over the list and leaves no space behind: the rows after it close up
-        // by one place. On release the rows open exactly one slot where it drops (below)
-        if (!settling)
-            return m > dragFrom ? -rowHeight : 0
+        // the rows trade places with the held card as it passes them: the one free slot is always the one under the
+        // card, so no empty space shows (also with the last song) and on release it glides straight into it
         if (dragFrom < dragTo && m > dragFrom && m <= dragTo)
             return -rowHeight
         if (dragTo < dragFrom && m >= dragTo && m < dragFrom)
@@ -441,10 +470,12 @@ Item {
             NumberAnimation { property: "opacity"; to: 0; duration: Theme.motion.effectsFast }
         }
         displaced: Transition {
+            enabled: !root._committing
             NumberAnimation { property: "y"; duration: Theme.motion.spatialFast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized }
             NumberAnimation { property: "opacity"; to: 1; duration: Theme.motion.effectsFast }
         }
         move: Transition {
+            enabled: !root._committing
             NumberAnimation { property: "y"; duration: Theme.motion.spatialFast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized }
         }
     }

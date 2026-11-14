@@ -5,6 +5,8 @@ import QtQuick
 // interactive: true превращает его в перемотку (сигналы moved/committed).
 Item {
     id: root
+    // the colour scheme it draws with: Theme, or PlayerTheme on the player surfaces
+    property var scheme: Theme
 
     property real value: 0              // 0..1
     property bool wavy: true
@@ -14,9 +16,9 @@ Item {
     property real wavelength: 40
     property real speed: 1              // периодов волны в секунду
     property real gap: 4
-    property color activeColor: Theme.primary
-    property color trackColor: Theme.secondaryContainer
-    property color stopColor: Theme.primary
+    property color activeColor: root.scheme.primary
+    property color trackColor: root.scheme.secondaryContainer
+    property color stopColor: root.scheme.primary
     // round thumb at the playhead (seek bars): a filled circle in activeColor drawn over the wave, a bit bigger
     // while hovered or dragged; 0 — none
     property real thumbSize: interactive ? Math.min(16, Math.max(10, Math.round(thickness * 2.5))) : 0

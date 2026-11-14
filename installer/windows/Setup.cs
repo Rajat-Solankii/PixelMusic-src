@@ -42,7 +42,8 @@ namespace PixelMusic.Installer
 
         // ── Names ─────────────────────────────────────────────────────────────────────────
         private const string AppName = "Pixel Music";
-        // the name on the installer's screens; folders, shortcuts and the Installed apps entry keep AppName
+        // the name Windows shows: the installer's screens, the shortcuts (the taskbar jump list and the media flyout
+        // take the Start-menu shortcut's name), Installed apps. The install folder keeps AppName so updates find it.
         private const string ShownName = "PixelMusic";
         private const string ExeName = "pixelmusic.exe";
         private const string Publisher = "Ian Shul Yadav";
@@ -169,7 +170,7 @@ namespace PixelMusic.Installer
             string existing = ExistingInstall();
             if (existing != null) dir = existing;
             // autostart is off by default (as in pixelmusic.iss); an update keeps what the user had
-            optAutostart = File.Exists(StartupLink());
+            optAutostart = File.Exists(StartupLink()) || File.Exists(LegacyStartupLink());
 #if UNINSTALLER
             // the uninstaller removes the folder it sits in
             dir = Path.GetDirectoryName(Application.ExecutablePath);
@@ -1056,7 +1057,7 @@ namespace PixelMusic.Installer
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(UninstallKey))
             {
                 if (key == null) return;
-                key.SetValue("DisplayName", AppName);
+                key.SetValue("DisplayName", ShownName);
                 key.SetValue("DisplayVersion", version);
                 key.SetValue("DisplayIcon", exePath + ",0");
                 key.SetValue("Publisher", Publisher);
@@ -1077,25 +1078,46 @@ namespace PixelMusic.Installer
         }
 #endif
 
-        private static string DesktopLink() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"); }
-        private static string StartMenuDir() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName); }
-        private static string StartupLink() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), AppName + ".lnk"); }
+        private static string Folder(Environment.SpecialFolder f) { return Environment.GetFolderPath(f); }
+        private static string DesktopLink() { return Path.Combine(Folder(Environment.SpecialFolder.DesktopDirectory), ShownName + ".lnk"); }
+        private static string StartMenuLink() { return Path.Combine(Folder(Environment.SpecialFolder.Programs), ShownName + ".lnk"); }
+        private static string StartupLink() { return Path.Combine(Folder(Environment.SpecialFolder.Startup), ShownName + ".lnk"); }
+        // the "Pixel Music" shortcuts of earlier installs (both installers): Start menu folder with the app and
+        // Inno's uninstall entry, desktop and Startup links. The pinned taskbar link is left alone (renaming it unpins).
+        private static string LegacyDesktopLink() { return Path.Combine(Folder(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"); }
+        private static string LegacyStartMenuDir() { return Path.Combine(Folder(Environment.SpecialFolder.Programs), AppName); }
+        private static string LegacyStartupLink() { return Path.Combine(Folder(Environment.SpecialFolder.Startup), AppName + ".lnk"); }
+        private static void RemoveLegacyLinks()
+        {
+            TryDelete(LegacyDesktopLink());
+            TryDelete(LegacyStartupLink());
+            try { if (Directory.Exists(LegacyStartMenuDir())) Directory.Delete(LegacyStartMenuDir(), true); } catch { }
+        }
+        // HKCU\Software\Classes\AppUserModelId\<id>: the name and icon Windows shows for the app's AppUserModelID
+        // (media flyout, notifications) when no shortcut tells it. The app writes the same key at start.
+        private const string AumidKey = @"Software\Classes\AppUserModelId\" + AppUserModelId;
 
 #if !UNINSTALLER
         private static void CreateShortcuts(string targetDir, string exePath, bool desktop, bool startMenu, bool autostart)
         {
-            if (desktop) Shortcut.Create(DesktopLink(), exePath, targetDir, AppName + " music player", AppUserModelId);
+            RemoveLegacyLinks();
+            string about = ShownName + " music player";
+            if (desktop) Shortcut.Create(DesktopLink(), exePath, targetDir, about, AppUserModelId);
             else TryDelete(DesktopLink());
-            if (startMenu)
-            {
-                Directory.CreateDirectory(StartMenuDir());
-                Shortcut.Create(Path.Combine(StartMenuDir(), AppName + ".lnk"), exePath, targetDir, AppName + " music player", AppUserModelId);
-                // Inno's "Uninstall Pixel Music" entry pointed at unins000.exe
-                TryDelete(Path.Combine(StartMenuDir(), "Uninstall " + AppName + ".lnk"));
-            }
-            // autostart: a shortcut in the user's Startup folder, the same one pixelmusic.iss made
-            if (autostart) Shortcut.Create(StartupLink(), exePath, targetDir, AppName + " music player", AppUserModelId);
+            // straight in Programs (no folder): one "PixelMusic" entry in the Start menu's All apps
+            if (startMenu) Shortcut.Create(StartMenuLink(), exePath, targetDir, about, AppUserModelId);
+            else TryDelete(StartMenuLink());
+            // autostart: a shortcut in the user's Startup folder, the same one pixelmusic.iss makes
+            if (autostart) Shortcut.Create(StartupLink(), exePath, targetDir, about, AppUserModelId);
             else TryDelete(StartupLink());
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(AumidKey))
+                {
+                    if (k != null) k.SetValue("DisplayName", ShownName);   // IconUri: the app sets its colourway's .ico
+                }
+            }
+            catch { }
         }
 #endif
 
@@ -1110,8 +1132,10 @@ namespace PixelMusic.Installer
             string self = Application.ExecutablePath;
             ShowProgress(5, "Removing shortcuts…");
             TryDelete(DesktopLink());
+            TryDelete(StartMenuLink());
             TryDelete(StartupLink());
-            try { if (Directory.Exists(StartMenuDir())) Directory.Delete(StartMenuDir(), true); } catch { }
+            RemoveLegacyLinks();
+            try { Registry.CurrentUser.DeleteSubKeyTree(AumidKey, false); } catch { }
 
             ShowProgress(10, "Removing " + ShownName + " from Installed apps…");
             try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }

@@ -33,7 +33,7 @@ Window {
     width: slotWidth
     height: 40
     color: "transparent"
-    title: "Pixel Music"
+    title: "PixelMusic"
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     // Без владельца из Qt: окно, принадлежащее главному, Windows прячет вместе с ним (владелец — панель, см. C++)
     transientParent: null

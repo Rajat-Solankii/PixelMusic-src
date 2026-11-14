@@ -27,6 +27,9 @@ pub const KEPT: usize = 20_000;
 /// Rows in the rankings.
 pub const TOP_TRACKS: usize = 10;
 pub const TOP_ARTISTS: usize = 6;
+pub const TOP_ALBUMS: usize = 6;
+/// A pause longer than this between two listens starts a new listening session.
+pub const SESSION_GAP_SECONDS: i64 = 15 * 60;
 
 /// One listen: which track, when it started, and how long it was heard.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -81,6 +84,7 @@ fn from_record(record: &PlayRecord) -> Option<ListenEvent> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StatsRange {
+    Today,
     #[default]
     Week,
     Month,
@@ -89,9 +93,10 @@ pub enum StatsRange {
 }
 
 impl StatsRange {
-    /// "week" | "month" | "year" | "all" (QML)
+    /// "today" | "week" | "month" | "year" | "all" (QML)
     pub fn from_name(name: &str) -> Self {
         match name {
+            "today" => Self::Today,
             "month" => Self::Month,
             "year" => Self::Year,
             "all" => Self::AllTime,
@@ -113,13 +118,14 @@ pub struct Ranked {
     pub seconds: u64,
 }
 
-/// One bar of the chart: a day (week and month ranges) or a month (year range).
+/// One bar of the chart: three hours (today), a day (week and month ranges) or a month (year range).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bucket {
-    /// "2026-11-12" for a day, "2026-11" for a month
+    /// "2026-11-12" for a day, "2026-11" for a month, "06" for the three hours from 6:00
     pub label: String,
     pub seconds: u64,
+    pub plays: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
@@ -135,8 +141,19 @@ pub struct StatsSummary {
     pub youtube_seconds: u64,
     pub top_tracks: Vec<Ranked>,
     pub top_artists: Vec<Ranked>,
-    /// week: Monday..Sunday; month: day 1..today; year: January..December; all time: none
+    /// albums by time heard (subtitle: the artist)
+    pub top_albums: Vec<Ranked>,
+    /// today: eight blocks of three hours; week: Monday..Sunday; month: day 1..today; year: January..December;
+    /// all time: none
     pub buckets: Vec<Bucket>,
+    /// the hour of the day (0..23) with the most listening
+    pub peak_hour: Option<i8>,
+    /// the weekday (0 = Monday) with the most listening
+    pub busiest_weekday: Option<i8>,
+    /// the longest stretch of listening without a pause of [`SESSION_GAP_SECONDS`]
+    pub longest_session_seconds: u64,
+    /// days of the range with any listening
+    pub active_days: u32,
 }
 
 /// The stats of `plays` in `range`, with `today` in time zone `tz`.
@@ -144,6 +161,7 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
     let day_of = |at: i64| jiff::Timestamp::from_second(at).ok().map(|t| t.to_zoned(tz.clone()).date());
     let dated: Vec<(Date, &ListenEvent)> = plays.iter().filter_map(|p| Some((day_of(p.at)?, p))).collect();
     let start = match range {
+        StatsRange::Today => today,
         StatsRange::Week => today.checked_sub(jiff::Span::new().days(i64::from(today.weekday().to_monday_zero_offset())))
             .unwrap_or(today),
         StatsRange::Month => today.first_of_month(),
@@ -156,6 +174,10 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
 
     let mut tracks: HashMap<&str, Ranked> = HashMap::new();
     let mut artists: HashMap<String, (Ranked, Vec<&str>)> = HashMap::new();
+    let mut albums: HashMap<String, Ranked> = HashMap::new();
+    let zoned = |at: i64| jiff::Timestamp::from_second(at).ok().map(|t| t.to_zoned(tz.clone()));
+    let mut hours = [0u64; 24];
+    let mut weekdays = [0u64; 7];
     let (mut spotify, mut youtube) = (0u64, 0u64);
     // newest first, so the title and cover shown are the latest ones
     let mut ordered: Vec<&(Date, &ListenEvent)> = in_range.iter().collect();
@@ -172,6 +194,23 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
         });
         track.plays += 1;
         track.seconds += seconds;
+        if let Some(when) = zoned(play.at) {
+            hours[when.hour().clamp(0, 23) as usize] += seconds;
+            weekdays[when.weekday().to_monday_zero_offset().clamp(0, 6) as usize] += seconds;
+        }
+        let album_name = play.album.trim();
+        if !album_name.is_empty() {
+            let album = albums.entry(format!("{}\u{1f}{}", album_name.to_lowercase(), play.first_artist().to_lowercase()))
+                .or_insert_with(|| Ranked {
+                    id: album_name.to_owned(),
+                    title: album_name.to_owned(),
+                    subtitle: play.first_artist().to_owned(),
+                    cover: play.cover.clone(),
+                    ..Default::default()
+                });
+            album.plays += 1;
+            album.seconds += seconds;
+        }
         let name = play.first_artist();
         if name.is_empty() {
             continue;
@@ -200,8 +239,47 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
         .collect();
     top_artists.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.plays.cmp(&a.plays)).then(a.title.cmp(&b.title)));
     top_artists.truncate(TOP_ARTISTS);
+    let mut top_albums: Vec<Ranked> = albums.into_values().collect();
+    top_albums.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.plays.cmp(&a.plays)).then(a.title.cmp(&b.title)));
+    top_albums.truncate(TOP_ALBUMS);
+
+    let busiest = |values: &[u64]| -> Option<i8> {
+        let (index, most) = values.iter().enumerate().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(&a.0)))?;
+        (*most > 0).then_some(index as i8)
+    };
+    let peak_hour = busiest(&hours);
+    let busiest_weekday = busiest(&weekdays);
+    // sessions: listens in time order, a pause longer than SESSION_GAP_SECONDS after one ends starts a new one
+    let mut timeline: Vec<&ListenEvent> = in_range.iter().map(|(_, p)| *p).collect();
+    timeline.sort_by_key(|p| p.at);
+    let (mut longest, mut current, mut ends) = (0u64, 0u64, i64::MIN);
+    for play in timeline {
+        if ends != i64::MIN && play.at - ends > SESSION_GAP_SECONDS {
+            current = 0;
+        }
+        current += u64::from(play.seconds);
+        ends = ends.max(play.at + i64::from(play.seconds));
+        longest = longest.max(current);
+    }
+    let mut active: Vec<Date> = in_range.iter().map(|(d, _)| *d).collect();
+    active.sort();
+    active.dedup();
 
     let buckets = match range {
+        StatsRange::Today => (0..8i8)
+            .map(|block| {
+                let in_block: Vec<&ListenEvent> = in_range
+                    .iter()
+                    .map(|(_, p)| *p)
+                    .filter(|p| zoned(p.at).is_some_and(|t| t.hour() / 3 == block))
+                    .collect();
+                Bucket {
+                    label: format!("{:02}", block * 3),
+                    seconds: in_block.iter().map(|p| u64::from(p.seconds)).sum(),
+                    plays: in_block.len() as u32,
+                }
+            })
+            .collect(),
         StatsRange::Week | StatsRange::Month => {
             let count = if range == StatsRange::Week { 7 } else { days as i64 };
             (0..count)
@@ -209,6 +287,7 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
                 .map(|day| Bucket {
                     label: day.to_string(),
                     seconds: in_range.iter().filter(|(d, _)| *d == day).map(|(_, p)| u64::from(p.seconds)).sum(),
+                    plays: in_range.iter().filter(|(d, _)| *d == day).count() as u32,
                 })
                 .collect()
         }
@@ -216,6 +295,7 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
             .map(|month| Bucket {
                 label: format!("{:04}-{month:02}", today.year()),
                 seconds: in_range.iter().filter(|(d, _)| d.month() == month).map(|(_, p)| u64::from(p.seconds)).sum(),
+                plays: in_range.iter().filter(|(d, _)| d.month() == month).count() as u32,
             })
             .collect(),
         StatsRange::AllTime => Vec::new(),
@@ -231,7 +311,12 @@ pub fn summary(plays: &[ListenEvent], range: StatsRange, today: Date, tz: &TimeZ
         youtube_seconds: youtube,
         top_tracks,
         top_artists,
+        top_albums,
         buckets,
+        peak_hour,
+        busiest_weekday,
+        longest_session_seconds: longest,
+        active_days: active.len() as u32,
     }
 }
 
@@ -469,7 +554,8 @@ mod tests {
         assert_eq!(s.top_artists[1].id, "alice");
         assert_eq!(s.distinct_artists, 3, "the track without artists is not an artist");
         assert_eq!(s.buckets.len(), 7);
-        assert_eq!(s.buckets[0], Bucket { label: "2026-11-09".into(), seconds: 180 });
+        assert_eq!(s.buckets[0], Bucket { label: "2026-11-09".into(), seconds: 180, plays: 1 });
+        assert_eq!(s.buckets[3].plays, 3);
         assert_eq!(s.buckets[3].seconds, 330);
         assert_eq!(s.buckets[6].seconds, 0);
     }
@@ -482,13 +568,38 @@ mod tests {
         assert_eq!(month.buckets.len(), 12);
         let year = summary(&sample(), StatsRange::Year, today, &TimeZone::UTC);
         assert_eq!(year.plays, 7);
-        assert_eq!(year.buckets[9], Bucket { label: "2026-10".into(), seconds: 200 });
+        assert_eq!(year.buckets[9], Bucket { label: "2026-10".into(), seconds: 200, plays: 1 });
         let all = summary(&sample(), StatsRange::AllTime, today, &TimeZone::UTC);
         assert_eq!(all.plays, 7);
         assert_eq!(all.top_tracks[0].plays, 3);
         assert!(all.buckets.is_empty());
         let empty = summary(&[], StatsRange::AllTime, today, &TimeZone::UTC);
         assert_eq!(empty, StatsSummary::default());
+    }
+
+    #[test]
+    fn today_habits_albums_and_sessions() {
+        let today: Date = "2026-11-12".parse().unwrap();
+        let mut plays = sample();
+        for p in &mut plays {
+            p.album = if p.uri.ends_with(":y1") { "Snow".into() } else { String::new() };
+        }
+        let s = summary(&plays, StatsRange::Today, today, &TimeZone::UTC);
+        assert_eq!(s.plays, 3);
+        assert_eq!(s.buckets.len(), 8);
+        assert_eq!(s.buckets[2], Bucket { label: "06".into(), seconds: 240, plays: 1 }, "8:00 is in 6–9");
+        assert_eq!(s.buckets[3], Bucket { label: "09".into(), seconds: 90, plays: 2 });
+        assert_eq!(s.peak_hour, Some(8));
+        assert_eq!(s.top_albums.len(), 1);
+        assert_eq!((s.top_albums[0].title.as_str(), s.top_albums[0].subtitle.as_str()), ("Snow", "yuki"));
+        // 8:00 for 240 s, then 9:00 (56 min later: a new session) for 60 s and 10:00 for 30 s
+        assert_eq!(s.longest_session_seconds, 240);
+        assert_eq!(s.active_days, 1);
+        let week = summary(&plays, StatsRange::Week, today, &TimeZone::UTC);
+        assert_eq!(week.busiest_weekday, Some(3), "Thursday: 330 s");
+        assert_eq!(week.active_days, 4);
+        let none = summary(&[], StatsRange::Today, today, &TimeZone::UTC);
+        assert_eq!((none.peak_hour, none.busiest_weekday, none.longest_session_seconds), (None, None, 0));
     }
 
     #[test]

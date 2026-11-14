@@ -4,11 +4,13 @@ import QtQuick
 // при нажатии сжимается в более круглую, при смене состояния морфится.
 Item {
     id: root
+    // the colour scheme it draws with: Theme, or PlayerTheme on the player surfaces
+    property var scheme: Theme
 
     property bool playing: false
     property real size: 64
-    property color containerColor: Theme.primary
-    property color iconColor: Theme.fgPrimary
+    property color containerColor: root.scheme.primary
+    property color iconColor: root.scheme.fgPrimary
     property var playingShape: "cookie9"
     property var pausedShape: "cookie4"
     property bool spin: true
@@ -57,7 +59,7 @@ Item {
     LoadingIndicator {
         anchors.centerIn: parent
         size: root.size * 0.5
-        color: root.enabled ? root.iconColor : Theme.fgSurface
+        color: root.enabled ? root.iconColor : root.scheme.fgSurface
         visible: root.loading
         running: root.loading && root.visible
     }

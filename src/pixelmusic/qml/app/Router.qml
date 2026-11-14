@@ -144,7 +144,7 @@ Item {
         const entry = _make(name, props, "fade")
         if (!entry)
             return
-        _leaving = _leaving.concat(stack.map(e => e.item).filter(i => i !== prev))
+        _leaving = _leaving.concat(stack.map(e => e.item).filter(i => i !== prev && i !== entry.item))
         if (prev)
             _leaving = _leaving.concat([prev])
         stack = [entry]
@@ -189,7 +189,11 @@ Item {
         }
         const keep = keepAlive.indexOf(name) >= 0 && Object.keys(props ?? {}).length === 0
         const kept = keep ? _kept[name] : null
-        if (kept && !stack.some(e => e.item === kept)) {
+        // A reset (nav rail) replaces the whole stack, so the live page may come from inside it: Home under a
+        // "See all" page is the same Home, with its scroll. (A second Home was built from scratch here — its
+        // half-built tiles showed as stripes over the page during the fade.)
+        const reusable = item => kind === "fade" ? item !== currentItem : !stack.some(e => e.item === item)
+        if (kept && reusable(kept)) {
             kept.opacity = 0
             return { name: name, props: {}, item: kept }
         }
@@ -199,7 +203,7 @@ Item {
         // (мгновенный возврат, скролл на месте); иначе строим инкубацией и кладём в LRU.
         const key = name + "|" + JSON.stringify(props ?? {})
         const keptKeyed = _takeKeptKeyed(key)
-        if (keptKeyed && !stack.some(e => e.item === keptKeyed)) {
+        if (keptKeyed && reusable(keptKeyed)) {
             keptKeyed.opacity = 0
             return { name: name, props: props ?? {}, item: keptKeyed }
         }

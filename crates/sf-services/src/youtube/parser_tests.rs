@@ -317,3 +317,53 @@ fn an_artist_page_carousel_title_with_params_stays_its_see_all() {
     let more = page.shelves[0].more.as_ref().expect("see all");
     assert_eq!((more.browse_id.as_str(), more.params.as_deref()), ("UCdaftpunk", Some("discography")));
 }
+
+#[test]
+fn play_counts_are_never_artists() {
+    for count in ["1.1M plays", "12K views", "950 plays", "3", "1 play", "2,3 M de reproducciones", "1,2 млн просмотров"] {
+        assert!(is_non_album_metadata(count), "{count}");
+    }
+    for name in ["Phantom Ferrari", "Sidhu Moose Wala", "B Praak", "50 Cent", "3 Doors Down", "M83"] {
+        assert!(!is_non_album_metadata(name), "{name}");
+    }
+}
+
+#[test]
+fn album_rows_with_a_play_count_take_the_album_artists() {
+    let row = |id: &str, title: &str, plays: &str| {
+        json!({ "musicResponsiveListItemRenderer": {
+            "playlistItemData": { "videoId": id },
+            "flexColumns": [
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": title }] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [] } } },
+                { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [{ "text": plays }] } } }
+            ],
+            "fixedColumns": [{ "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [{ "text": "3:05" }] } } }]
+        }})
+    };
+    let response = json!({
+        "contents": { "twoColumnBrowseResultsRenderer": {
+            "tabs": [{ "tabRenderer": { "content": { "sectionListRenderer": { "contents": [{
+                "musicResponsiveHeaderRenderer": {
+                    "title": { "runs": [{ "text": "Night Drive" }] },
+                    "subtitle": { "runs": [{ "text": "Single" }, { "text": " • " }, { "text": "2026" }] },
+                    "straplineTextOne": { "runs": [{ "text": "Phantom Ferrari", "navigationEndpoint": {
+                        "browseEndpoint": { "browseId": "UCphantom", "browseEndpointContextSupportedConfigs": {
+                            "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } } }] }
+                }
+            }]}}}}],
+            "secondaryContents": { "sectionListRenderer": { "contents": [{ "musicShelfRenderer": { "contents": [
+                row("aaaaaaaaaaa", "Night Drive", "1.1M plays"),
+                row("bbbbbbbbbbb", "Night Drive (Slowed)", "950 plays")
+            ]}}]}}
+        }}
+    });
+    let page = album_page(&response, "MPREb_night").expect("album");
+    assert_eq!(page.info.item.artists, "Phantom Ferrari");
+    assert_eq!(page.tracks.len(), 2);
+    for track in &page.tracks {
+        assert_eq!(track.artists, "Phantom Ferrari", "{}", track.title);
+        assert_eq!(track.artist_refs, vec![ArtistRef { id: "UCphantom".into(), name: "Phantom Ferrari".into() }]);
+        assert_eq!(track.album, "Night Drive");
+    }
+}

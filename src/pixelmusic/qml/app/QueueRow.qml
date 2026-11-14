@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Layouts
 import Md3
 import PixelMusic.Core
@@ -6,7 +7,8 @@ import PixelMusic.Core
 // Queue row as PixelPlayer Desktop's EnhancedSongListItem: a surfaceContainerLow card (20 px corners, 10 px
 // padding, 48 px cover with 10 px corners) with the drag handle on the left and the kebab menu in a 34 px circle on
 // the right. The playing song fades (280 ms) into a solid primaryContainer pill: corners 20 → 32, cover 10 → 22,
-// bold title and the playing bars. A lifted card turns surfaceContainerHighest and casts a shadow.
+// bold title and the playing bars. A lifted card turns surfaceContainerHighest and casts a soft shadow that fades in
+// (kept inside the list's bleed so the list's clip never cuts it into a band). Every container is a solid colour.
 // The row height includes the gap between cards (rowGap, 8 px like the target's spacedBy(8.dp)).
 Item {
     id: root
@@ -48,14 +50,27 @@ Item {
 
     readonly property color fg: _mix(Theme.fgSurface, Theme.fgPrimaryContainer, hl)
     // The target's cards are surfaceContainerLow on its `background`, one tone step above the panel. Pixel Music's
-    // panels are surfaceContainer, so the same step up is surfaceContainerHigh (translucent over Now Playing's
-    // cover backdrop in the compact queue).
-    readonly property color _base: compact ? Qt.alpha(Theme.surfaceContainerHigh, 0.55) : Theme.surfaceContainerHigh
+    // panels are surfaceContainer, so the same step up is surfaceContainerHigh: solid, also over Now Playing's
+    // cover backdrop (the scheme follows the cover there).
+    readonly property color _base: Theme.surfaceContainerHigh
     readonly property color _container: _mix(_base, Theme.primaryContainer, hl)
 
     // the lifted card grows a little (1.025, no bounce)
     scale: dragging ? 1.025 : 1
     Behavior on scale { NumberAnimation { duration: Theme.motion.spatialDefault; easing.type: Easing.OutCubic } }
+
+    // the lift shadow: soft, a little below the card, fading with the lift
+    RectangularShadow {
+        anchors.fill: bg
+        radius: bg.radius
+        offset.y: 3
+        blur: 10
+        spread: 0
+        color: Qt.alpha(Theme.shadow, Theme.dark ? 0.45 : 0.22)
+        opacity: root.dragging ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
+    }
 
     Rectangle {
         id: bg
@@ -64,11 +79,10 @@ Item {
         anchors.bottomMargin: root.rowGap / 2
         radius: 20 + 12 * root.hl
         color: root.dragging ? Theme.surfaceContainerHighest
-             : rowHover.hovered && !root.current ? root._mix(root._container, Qt.alpha(Theme.fgSurface, 0.06), 0.45)
+             : rowHover.hovered && !root.current ? Qt.tint(root._container, Qt.alpha(Theme.fgSurface, 0.05))
              : root._container
         Behavior on color { enabled: !Theme.transitioning && root.hl % 1 === 0; ColorAnimation { duration: Theme.motion.effectsFast } }
     }
-    Elevation { target: bg; level: root.dragging ? 4 : 0 }
 
     // под содержимым: клик по строке — перейти к ней
     StateLayer {
@@ -147,7 +161,7 @@ Item {
                     implicitWidth: 16
                     implicitHeight: 16
                     radius: 4
-                    color: root.current ? Qt.alpha(Theme.fgPrimaryContainer, 0.14) : Theme.surfaceContainerHighest
+                    color: root.current ? Qt.tint(Theme.primaryContainer, Qt.alpha(Theme.fgPrimaryContainer, 0.14)) : Theme.surfaceContainerHighest
                     Label { anchors.centerIn: parent; text: "E"; type: "labelSmall"; color: Qt.alpha(root.fg, 0.7) }
                 }
                 Item { Layout.fillWidth: true }
@@ -181,7 +195,7 @@ Item {
             playing: Player.playing
         }
 
-        // kebab menu in a 34 px circle (filled: highest container at 60 %, on the playing pill onPrimaryContainer 15 %)
+        // kebab menu in a 34 px circle (solid: highest container, on the playing pill primaryContainer tinted 15 %)
         Item {
             id: more
             Layout.preferredWidth: 34
@@ -189,7 +203,7 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 radius: width / 2
-                color: root._mix(Qt.alpha(Theme.surfaceContainerHighest, 0.6), Qt.alpha(Theme.fgPrimaryContainer, 0.15), root.hl)
+                color: root._mix(Theme.surfaceContainerHighest, Qt.tint(Theme.primaryContainer, Qt.alpha(Theme.fgPrimaryContainer, 0.15)), root.hl)
             }
             Icon {
                 anchors.centerIn: parent

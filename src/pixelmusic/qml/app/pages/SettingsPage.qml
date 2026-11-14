@@ -689,6 +689,20 @@ Page {
                     Switch { checked: Settings.accentFromCover; onToggled: c => Settings.accentFromCover = c }
                 }
 
+                // only meaningful while the app keeps its own colours
+                SettingRow {
+                    title: I18n.t("Player follows the cover")
+                    description: Settings.accentFromCover
+                        ? I18n.t("On while “Color from cover” recolors the whole app")
+                        : I18n.t("The mini player and the full player take the cover’s colors; the rest of the app keeps its accent")
+                    enabled: !Settings.accentFromCover
+                    Switch {
+                        checked: Settings.accentFromCover || Settings.playerFromCover
+                        enabled: !Settings.accentFromCover
+                        onToggled: c => Settings.playerFromCover = c
+                    }
+                }
+
                 SettingRow {
                     title: I18n.t("Accent color")
                     description: Settings.accentFromCover ? I18n.t("When nothing is playing") : I18n.t("The app’s main color")

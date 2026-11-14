@@ -28,6 +28,8 @@ pub enum SettingKey {
     ThemeMode,
     SchemeVariant,
     AccentFromCover,
+    /// the mini and full player take the playing cover's colours even when the app keeps its own accent
+    PlayerFromCover,
     CustomSeed,
     WindowButtons,
     TrackTransition,
@@ -257,10 +259,11 @@ pub enum SettingType {
 }
 
 impl SettingKey {
-    pub const ALL: [SettingKey; 119] = [
+    pub const ALL: [SettingKey; 120] = [
         SettingKey::ThemeMode,
         SettingKey::SchemeVariant,
         SettingKey::AccentFromCover,
+        SettingKey::PlayerFromCover,
         SettingKey::CustomSeed,
         SettingKey::WindowButtons,
         SettingKey::TrackTransition,
@@ -386,6 +389,7 @@ impl SettingKey {
             ThemeMode => "themeMode",
             SchemeVariant => "schemeVariant",
             AccentFromCover => "accentFromCover",
+            PlayerFromCover => "playerFromCover",
             CustomSeed => "customSeed",
             WindowButtons => "windowButtons",
             TrackTransition => "trackTransition",
@@ -525,6 +529,7 @@ impl SettingKey {
             ThemeMode => Str("dark".into()),
             SchemeVariant => Str("tonalSpot".into()),
             AccentFromCover => Bool(true),
+            PlayerFromCover => Bool(true),
             CustomSeed => Str("#8C6DFF".into()), // Ultraviolet, фирменный акцент PixelMusic
             WindowButtons => Bool(false),
             TrackTransition => Str("wipe".into()),
@@ -1069,7 +1074,7 @@ pub fn category_keys(category: &str) -> Vec<SettingKey> {
         ],
         "music" => &["audioCache", "audioCacheMb", "downloadsLimitMb"],
         "appearance" => &[
-            "themeMode", "schemeVariant", "accentFromCover", "customSeed", "trackTransition", "backdropMode",
+            "themeMode", "schemeVariant", "accentFromCover", "playerFromCover", "customSeed", "trackTransition", "backdropMode",
             "nowPlayingBlur", "nowPlayingDrift", "ambientBackground", "coverSpin", "coverPulse", "calmWhenInactive",
             "animations", "lowPowerMode", "gpuPreference", "language", "uiScale", "logoColorway", "homeRadioHidden",
             "sidebarLibrary", "closeToTray", "wheelStep", "floatingPlayer", "floatingPlayerStyle", "floatingKeyHints",
@@ -1525,7 +1530,7 @@ mod reset_tests {
         }
         // the names in the table are all real keys (a typo would silently drop one)
         assert_eq!(seen.len(), CATEGORIES.iter().map(|c| category_keys(c).len()).sum::<usize>());
-        let total: usize = [14, 3, 35, 19, 12, 4, 5, 3].iter().sum();
+        let total: usize = [14, 3, 36, 19, 12, 4, 5, 3].iter().sum();
         assert_eq!(seen.len(), total, "a name in category_keys does not match a SettingKey");
         assert!(category_keys("stats").is_empty() && category_keys("backup").is_empty());
     }

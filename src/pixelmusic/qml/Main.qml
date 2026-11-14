@@ -51,7 +51,7 @@ Window {
     minimumWidth: 400
     minimumHeight: 120
     visible: false
-    title: Player.hasTrack ? Player.title + " — " + Player.artist + " · Pixel Music" : "Pixel Music"
+    title: Player.hasTrack ? Player.title + " — " + Player.artist + " · PixelMusic" : "PixelMusic"
     // «Поверх всех окон» (кнопка мини-плеера, меню трека); не запоминается между запусками
     property bool pinnedOnTop: false
     // закрепление — свойство мини-режима: окно, развёрнутое обратно, поверх всех не висит
@@ -245,7 +245,7 @@ Window {
             icon.source: Qt.resolvedUrl("../assets/tray-" + (darkPanel && Qt.platform.os !== "osx" ? "white" : "black")
                                         + "-" + (dpr >= 1.75 ? 32 : dpr >= 1.25 ? 24 : 16) + ".png")
             icon.mask: Qt.platform.os === "osx"
-            tooltip: Player.hasTrack ? Player.title + " — " + Player.artist : "Pixel Music"
+            tooltip: Player.hasTrack ? Player.title + " — " + Player.artist : "PixelMusic"
             onActivated: reason => {
                 if (reason === Platform.SystemTrayIcon.MiddleClick)
                     Player.togglePlay()

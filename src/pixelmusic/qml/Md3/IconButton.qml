@@ -6,6 +6,8 @@ import QtQuick
 // size xs | s | m | l | xl, width narrow | default | wide. Поддерживает toggle.
 Item {
     id: root
+    // the colour scheme it draws with: Theme, or PlayerTheme on the player surfaces
+    property var scheme: Theme
 
     property string icon
     property string style: "standard"
@@ -40,46 +42,46 @@ Item {
     property color containerColor: _styleContainer
     readonly property color _styleContainer: {
         if (!enabled && style === "pastel")
-            return Qt.alpha(Theme.tertiaryContainer, 0.5)
+            return Qt.alpha(root.scheme.tertiaryContainer, 0.5)
         if (!enabled && style === "accent")
-            return Qt.alpha(Theme.primary, 0.38)
+            return Qt.alpha(root.scheme.primary, 0.38)
         if (!enabled && (style === "accentSoft" || style === "accentGlass"))
-            return Qt.alpha(Theme.fgPrimary, 0.38)
+            return Qt.alpha(root.scheme.fgPrimary, 0.38)
         if (!enabled)
-            return style === "standard" || style === "outlined" ? "transparent" : Qt.alpha(Theme.fgSurface, Theme.stateLayer.disabledContainer)
+            return style === "standard" || style === "outlined" ? "transparent" : Qt.alpha(root.scheme.fgSurface, Theme.stateLayer.disabledContainer)
         switch (style) {
         // a solid pastel (PixelPlayer's transport): tertiary container; unchecked toggles — the highest surface
-        case "pastel": return checkable && !checked ? Theme.surfaceContainerHighest : Theme.tertiaryContainer
-        case "accent": return Theme.primary
-        case "accentSoft": return Theme.fgPrimary
-        case "accentGlass": return Qt.alpha(Theme.fgPrimary, 0.7)
-        case "filled": return checkable && !checked ? Theme.surfaceContainer : Theme.primary
+        case "pastel": return checkable && !checked ? root.scheme.surfaceContainerHighest : root.scheme.tertiaryContainer
+        case "accent": return root.scheme.primary
+        case "accentSoft": return root.scheme.fgPrimary
+        case "accentGlass": return Qt.alpha(root.scheme.fgPrimary, 0.7)
+        case "filled": return checkable && !checked ? root.scheme.surfaceContainer : root.scheme.primary
         // Compose's FilledTonalIconButton (PixelPlayer Desktop): secondaryContainer
-        case "tonal": return checkable && !checked ? Theme.surfaceContainerHighest : Theme.secondaryContainer
-        case "outlined": return _selected ? Theme.inverseSurface : "transparent"
+        case "tonal": return checkable && !checked ? root.scheme.surfaceContainerHighest : root.scheme.secondaryContainer
+        case "outlined": return _selected ? root.scheme.inverseSurface : "transparent"
         // Выбранная standard-кнопка — с подложкой: одного цвета иконки мало. PixelPlayer Desktop's toggles
         // (shuffle, repeat) are primary / onPrimary when on.
-        default: return _selected ? Theme.primary : "transparent"
+        default: return _selected ? root.scheme.primary : "transparent"
         }
     }
     readonly property color _contentColor: {
         if (!enabled && style === "pastel")
-            return Qt.alpha(Theme.fgTertiaryContainer, 0.5)
+            return Qt.alpha(root.scheme.fgTertiaryContainer, 0.5)
         if (!enabled && style === "accent")
-            return Qt.alpha(Theme.fgPrimary, 0.6)
+            return Qt.alpha(root.scheme.fgPrimary, 0.6)
         if (!enabled && (style === "accentSoft" || style === "accentGlass"))
-            return Qt.alpha(Theme.primary, 0.5)
+            return Qt.alpha(root.scheme.primary, 0.5)
         if (!enabled)
-            return Qt.alpha(Theme.fgSurface, Theme.stateLayer.disabledContent)
+            return Qt.alpha(root.scheme.fgSurface, Theme.stateLayer.disabledContent)
         switch (style) {
-        case "pastel": return checkable && !checked ? Theme.fgSurface : Theme.fgTertiaryContainer
-        case "accent": return Theme.fgPrimary
+        case "pastel": return checkable && !checked ? root.scheme.fgSurface : root.scheme.fgTertiaryContainer
+        case "accent": return root.scheme.fgPrimary
         case "accentSoft":
-        case "accentGlass": return Theme.primary
-        case "filled": return checkable && !checked ? Theme.fgSurfaceVariant : Theme.fgPrimary
-        case "tonal": return checkable && !checked ? Theme.fgSurfaceVariant : Theme.fgSecondaryContainer
-        case "outlined": return _selected ? Theme.fgInverseSurface : Theme.fgSurfaceVariant
-        default: return _selected ? Theme.fgPrimary : Theme.fgSurfaceVariant
+        case "accentGlass": return root.scheme.primary
+        case "filled": return checkable && !checked ? root.scheme.fgSurfaceVariant : root.scheme.fgPrimary
+        case "tonal": return checkable && !checked ? root.scheme.fgSurfaceVariant : root.scheme.fgSecondaryContainer
+        case "outlined": return _selected ? root.scheme.fgInverseSurface : root.scheme.fgSurfaceVariant
+        default: return _selected ? root.scheme.fgPrimary : root.scheme.fgSurfaceVariant
         }
     }
 
@@ -97,7 +99,7 @@ Item {
         radius: Math.min(root.cornerRadius, height / 2)
         color: root.containerColor
         border.width: root.style === "outlined" && !root._selected ? 1 : 0
-        border.color: Theme.outlineVariant
+        border.color: root.scheme.outlineVariant
         Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsDefault } }
     }
 

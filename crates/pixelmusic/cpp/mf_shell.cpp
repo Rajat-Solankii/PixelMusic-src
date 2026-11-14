@@ -393,11 +393,13 @@ app_set_names(const QString& name, const QString& org, const QString& desktop)
   QCoreApplication::setApplicationName(name);
   QCoreApplication::setOrganizationName(org);
   QGuiApplication::setDesktopFileName(desktop);
-  // the name people see; applicationName stays "PixelMusic": it names the settings and data folders
-  QGuiApplication::setApplicationDisplayName(QStringLiteral("Pixel Music"));
+  // the name people see ("PixelMusic", one word, like the shortcuts); applicationName "PixelMusic" names the
+  // settings and data folders
+  QGuiApplication::setApplicationDisplayName(QStringLiteral("PixelMusic"));
 #if defined(Q_OS_WIN)
-  // AppUserModelID = the shortcuts' one in pixelmusic.iss ("{#AppName}" = "Pixel Music"): taskbar grouping, and
-  // Windows finds the shortcut by it for the name and icon in the media flyout (a mismatch shows "Unknown app")
+  // AppUserModelID = the shortcuts' one ("{#AppName}" = "Pixel Music" in pixelmusic.iss, kept so a pinned button
+  // stays this app): taskbar grouping, and Windows finds the shortcut by it for the name and icon in the media
+  // flyout and the jump list (a mismatch shows "Unknown app"). The shortcuts are named "PixelMusic".
   SetCurrentProcessExplicitAppUserModelID(L"Pixel Music");
 #endif
 }
@@ -435,12 +437,16 @@ shell_set_shortcut_icons(const QString& icon_path)
         links.push_back(std::wstring(base) + rest);
       CoTaskMemFree(base);
     };
-    add(FOLDERID_Desktop, L"\\Pixel Music.lnk");
+    for (const wchar_t* name : { L"PixelMusic", L"Pixel Music" }) {   // now / before the rename
+      std::wstring lnk = std::wstring(L"\\") + name + L".lnk";
+      add(FOLDERID_Desktop, lnk.c_str());
+      add(FOLDERID_Programs, lnk.c_str());
+      add(FOLDERID_Startup, lnk.c_str());
+      add(FOLDERID_RoamingAppData, (L"\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar" + lnk).c_str());
+    }
     add(FOLDERID_Programs, L"\\Pixel Music\\Pixel Music.lnk");
-    add(FOLDERID_Programs, L"\\Pixel Music.lnk");
-    add(FOLDERID_Startup, L"\\Pixel Music.lnk");
-    add(FOLDERID_RoamingAppData, L"\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar\\Pixel Music.lnk");
     bool changed = false;
+    bool installed = false;   // a shortcut points at this exe: the installed copy, not a dev build or a test copy
     for (const std::wstring& path : links) {
       if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
         continue;
@@ -457,6 +463,7 @@ shell_set_shortcut_icons(const QString& icon_path)
           link->GetPath(target, MAX_PATH, nullptr, 0);
           link->GetIconLocation(current, MAX_PATH, &index);
           bool ours = _wcsicmp(target, self.c_str()) == 0;
+          installed = installed || ours;
           bool same = _wcsicmp(current, icon.c_str()) == 0 || (current[0] == 0 && _wcsicmp(icon.c_str(), self.c_str()) == 0);
           if (ours && !same && SUCCEEDED(link->SetIconLocation(icon.c_str(), 0)) && SUCCEEDED(file->Save(path.c_str(), TRUE)))
             changed = true;
@@ -467,6 +474,14 @@ shell_set_shortcut_icons(const QString& icon_path)
     }
     if (changed)
       SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    // The name and icon Windows shows for the AppUserModelID when it doesn't go by a shortcut (media flyout,
+    // notifications): the installers write DisplayName, the installed copy keeps IconUri on its colourway's .ico.
+    if (installed) {
+      const wchar_t* key = L"Software\\Classes\\AppUserModelId\\Pixel Music";
+      const wchar_t* shown = L"PixelMusic";
+      RegSetKeyValueW(HKEY_CURRENT_USER, key, L"DisplayName", REG_SZ, shown, DWORD((wcslen(shown) + 1) * sizeof(wchar_t)));
+      RegSetKeyValueW(HKEY_CURRENT_USER, key, L"IconUri", REG_SZ, icon.c_str(), DWORD((icon.size() + 1) * sizeof(wchar_t)));
+    }
     CoUninitialize();
   }).detach();
 #else

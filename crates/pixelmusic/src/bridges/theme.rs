@@ -29,6 +29,12 @@ pub mod qobject {
     unsafe extern "RustQt" {
         #[qobject]
         #[qproperty(QMap_QString_QVariant, colors, READ, NOTIFY = scheme_changed)]
+        /// The colours of the player surfaces (mini player, full player): the playing cover's scheme when the app
+        /// keeps its own accent ("Color from cover" off) and Settings → "Player follows the cover" is on; else the
+        /// same as `colors`.
+        #[qproperty(QMap_QString_QVariant, player_colors, cxx_name = "playerColors", READ, NOTIFY = player_scheme_changed)]
+        /// Whether `playerColors` comes from the cover while the app keeps its own colours.
+        #[qproperty(bool, player_separate, cxx_name = "playerSeparate", READ, NOTIFY = player_scheme_changed)]
         #[qproperty(QColor, seed, READ = seed_color, NOTIFY = seed_changed)]
         #[qproperty(bool, dark, READ, WRITE = set_dark, NOTIFY = dark_changed)]
         #[qproperty(QString, variant, READ = variant_name, WRITE = set_variant, NOTIFY = variant_changed)]
@@ -44,6 +50,9 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "schemeChanged"]
         fn scheme_changed(self: Pin<&mut ThemeEngine>);
+        #[qsignal]
+        #[cxx_name = "playerSchemeChanged"]
+        fn player_scheme_changed(self: Pin<&mut ThemeEngine>);
         #[qsignal]
         #[cxx_name = "seedChanged"]
         fn seed_changed(self: Pin<&mut ThemeEngine>);
@@ -98,6 +107,12 @@ pub(crate) fn custom_seed(store: &SettingsStore) -> String {
 
 pub struct ThemeEngineRust {
     colors: QVariantMap,
+    player_colors: QVariantMap,
+    player_separate: bool,
+    /// the latest player-scheme request; older answers are dropped
+    player_request: u64,
+    /// the cover's seed, read once per cover for the player scheme
+    player_seed: Option<(PathBuf, u32)>,
     seed: u32,
     dark: bool,
     variant: Variant,
@@ -115,6 +130,10 @@ impl Default for ThemeEngineRust {
     fn default() -> Self {
         Self {
             colors: QVariantMap::default(),
+            player_colors: QVariantMap::default(),
+            player_separate: false,
+            player_request: 0,
+            player_seed: None,
             seed: DEFAULT_SEED,
             dark: true,
             variant: Variant::TonalSpot,
@@ -237,7 +256,53 @@ impl qobject::ThemeEngine {
                 Some(path) => self.rebuild(Some(path)),
                 None => self.apply_settings(),
             }
+        } else {
+            self.update_player();
         }
+    }
+
+    /// The player surfaces' own scheme: from the cover when the app keeps its accent and the player follows the
+    /// cover, else the app's colours.
+    fn update_player(mut self: Pin<&mut Self>) {
+        let settings = &ctx().services.settings;
+        let separate = !settings.get_bool(SettingKey::AccentFromCover) && settings.get_bool(SettingKey::PlayerFromCover);
+        let cover = self.cover.clone().filter(|_| separate);
+        let mut this = self.as_mut().rust_mut();
+        this.player_request += 1;
+        let Some(path) = cover else {
+            this.player_colors = this.colors.clone();
+            this.player_separate = false;
+            self.player_scheme_changed();
+            return;
+        };
+        let (request, dark, variant, contrast) = (this.player_request, this.dark, this.variant, this.contrast);
+        let known = this.player_seed.as_ref().filter(|(p, _)| *p == path).map(|(_, seed)| *seed);
+        let thread = self.qt_thread();
+        ctx().rt.spawn_blocking(move || {
+            let seed = match known {
+                Some(seed) => seed,
+                None => match mf_theme::artwork_seed_from_image(&path) {
+                    Ok(seed) => seed,
+                    Err(error) => {
+                        tracing::debug!("theme (player): {error}");
+                        return;
+                    }
+                },
+            };
+            let scheme = scheme_for(seed, None, dark, variant, contrast);
+            let _ = thread.queue(move |theme| theme.player_ready(request, path, seed, scheme));
+        });
+    }
+
+    fn player_ready(mut self: Pin<&mut Self>, request: u64, path: PathBuf, seed: u32, scheme: Scheme) {
+        if request != self.player_request {
+            return;
+        }
+        let mut this = self.as_mut().rust_mut();
+        this.player_seed = Some((path, seed));
+        this.player_colors = to_qcolors(&scheme);
+        this.player_separate = true;
+        self.player_scheme_changed();
     }
 
     fn set_seed(mut self: Pin<&mut Self>, color: &QColor) {
@@ -316,14 +381,20 @@ impl qobject::ThemeEngine {
             self.as_mut().seed_changed();
         }
         self.as_mut().rust_mut().colors = to_qcolors(&scheme);
-        self.scheme_changed();
+        self.as_mut().scheme_changed();
+        // the player's scheme follows: the same colours, or the cover's in the new light/dark mode and style
+        self.update_player();
     }
 
     fn on_settings(self: Pin<&mut Self>, delivery: Delivery<SettingKey>) {
         let relevant = match delivery {
             Delivery::Event(key) => matches!(
                 key,
-                SettingKey::ThemeMode | SettingKey::SchemeVariant | SettingKey::AccentFromCover | SettingKey::CustomSeed
+                SettingKey::ThemeMode
+                    | SettingKey::SchemeVariant
+                    | SettingKey::AccentFromCover
+                    | SettingKey::PlayerFromCover
+                    | SettingKey::CustomSeed
             ),
             Delivery::Lagged => true,
         };
@@ -351,6 +422,7 @@ impl cxx_qt::Initialize for qobject::ThemeEngine {
             this.seed = seed;
             this.palette = palette;
             this.colors = to_qcolors(&scheme_for(seed, palette, dark, variant, this.contrast));
+            this.player_colors = this.colors.clone();
         }
         self.as_mut().dark_changed();
         self.as_mut().variant_changed();

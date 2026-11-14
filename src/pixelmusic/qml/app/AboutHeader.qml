@@ -34,7 +34,7 @@ Rectangle {
         }
         Label {
             Layout.alignment: Qt.AlignHCenter
-            text: "Pixel Music"
+            text: "PixelMusic"
             type: "headlineMedium"
             weight: 700
         }

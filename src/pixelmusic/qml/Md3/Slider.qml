@@ -4,6 +4,8 @@ import QtQuick
 // всплывающее значение при перетаскивании.
 Item {
     id: root
+    // the colour scheme it draws with: Theme, or PlayerTheme on the player surfaces
+    property var scheme: Theme
 
     property real from: 0
     property real to: 1
@@ -16,9 +18,9 @@ Item {
     // колесо меняет значение; false — колесо прокручивает страницу (слайдеры в длинных списках настроек)
     property bool wheelEnabled: true
     property var valueText: v => Math.round(v * 100) + "%"
-    property color activeColor: Theme.primary
-    property color inactiveColor: Theme.secondaryContainer
-    property color handleColor: Theme.primary
+    property color activeColor: root.scheme.primary
+    property color inactiveColor: root.scheme.secondaryContainer
+    property color handleColor: root.scheme.primary
 
     readonly property alias pressed: area.pressed
     // Значение во время перетаскивания/колеса: показываем его вместо value, чтобы не
@@ -120,7 +122,7 @@ Item {
         width: Math.max(48, valueLabel.implicitWidth + 24)
         height: 44
         radius: height / 2
-        color: Theme.inverseSurface
+        color: root.scheme.inverseSurface
         x: handle.x + handle.width / 2 - width / 2
         y: handle.y - height - 4
 
@@ -128,7 +130,7 @@ Item {
             id: valueLabel
             anchors.centerIn: parent
             type: "labelLarge"
-            color: Theme.fgInverseSurface
+            color: root.scheme.fgInverseSurface
             text: root.valueText(root._liveActive ? root._live : root.value)
         }
     }

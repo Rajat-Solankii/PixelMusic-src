@@ -249,6 +249,9 @@ Item {
     readonly property color tertiaryFixed: _mix("tertiaryFixed")
     readonly property color tertiaryFixedDim: _mix("tertiaryFixedDim")
     readonly property color fgTertiaryFixed: _mix("fgTertiaryFixed")
+    // The players' play/pause (mini and full): PixelPlayer's tertiaryFixedDim. Fixed roles keep their tone in light mode,
+    // where it glares against the deep player colours, so there it is a shade deeper.
+    readonly property color playContainer: dark ? tertiaryFixedDim : Qt.darker(tertiaryFixedDim, 1.08)
     readonly property color fgTertiaryFixedVariant: _mix("fgTertiaryFixedVariant")
     readonly property color error: _mix("error")
     readonly property color errorDim: _mix("errorDim")

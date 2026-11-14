@@ -3,9 +3,10 @@ import QtQuick.Layouts
 import Md3
 import PixelMusic.Core
 
-// PixelPlayer Desktop's queue header (QueueSidePanel): a queue icon in a 34 px primaryContainer circle (80 %),
+// PixelPlayer Desktop's queue header (QueueSidePanel): a queue icon in a 34 px primaryContainer circle,
 // "Next Up" in bold titleMedium and the song count; on the right locate · shuffle · repeat · clear as one connected
-// group of 36 px buttons (26 px outer, 4 px inner corners, 2 px apart). «Locate» slides in when the playing song
+// group of 40 × 36 px buttons (26 px outer, 4 px inner corners, 2 px apart), solid tonal containers with filled,
+// heavier icons so they read as buttons, not as disabled glyphs. «Locate» slides in when the playing song
 // has scrolled away, and the shuffle button's start corner tightens to meet it.
 Item {
     id: root
@@ -20,7 +21,8 @@ Item {
     implicitHeight: 48
     implicitWidth: 320
 
-    // on = primary / onPrimary, off = highest container at 60 % / onSurfaceVariant
+    // on = primary / onPrimary, off = secondaryContainer / onSecondaryContainer (solid); disabled = the off look
+    // with a faded icon (the container stays solid so the group keeps its shape)
     component SegButton: Item {
         id: seg
         property string icon
@@ -28,9 +30,8 @@ Item {
         property real startRadius: 4
         property real endRadius: 4
         signal clicked()
-        implicitWidth: 36
+        implicitWidth: 40
         implicitHeight: 36
-        opacity: enabled ? 1 : 0.38
         Behavior on startRadius { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutCubic } }
         Rectangle {
             anchors.fill: parent
@@ -38,15 +39,18 @@ Item {
             bottomLeftRadius: seg.startRadius
             topRightRadius: seg.endRadius
             bottomRightRadius: seg.endRadius
-            color: seg.on ? Theme.primary : Qt.alpha(Theme.surfaceContainerHighest, seg.enabled ? 0.6 : 0.25)
+            color: seg.on && seg.enabled ? Theme.primary : Theme.secondaryContainer
             Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsDefault } }
         }
         Icon {
             anchors.centerIn: parent
             name: seg.icon
-            size: 18
-            fill: seg.on ? 1 : 0
-            color: seg.on ? Theme.fgPrimary : Theme.fgSurfaceVariant
+            size: 20
+            fill: 1
+            weight: 600
+            color: !seg.enabled ? Qt.alpha(Theme.fgSecondaryContainer, 0.38)
+                 : seg.on ? Theme.fgPrimary : Theme.fgSecondaryContainer
+            Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsDefault } }
         }
         StateLayer {
             anchors.fill: parent
@@ -55,7 +59,7 @@ Item {
             bottomLeftRadius: seg.startRadius
             topRightRadius: seg.endRadius
             bottomRightRadius: seg.endRadius
-            color: seg.on ? Theme.fgPrimary : Theme.fgSurface
+            color: seg.on ? Theme.fgPrimary : Theme.fgSecondaryContainer
             onClicked: seg.clicked()
         }
     }
@@ -68,7 +72,7 @@ Item {
             Layout.preferredWidth: 34
             Layout.preferredHeight: 34
             radius: 17
-            color: Qt.alpha(Theme.primaryContainer, 0.8)
+            color: Theme.primaryContainer
             Icon { anchors.centerIn: parent; name: "queue_music"; size: 18; color: Theme.fgPrimaryContainer }
         }
         ColumnLayout {
@@ -90,12 +94,12 @@ Item {
         Row {
             spacing: 2
             Item {
-                width: root.locateShown ? 36 : 0
+                width: root.locateShown ? 40 : 0
                 height: 36
                 clip: true
                 Behavior on width { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutCubic } }
                 SegButton {
-                    x: root.locateShown ? 0 : 18
+                    x: root.locateShown ? 0 : 20
                     opacity: root.locateShown ? 1 : 0
                     Behavior on x { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutCubic } }
                     Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }

@@ -4,7 +4,11 @@
 ; Output: target\dist\PixelMusic-<version>-Setup.exe
 ; Per-user install (no UAC) into %LocalAppData%\Programs\PixelMusic
 
+; AppName: the install folder and the AppUserModelID the app sets for itself (keep both: updates find the folder,
+; the pinned taskbar button keeps its identity). ShownName: what Windows shows (shortcuts, Installed apps, wizard);
+; the taskbar jump list and the media flyout take the Start-menu shortcut's name.
 #define AppName "Pixel Music"
+#define ShownName "PixelMusic"
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
@@ -23,23 +27,23 @@
 LicenseFile=LICENSE
 ; Do not change AppId: a new version installs over the old one by it. Does not collide with YaMusic (yamusic-md3).
 AppId={{A5260B19-41AE-4D9D-9841-204E686F2ADD}
-AppName={#AppName}
+AppName={#ShownName}
 AppVersion={#AppVersion}
-AppVerName={#AppName} {#AppVersion}
+AppVerName={#ShownName} {#AppVersion}
 AppPublisher={#AppPublisher}
 VersionInfoVersion={#AppNumVersion}
-VersionInfoProductName={#AppName}
-VersionInfoDescription={#AppName} - music player for YouTube Music, Monochrome and JioSaavn
+VersionInfoProductName={#ShownName}
+VersionInfoDescription={#ShownName} - music player for YouTube Music, Monochrome and JioSaavn
 ; Per-user install, no UAC
 DefaultDirName={localappdata}\Programs\{#AppName}
-DefaultGroupName={#AppName}
+DefaultGroupName={#ShownName}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
 OutputDir=target\dist
 OutputBaseFilename=PixelMusic-{#AppVersion}-Setup
 SetupIconFile=pixelmusic.ico
 UninstallDisplayIcon={app}\{#AppExeName}
-UninstallDisplayName={#AppName}
+UninstallDisplayName={#ShownName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -73,35 +77,46 @@ brazilianportuguese.StartupTask=Iniciar %1 quando o Windows iniciar
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}";            GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
-Name: "startupicon"; Description: "{cm:StartupTask,{#AppName}}";       GroupDescription: "{cm:StartupGroup}";    Flags: unchecked
+Name: "startupicon"; Description: "{cm:StartupTask,{#ShownName}}";       GroupDescription: "{cm:StartupGroup}";    Flags: unchecked
 
 [InstallDelete]
 ; QML is rebuilt as a whole: remove files dropped in the new version
 Type: filesandordirs; Name: "{app}\qml"
+; the "Pixel Music" shortcuts of earlier versions (now "PixelMusic"); the pinned taskbar link is left alone
+Type: filesandordirs; Name: "{userprograms}\{#AppName}"
+Type: files; Name: "{userdesktop}\{#AppName}.lnk"
+Type: files; Name: "{userstartup}\{#AppName}.lnk"
 
 [Files]
 ; Everything in the distribution folder goes to the install folder
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-; Start menu
-Name: "{userprograms}\{#AppName}\{#AppName}";                        Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppName}"
-Name: "{userprograms}\{#AppName}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
+; Start menu: straight in Programs, one "PixelMusic" entry (uninstall from Installed apps)
+Name: "{userprograms}\{#ShownName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppName}"
 
 ; Desktop
-Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppName}"; Tasks: desktopicon
+Name: "{userdesktop}\{#ShownName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppName}"; Tasks: desktopicon
 
 ; Autostart
-Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: startupicon
+Name: "{userstartup}\{#ShownName}"; Filename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppName}"; Tasks: startupicon
 
 [Run]
 ; Offer to launch Pixel Music after installation
-Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#ShownName}}"; Flags: nowait postinstall skipifsilent
 ; Update from inside the app (Setup.exe /SILENT ... /RELAUNCH): start the new version once the files are in place.
 ; Without /RELAUNCH (a regular or a scripted silent install) nothing changes.
 Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: IsAppRelaunch
 
+[Registry]
+; the name Windows shows for the AppUserModelID (media flyout, notifications) when no shortcut tells it
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#AppName}"; ValueType: string; ValueName: "DisplayName"; ValueData: "{#ShownName}"; Flags: uninsdeletekey
+
 [UninstallDelete]
+; the earlier "Pixel Music" shortcuts, if an old version left any
+Type: filesandordirs; Name: "{userprograms}\{#AppName}"
+Type: files; Name: "{userdesktop}\{#AppName}.lnk"
+Type: files; Name: "{userstartup}\{#AppName}.lnk"
 ; Settings, sign-in (Windows Credential Manager) and cache are kept on uninstall; "Sign out" in the app clears them
 
 [Code]

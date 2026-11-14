@@ -15,8 +15,10 @@ Item {
     })
     readonly property url logoSource: Qt.resolvedUrl("../../assets/logo/" + (_logoFiles[Settings.logoColorway] ?? "blue_purple") + ".svg")
 
-    property real markSize: 40                 // logo side
-    // PixelPlayer Desktop's sidebar header: a fully rounded pill (surfaceContainerHighest at 60 %) behind the
+    property real markSize: 40                 // logo side (the pill's height)
+    // the white launcher tile inside the pill: a 6 px ring of the pill shows around it
+    readonly property real tileSize: markSize - 12
+    // PixelPlayer Desktop's sidebar header: a fully rounded solid pill (surfaceContainerHighest) behind the
     // logo glyph (primary, 24 px) and the bold name. In the rail the pill is just the circle around the mark.
     property real pillWidth: markSize
     property bool expanded: true               // true — действие «свернуть», false — «развернуть»
@@ -40,7 +42,7 @@ Item {
         width: root.expanded ? Math.max(root.markSize, root.pillWidth) : root.markSize
         anchors.verticalCenter: parent.verticalCenter
         radius: height / 2
-        color: Qt.alpha(Theme.surfaceContainerHighest, 0.6)
+        color: Theme.surfaceContainerHighest
         Behavior on width { enabled: !root._instant; NumberAnimation { duration: Theme.motion.spatialDefault; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized } }
     }
 
@@ -54,7 +56,7 @@ Item {
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: root.actionText
-        Accessible.description: "Pixel Music"
+        Accessible.description: "PixelMusic"
         Accessible.onPressAction: root.activated()
         Keys.onPressed: e => {
             if (e.key === Qt.Key_Space || e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
@@ -90,8 +92,9 @@ Item {
         // morphs into the round button behind the action icon and takes the button's colour.
         AppLogo {
             anchors.centerIn: parent
-            size: root.markSize - 4
-            scale: 1 + mark.t * 4 / (root.markSize - 4)
+            size: root.tileSize
+            // on hover the tile grows into the full round button
+            scale: 1 + mark.t * (root.markSize - root.tileSize) / root.tileSize
             shape: mark.t > 0.5 ? "circle" : "cookie9"
             tileColor: mark.t > 0.5 ? Qt.tint(Theme.secondaryContainer, Qt.alpha(Theme.fgSecondaryContainer, mark.stateOpacity)) : "white"
             markScale: 1.12

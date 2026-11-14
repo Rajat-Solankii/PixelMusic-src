@@ -115,7 +115,7 @@ Window {
     // KDE Wayland: окно ставит скрипт KWin и находит его по заголовку (cpp: crates/mf-platform/src/kwin.rs)
     readonly property bool kwin: Qt.platform.pluginName.indexOf("wayland") === 0 && WindowShell.kwinAvailable()
     readonly property string kwinTitle: "Pixel Music Island " + screenIndex
-    title: kwin ? kwinTitle : "Pixel Music"
+    title: kwin ? kwinTitle : "PixelMusic"
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     transientParent: null
     // x и y — от целевого экрана, а не от screen: macOS сам переводит окно на экран, где лежат его координаты

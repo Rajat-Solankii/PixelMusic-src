@@ -59,10 +59,10 @@ Item {
     PlayerProgress { id: playerProgress; active: seekBar.visible && !seekBar.dragging }
 
     // PixelPlayer Desktop's player bar colours: content onPrimaryContainer at 75 %, toggles primary when on
-    readonly property color _fg: Theme.fgPrimaryContainer
-    readonly property color _fgSoft: Qt.alpha(Theme.fgPrimaryContainer, 0.75)
+    readonly property color _fg: PlayerTheme.fgPrimaryContainer
+    readonly property color _fgSoft: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.75)
     function _toggleIcon(on, enabled) {
-        return !enabled ? Qt.alpha(Theme.fgPrimaryContainer, 0.3) : on ? Theme.fgPrimary : Qt.alpha(Theme.fgPrimaryContainer, 0.6)
+        return !enabled ? Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.3) : on ? PlayerTheme.fgPrimary : Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.6)
     }
 
     function _time(ms) {
@@ -74,7 +74,7 @@ Item {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        color: Theme.primaryContainer
+        color: PlayerTheme.primaryContainer
         Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsSlow } }
     }
     Elevation { target: bg; level: 2 }
@@ -87,11 +87,11 @@ Item {
 
         // Управление
         // У выпуска подкаста вместо перемешивания и повтора — «−10 с» и «+30 с»
-        Fold { shown: root.roomForModes && !root.compact; IconButton {
+        Fold { shown: root.roomForModes && !root.compact; IconButton { scheme: PlayerTheme;
             icon: Player.isEpisode ? "replay_10" : "shuffle"
             style: checked ? "filled" : "standard"
             iconFill: 1
-            containerColor: checked && enabled ? Theme.primary : "transparent"
+            containerColor: checked && enabled ? PlayerTheme.primary : "transparent"
             iconColor: root._toggleIcon(checked, enabled)
             checkable: !Player.isEpisode
             autoToggle: false
@@ -104,26 +104,29 @@ Item {
                     Player.shuffle = !Player.shuffle
             }
         } }
-        IconButton { icon: "skip_previous"; style: "accentSoft"; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.previous() }
+        // the full player's controls: filled primary pills around the tertiary play button
+        IconButton { scheme: PlayerTheme; icon: "skip_previous"; style: "accent"; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.previous() }
         Item {
             implicitWidth: 52
             implicitHeight: 52
-            PlayButton {
+            PlayButton { scheme: PlayerTheme;
                 anchors.fill: parent
                 size: 52
                 playing: Player.playing
                 loading: Player.buffering
                 spin: Player.isLocal === true      // пульт не перерисовывает окно каждый кадр
+                containerColor: PlayerTheme.playContainer
+                iconColor: PlayerTheme.fgTertiaryFixed
                 enabled: Player.hasTrack
                 onClicked: Player.togglePlay()
             }
         }
-        IconButton { icon: "skip_next"; style: "accentSoft"; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.next() }
-        Fold { shown: root.roomForModes && !root.compact; IconButton {
+        IconButton { scheme: PlayerTheme; icon: "skip_next"; style: "accent"; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.next() }
+        Fold { shown: root.roomForModes && !root.compact; IconButton { scheme: PlayerTheme;
             icon: Player.isEpisode ? "forward_30" : Player.repeat === "one" ? "repeat_one" : "repeat"
             style: checked ? "filled" : "standard"
             iconFill: 1
-            containerColor: checked && enabled ? Theme.primary : "transparent"
+            containerColor: checked && enabled ? PlayerTheme.primary : "transparent"
             iconColor: root._toggleIcon(checked, enabled)
             checkable: !Player.isEpisode
             autoToggle: false
@@ -178,15 +181,15 @@ Item {
                         anchors.fill: parent
                         visible: Player.cover === ""
                         shape: "softSquare"
-                        color: Theme.surfaceContainerHigh
-                        Icon { anchors.centerIn: parent; name: Player.isEpisode ? "podcasts" : "music_note"; size: 24; color: Theme.fgSurfaceVariant }
+                        color: PlayerTheme.surfaceContainerHigh
+                        Icon { anchors.centerIn: parent; name: Player.isEpisode ? "podcasts" : "music_note"; size: 24; color: PlayerTheme.fgSurfaceVariant }
                     }
                     // громкость колесом: проценты поверх обложки, гаснут через секунду
                     Rectangle {
                         id: volumeHint
                         anchors.fill: parent
                         radius: Theme.shape.medium
-                        color: Qt.alpha(Theme.primaryContainer, 0.88)
+                        color: Qt.alpha(PlayerTheme.primaryContainer, 0.88)
                         opacity: 0
                         visible: opacity > 0
                         Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
@@ -205,7 +208,7 @@ Item {
                         anchors.bottom: parent.bottom
                         anchors.rightMargin: -4
                         anchors.bottomMargin: -4
-                        ringColor: Theme.primaryContainer
+                        ringColor: PlayerTheme.primaryContainer
                     }
                 }
 
@@ -220,6 +223,7 @@ Item {
                     }
                     // Исполнитель · кодек или «Играет на …» (по правому краю — прямо над временем)
                     RowLayout {
+                        id: subtitleRow
                         Layout.fillWidth: true
                         spacing: 8
                         // Исполнители — по ссылке на каждого (карточка по наведению). Выпуск, ошибка, пустой
@@ -227,7 +231,10 @@ Item {
                         readonly property bool artistLinks: Player.errorText === "" && Player.hasTrack
                                                             && Player.isEpisode !== true
                                                             && !(remoteLabel.shown && !root.roomForMenu)
+                        // what the names need; the codec badge gets only what is left
+                        readonly property real namesWidth: artistLinks ? artistNames.naturalWidth : subtitleText.implicitWidth
                         ArtistLinks {
+                            id: artistNames
                             Layout.fillWidth: true
                             visible: parent.artistLinks
                             // карточки по наведению тут нет: клик по имени сразу открывает исполнителя
@@ -238,6 +245,7 @@ Item {
                             color: root._fgSoft
                         }
                         LinkLabel {
+                            id: subtitleText
                             Layout.fillWidth: true
                             visible: !parent.artistLinks && !(remoteLabel.shown && !root.roomForMenu && Player.errorText === "")
                             // у выпуска подкаста — ссылка на подкаст
@@ -247,9 +255,16 @@ Item {
                             text: Player.errorText !== "" ? Player.errorText
                                 : Player.hasTrack ? Player.artist : I18n.t("Play a track, album or playlist")
                             type: "bodySmall"
-                            color: Player.errorText !== "" ? Theme.error : root._fgSoft
+                            color: Player.errorText !== "" ? PlayerTheme.error : root._fgSoft
                         }
-                        CodecBadge { Layout.alignment: Qt.AlignVCenter; Layout.bottomMargin: 3 }
+                        CodecBadge {
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.bottomMargin: 3
+                            Layout.preferredWidth: implicitWidth
+                            room: Player.errorText !== "" ? 0
+                                : subtitleRow.width - subtitleRow.namesWidth - subtitleRow.spacing
+                                  - (remoteLabel.visible ? remoteLabel.implicitWidth + subtitleRow.spacing : 0)
+                        }
                         RemoteLabel {
                             id: remoteLabel
                             Layout.alignment: Qt.AlignVCenter
@@ -261,7 +276,7 @@ Item {
                         Layout.fillWidth: true
                         visible: Player.hasTrack
                         spacing: 8
-                        WavyProgress {
+                        WavyProgress { scheme: PlayerTheme;
                             id: seekBar
                             Layout.fillWidth: true
                             Layout.preferredHeight: 14
@@ -271,9 +286,9 @@ Item {
                             value: root.progress
                             wavy: Player.playing
                             interactive: true
-                            activeColor: Theme.primary
-                            stopColor: Theme.primary
-                            trackColor: Qt.alpha(Theme.fgPrimaryContainer, 0.2)
+                            activeColor: PlayerTheme.primary
+                            stopColor: PlayerTheme.primary
+                            trackColor: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.2)
                             onCommitted: v => Player.seek(v)
                         }
                         Label {
@@ -303,7 +318,7 @@ Item {
 
         // Оценка: «не рекомендовать» — только в радио (там она влияет на подбор; сама переключает трек),
         // лайк — всегда, у выпуска — «сохранить» (закладка)
-        Fold { shown: Player.source === "radio" && !Player.isEpisode && !root.compact; IconButton {
+        Fold { shown: Player.source === "radio" && !Player.isEpisode && !root.compact; IconButton { scheme: PlayerTheme;
             icon: "thumb_down"
             iconColor: root._fgSoft
             enabled: Player.hasTrack
@@ -314,25 +329,25 @@ Item {
             visible: !Player.isEpisode
             track: Player.track
             containerColor: "transparent"
-            iconColor: !enabled ? Qt.alpha(Theme.fgPrimaryContainer, 0.3) : liked ? Theme.primary : root._fgSoft
+            iconColor: !enabled ? Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.3) : liked ? PlayerTheme.primary : root._fgSoft
         }
-        IconButton {
+        IconButton { scheme: PlayerTheme;
             visible: Player.isEpisode
             icon: "bookmark"
             containerColor: "transparent"
-            iconColor: checked ? Theme.primary : root._fgSoft
+            iconColor: checked ? PlayerTheme.primary : root._fgSoft
             checkable: true
             autoToggle: false
             checked: Library.savedRevision >= 0 && Player.uri !== "" && Library.isSaved(Player.uri)
             enabled: Player.uri !== ""
             onClicked: Library.toggleSaved(Player.uri)
         }
-        Fold { shown: root.roomForMenu || root.compact; IconButton {
+        Fold { shown: root.roomForMenu || root.compact; IconButton { scheme: PlayerTheme;
             id: miniMore
             icon: "more_horiz"
             iconSize: 30
             iconWeight: 700
-            iconColor: enabled ? root._fgSoft : Qt.alpha(Theme.fgPrimaryContainer, 0.3)
+            iconColor: enabled ? root._fgSoft : Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.3)
             enabled: Player.hasTrack
             onClicked: {
                 const p = miniMore.mapToItem(null, 0, 0)
@@ -340,7 +355,7 @@ Item {
             }
         } }
         // Clear player: stop and forget the song and its queue ("Nothing playing"; the next start restores nothing)
-        Fold { shown: (root.roomForMenu || root.compact) && Player.hasTrack; IconButton {
+        Fold { shown: (root.roomForMenu || root.compact) && Player.hasTrack; IconButton { scheme: PlayerTheme;
             icon: "close"
             iconSize: 24
             containerColor: "transparent"
@@ -351,21 +366,21 @@ Item {
         Fold { shown: !root.compact; Item { width: 8; height: 8 } }
 
         // Панели и громкость
-        Fold { shown: !root.compact; IconButton {
+        Fold { shown: !root.compact; IconButton { scheme: PlayerTheme;
             icon: "title"
-            containerColor: checked ? Theme.primary : "transparent"
-            iconColor: checked ? Theme.fgPrimary : root._fgSoft
+            containerColor: checked ? PlayerTheme.primary : "transparent"
+            iconColor: checked ? PlayerTheme.fgPrimary : root._fgSoft
             checkable: true
             autoToggle: false
             checked: Settings.rightPanelOpen && Settings.rightPanelTab === "lyrics"
             onClicked: root._togglePanel("lyrics")
         } }
         // Очередь — ещё и цель для броска трека из списков: подсвечивается и чуть растёт
-        Fold { shown: !root.compact; IconButton {
+        Fold { shown: !root.compact; IconButton { scheme: PlayerTheme;
             id: queueButton
             icon: "queue_music"
-            containerColor: checked ? Theme.primary : "transparent"
-            iconColor: checked ? Theme.fgPrimary : root._fgSoft
+            containerColor: checked ? PlayerTheme.primary : "transparent"
+            iconColor: checked ? PlayerTheme.fgPrimary : root._fgSoft
             checkable: true
             autoToggle: false
             checked: (Settings.rightPanelOpen && Settings.rightPanelTab === "queue") || queueDrop.containsDrag
@@ -395,14 +410,14 @@ Item {
                 size: 20
                 color: root._fgSoft
             }
-            Slider {
+            Slider { scheme: PlayerTheme;
                 anchors.verticalCenter: parent.verticalCenter
                 width: 96
                 trackHeight: 10
                 handleHeight: 28
-                activeColor: Theme.primary
-                handleColor: Theme.primary
-                inactiveColor: Qt.alpha(Theme.fgPrimaryContainer, 0.2)
+                activeColor: PlayerTheme.primary
+                handleColor: PlayerTheme.primary
+                inactiveColor: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.2)
                 enabled: !volumeRow.locked
                 opacity: enabled ? 1 : Theme.stateLayer.disabledContent
                 value: Player.volume

@@ -4,6 +4,8 @@ import QtQuick
 // model: ["Normal", "Circular"] или [{ text, icon }]; currentIndex — выбранный сегмент.
 Row {
     id: root
+    // the colour scheme it draws with: Theme, or PlayerTheme on the player surfaces
+    property var scheme: Theme
 
     property var model: []
     property int currentIndex: 0
@@ -11,13 +13,13 @@ Row {
     property bool showCheck: false
     // false — currentIndex задаётся только снаружи (binding), клик лишь шлёт activated()
     property bool autoSelect: true
-    property color segmentColor: Theme.surfaceContainerHighest   // невыбранный сегмент
+    property color segmentColor: root.scheme.surfaceContainerHighest   // невыбранный сегмент
     // true — the segments share the group's width equally (give the group a width, e.g. Layout.fillWidth with a
     // small Layout.preferredWidth); false — each segment as wide as its content
     property bool fill: false
     // selected segment: PixelPlayer Desktop's ToggleSegmentButton — primaryContainer / onPrimaryContainer
-    property color selectedColor: Theme.primaryContainer
-    property color selectedContentColor: Theme.fgPrimaryContainer
+    property color selectedColor: root.scheme.primaryContainer
+    property color selectedContentColor: root.scheme.fgPrimaryContainer
     // Expressive width change: the selected segment grows by this many px, its neighbours give way
     property real selectedGrow: 0
 
@@ -77,14 +79,14 @@ Row {
                     name: n
                     size: 18
                     fill: seg.selected ? 1 : 0
-                    color: seg.selected ? root.selectedContentColor : Theme.fgSurfaceVariant
+                    color: seg.selected ? root.selectedContentColor : root.scheme.fgSurfaceVariant
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Label {
                     visible: seg.label !== ""
                     text: seg.label
                     type: "labelLarge"
-                    color: seg.selected ? root.selectedContentColor : Theme.fgSurfaceVariant
+                    color: seg.selected ? root.selectedContentColor : root.scheme.fgSurfaceVariant
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
@@ -92,7 +94,7 @@ Row {
             StateLayer {
                 id: area
                 anchors.fill: parent
-                color: seg.selected ? root.selectedContentColor : Theme.fgSurfaceVariant
+                color: seg.selected ? root.selectedContentColor : root.scheme.fgSurfaceVariant
                 topLeftRadius: seg.leftR
                 bottomLeftRadius: seg.leftR
                 topRightRadius: seg.rightR

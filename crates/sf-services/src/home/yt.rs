@@ -3,6 +3,7 @@
 //! anonymously; signing in or out of YouTube Music reloads it (the feed is personal when signed in).
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use md3_model::{HomeShelf, LibraryEntry};
 use tokio::sync::{broadcast, watch};
@@ -25,6 +26,18 @@ pub struct YouTubeHomeSnapshot {
 #[derive(Default)]
 pub(super) struct YtHome {
     continuation: Option<String>,
+    /// when the first page of the feed now shown was read
+    loaded_at: Option<Instant>,
+}
+
+/// How long a feed that is already shown counts as fresh when Home is opened again. Within it the shelves stay as
+/// they are, with every page read so far: reading the first page again replaced them all, the page shrank to that
+/// page and scrolled to the top, then grew back as the next pages came (the flash when coming back to Home).
+const FEED_FRESH: Duration = Duration::from_secs(30 * 60);
+
+/// Whether opening Home again keeps the feed it shows (see [`FEED_FRESH`]).
+fn feed_is_fresh(loaded_at: Option<Instant>, shown: bool, failed: bool, now: Instant) -> bool {
+    shown && !failed && loaded_at.is_some_and(|at| now.saturating_duration_since(at) < FEED_FRESH)
 }
 
 /// The release type behind a tile's kind label ("Single", "EP", "Album"), for the New releases Play / Shuffle.
@@ -187,6 +200,17 @@ impl HomeService {
 
     /// Load the YouTube Music home feed (`force`: past the 60 s cache of `YouTubeService::home`).
     pub fn refresh_youtube(&self, force: bool) {
+        if !force {
+            let (shown, failed) = {
+                let snapshot = self.yt_home.borrow();
+                (!snapshot.shelves.is_empty() || snapshot.loading, !snapshot.error_text.is_empty())
+            };
+            if feed_is_fresh(crate::lock(&self.yt_state).loaded_at, shown, failed, Instant::now()) {
+                // Home is shown: on a new day the mixes are built again
+                self.publish_mixes();
+                return;
+            }
+        }
         let generation = self.yt_generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.yt_home.send_modify(|s| {
             s.loading = true;
@@ -203,7 +227,11 @@ impl HomeService {
             }
             match page {
                 Ok(page) => {
-                    crate::lock(&service.yt_state).continuation = page.continuation.clone();
+                    {
+                        let mut state = crate::lock(&service.yt_state);
+                        state.continuation = page.continuation.clone();
+                        state.loaded_at = Some(Instant::now());
+                    }
                     service.yt_home.send_replace(YouTubeHomeSnapshot {
                         loading: false,
                         shelves: Arc::new(home_shelves(0, &page)),
@@ -337,5 +365,24 @@ mod tests {
 
     fn shelf_of_one() -> Shelf {
         shelf(vec![YtItem::Track(TrackItem { uri: "youtube:track:v".into(), ..Default::default() })])
+    }
+}
+
+#[cfg(test)]
+mod feed_fresh_tests {
+    use super::*;
+
+    #[test]
+    fn a_shown_feed_is_kept_for_half_an_hour() {
+        let now = Instant::now();
+        let read = now.checked_sub(Duration::from_secs(5 * 60));
+        assert!(feed_is_fresh(read, true, false, now));
+        let old = now.checked_sub(Duration::from_secs(31 * 60));
+        if old.is_some() {
+            assert!(!feed_is_fresh(old, true, false, now), "a stale feed is read again");
+        }
+        assert!(!feed_is_fresh(read, false, false, now), "nothing shown yet");
+        assert!(!feed_is_fresh(read, true, true, now), "a failed read is tried again");
+        assert!(!feed_is_fresh(None, true, false, now), "never read");
     }
 }

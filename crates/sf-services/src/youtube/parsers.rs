@@ -14,8 +14,13 @@ use super::models::*;
 const SEPARATOR: &str = " • ";
 static NULL: Value = Value::Null;
 
+// "950", "1.1M", "1.1M plays", "12K views", "2,3 M de reproducciones": a view / play count (album rows put it where
+// a playlist row has the artist). The unit letter and the word can come together.
 static VIEWS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*\d+([.,]\d+)?\s*(K|M|B|views|plays|visualizaciones|vues)?\s*$").expect("regex")
+    Regex::new(
+        r"(?i)^\s*\d+([.,]\d+)?\s*([KMB]|mil|mi|млн|тыс\.?)?\s*(de\s+)?(views?|plays?|streams?|visualizaciones|reproducciones|vues|lectures|visualizações|reproduções|просмотр\w*|прослушиван\w*)?\s*$",
+    )
+    .expect("regex")
 });
 static COUNT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\s*(\d[\d,]*)\s+(songs?|tracks?|videos?|episodes?)\b").expect("regex"));
@@ -131,7 +136,7 @@ pub(crate) fn parse_time(value: &str) -> Option<i64> {
 }
 
 /// Durations, view counts, bare separators: never an album or an artist.
-fn is_non_album_metadata(value: &str) -> bool {
+pub(crate) fn is_non_album_metadata(value: &str) -> bool {
     let trimmed = value.trim();
     trimmed.is_empty() || trimmed == "•" || parse_time(trimmed).is_some() || VIEWS.is_match(trimmed)
 }

@@ -72,7 +72,7 @@ fn main() {
             println!("cargo::rerun-if-changed={}", ico.display());
             let rc = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("pixelmusic.rc");
             let ico = ico.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "\\\\");
-            // VERSIONINFO: имя «Pixel Music» в диспетчере задач и свойствах файла
+            // VERSIONINFO: имя «PixelMusic» в диспетчере задач и свойствах файла
             let version = env!("CARGO_PKG_VERSION");
             let num = |i: usize| version.split(['.', '-']).nth(i).and_then(|p| p.parse::<u16>().ok()).unwrap_or(0);
             let (major, minor, patch) = (num(0), num(1), num(2));
@@ -86,8 +86,8 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "FileDescription", "Pixel Music"
-      VALUE "ProductName", "Pixel Music"
+      VALUE "FileDescription", "PixelMusic"
+      VALUE "ProductName", "PixelMusic"
       VALUE "FileVersion", "{version}"
       VALUE "ProductVersion", "{version}"
       VALUE "OriginalFilename", "pixelmusic.exe"

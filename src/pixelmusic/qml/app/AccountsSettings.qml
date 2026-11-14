@@ -5,13 +5,14 @@ import PixelMusic.Core
 
 // Settings → Accounts (PixelPlayer-style, Material 3 Expressive):
 //  1. Connected Accounts summary with Active / Available tiles
-//  2. YouTube Music — a branded gradient card: account, Linked/Options expander with sync switches,
-//     Sync Library Now (Library.refresh) and Disconnect; signed out — browser sign-in or pasted cookies
+//  2. YouTube Music — a solid card: account with a status chip and an expand button, the sync options as an
+//     M3 list group (icon, text, switch), Sync Library Now (Library.refresh) and Disconnect; signed out —
+//     browser sign-in or pasted cookies
 //  3. Quick Import — Spotify / YouTube link → Library.importPlaylist (matched to YouTube Music songs)
 //  4. Linked Services — the Last.fm card (connect with the user's own API key, or Open Service → the
 //     Last.fm Integration page with its options and scrobbling thresholds / Log out)
 //  5. Available Services — what is not connected yet, plus services that are not built yet
-// Colours come from the dynamic theme (Theme.*); only the YouTube card keeps the brand red, in both modes.
+// Every container is a solid colour from the dynamic theme (Theme.*); only the YouTube logo keeps its brand red.
 ColumnLayout {
     id: root
 
@@ -29,7 +30,7 @@ ColumnLayout {
 
     // ---------------- building blocks ----------------
 
-    // A full-width pill button with explicit colours (the brand card needs white-on-red, not theme roles).
+    // A full-width pill button: filled (color/content) or outlined in the content colour.
     component PillButton: Rectangle {
         id: pill
         property string text
@@ -45,7 +46,7 @@ ColumnLayout {
         Behavior on radius { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
         color: outlined ? "transparent" : Theme.primary
         border.width: outlined ? 1.5 : 0
-        border.color: Qt.alpha(pill.content, 0.6)
+        border.color: pill.content === Theme.error ? Theme.error : Theme.outline
         opacity: enabled ? 1 : 0.5
         Row {
             id: pillRow
@@ -72,42 +73,73 @@ ColumnLayout {
         }
     }
 
-    // A switch on the brand card: light track with a red thumb when on (the theme switch would clash with red).
-    component BrandSwitch: Item {
-        id: sw
+    // One item of an M3 list group: the group's rows are separate solid containers 2 px apart, large corners at the
+    // ends of the group and small ones between (Settings rows)
+    component SyncRow: Rectangle {
+        id: row
+        property string icon
+        property string title
+        property string text
         property bool checked: false
-        property color on: "white"
-        property color accent: "#B3261E"
+        property bool first: false
+        property bool last: false
         signal toggled(bool checked)
-        implicitWidth: 52
-        implicitHeight: 32
-        Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: Math.max(72, rowLayout.implicitHeight + 32)
+        topLeftRadius: first ? 20 : 4
+        topRightRadius: topLeftRadius
+        bottomLeftRadius: last ? 20 : 4
+        bottomRightRadius: bottomLeftRadius
+        color: Theme.surfaceContainerLowest
+        StateLayer {
             anchors.fill: parent
-            radius: height / 2
-            color: sw.checked ? sw.on : "transparent"
-            border.width: sw.checked ? 0 : 2
-            border.color: Qt.alpha(sw.on, 0.7)
-            Behavior on color { ColorAnimation { duration: Theme.motion.effectsDefault } }
+            topLeftRadius: row.topLeftRadius
+            topRightRadius: row.topRightRadius
+            bottomLeftRadius: row.bottomLeftRadius
+            bottomRightRadius: row.bottomRightRadius
+            color: Theme.fgSurface
+            onClicked: row.toggled(!row.checked)
         }
-        Rectangle {
-            property real d: swArea.pressed ? 28 : sw.checked ? 24 : 16
-            width: d
-            height: d
-            radius: d / 2
+        RowLayout {
+            id: rowLayout
+            anchors.left: parent.left
+            anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            x: (sw.checked ? sw.width - sw.height / 2 : sw.height / 2) - d / 2
-            color: sw.checked ? sw.accent : Qt.alpha(sw.on, 0.7)
-            Behavior on x { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
-            Behavior on d { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
-        }
-        MouseArea {
-            id: swArea
-            anchors.fill: parent
-            anchors.margins: -4
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                sw.checked = !sw.checked
-                sw.toggled(sw.checked)
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            spacing: 16
+            Rectangle {
+                Layout.preferredWidth: 40
+                Layout.preferredHeight: 40
+                Layout.alignment: Qt.AlignVCenter
+                radius: 20
+                color: row.checked ? Theme.secondaryContainer : Theme.surfaceContainerHighest
+                Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsDefault } }
+                Icon {
+                    anchors.centerIn: parent
+                    name: row.icon
+                    size: 22
+                    fill: row.checked ? 1 : 0
+                    color: row.checked ? Theme.fgSecondaryContainer : Theme.fgSurfaceVariant
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Label { Layout.fillWidth: true; text: row.title; type: "titleMedium"; weight: 600; color: Theme.fgSurface }
+                Label {
+                    Layout.fillWidth: true
+                    text: row.text
+                    type: "bodyMedium"
+                    color: Theme.fgSurfaceVariant
+                    wrapMode: Text.WordWrap
+                    elide: Text.ElideNone
+                }
+            }
+            Switch {
+                Layout.alignment: Qt.AlignVCenter
+                checked: row.checked
+                onToggled: c => row.toggled(c)
             }
         }
     }
@@ -128,75 +160,6 @@ ColumnLayout {
         type: "titleSmall"
         weight: 600
         color: Theme.primary
-    }
-
-    // One row of a slider group: "Title: value" with a value chip and a full-width slider below.
-    component SliderRow: Rectangle {
-        id: sr
-        property string title
-        property string valueLabel
-        property real from: 0
-        property real to: 1
-        property real step: 1
-        property real value: 0
-        property bool first: false
-        property bool last: false
-        signal moved(real value)
-        Layout.fillWidth: true
-        implicitHeight: srCol.implicitHeight + 40
-        topLeftRadius: first ? Theme.shape.extraLarge : Theme.shape.extraSmall
-        topRightRadius: topLeftRadius
-        bottomLeftRadius: last ? Theme.shape.extraLarge : Theme.shape.extraSmall
-        bottomRightRadius: bottomLeftRadius
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0; color: Theme.dark ? "#4E0B10" : "#FBE3E1" }
-            GradientStop { position: 1; color: Theme.dark ? "#7E171C" : "#F6CBC7" }
-        }
-        opacity: enabled ? 1 : 0.6
-        ColumnLayout {
-            id: srCol
-            x: 24
-            y: 20
-            width: parent.width - 48
-            spacing: 16
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                Label {
-                    Layout.fillWidth: true
-                    text: sr.title + ": " + sr.valueLabel
-                    type: "titleMedium"
-                    weight: 600
-                    wrapMode: Text.WordWrap
-                    elide: Text.ElideNone
-                }
-                Rectangle {
-                    implicitWidth: chipLabel.implicitWidth + 28
-                    implicitHeight: 36
-                    radius: 18
-                    color: Theme.surfaceContainerLowest
-                    Label {
-                        id: chipLabel
-                        anchors.centerIn: parent
-                        text: sr.valueLabel
-                        type: "labelLarge"
-                        weight: 700
-                        color: Theme.primary
-                    }
-                }
-            }
-            Slider {
-                Layout.fillWidth: true
-                wheelEnabled: false     // the wheel scrolls the page
-                showValue: false
-                from: sr.from
-                to: sr.to
-                stepSize: sr.step
-                value: sr.value
-                onMoved: v => sr.moved(v)
-            }
-        }
     }
 
     // ================= 1. Connected Accounts =================
@@ -234,7 +197,7 @@ ColumnLayout {
                         Layout.fillWidth: true
                         implicitHeight: 88
                         radius: Theme.shape.large + 4
-                        color: Theme.surfaceContainerLowest
+                        color: Theme.surfaceContainerHighest
                         ColumnLayout {
                             anchors.left: parent.left
                             anchors.leftMargin: 20
@@ -256,10 +219,8 @@ ColumnLayout {
         readonly property string st: Auth.youtubeState
         readonly property bool busy: st === "awaitingBrowser" || st === "verifying" || st === "checking"
         property bool expanded: false
-        // brand red; light mode a soft tint with dark red text (≥ 4.5:1 both ways)
-        readonly property color fg: Theme.dark ? "#FFFFFF" : "#410002"
-        readonly property color fgSoft: Theme.dark ? Qt.alpha("#FFFFFF", 0.82) : "#5C1013"
-        readonly property color accent: Theme.dark ? "#8C1D18" : "#B3261E"
+        readonly property color fg: Theme.fgSurface
+        readonly property color fgSoft: Theme.fgSurfaceVariant
         readonly property bool syncing: Library.pagesTotal > 0 && Library.pagesLoaded < Library.pagesTotal
 
         Layout.fillWidth: true
@@ -342,41 +303,39 @@ ColumnLayout {
                         Layout.alignment: Qt.AlignTop
                         size: 32
                     }
-                    // Linked ▾ / Options ▴
+                    // status chip ("Connected") and the tonal expand button of the options
                     Rectangle {
-                        visible: Auth.youtubeSignedIn
-                        Layout.alignment: Qt.AlignTop
-                        implicitWidth: linkedRow.implicitWidth + 32
-                        implicitHeight: 44
-                        radius: 22
-                        color: Qt.alpha(youtubeCard.fg, youtubeCard.expanded ? 0.22 : 0.14)
-                        Behavior on color { ColorAnimation { duration: Theme.motion.effectsFast } }
+                        visible: Auth.youtubeSignedIn && !root.narrow
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitWidth: linkedRow.implicitWidth + 28
+                        implicitHeight: 32
+                        radius: 16
+                        color: Theme.primaryContainer
                         Row {
                             id: linkedRow
                             anchors.centerIn: parent
-                            spacing: 4
+                            spacing: 6
+                            Icon { name: "check_circle"; size: 18; fill: 1; color: Theme.fgPrimaryContainer; anchors.verticalCenter: parent.verticalCenter }
                             Label {
-                                text: youtubeCard.expanded ? I18n.t("Options") : I18n.t("Linked")
-                                type: "titleMedium"
-                                weight: 700
-                                color: youtubeCard.fg
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Icon {
-                                name: "expand_more"
-                                size: 22
-                                color: youtubeCard.fg
-                                rotation: youtubeCard.expanded ? 180 : 0
-                                Behavior on rotation { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutCubic } }
+                                text: I18n.t("Connected")
+                                type: "labelLarge"
+                                weight: 600
+                                color: Theme.fgPrimaryContainer
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }
-                        StateLayer {
-                            anchors.fill: parent
-                            radius: parent.radius
-                            color: youtubeCard.fg
-                            onClicked: youtubeCard.expanded = !youtubeCard.expanded
-                        }
+                    }
+                    IconButton {
+                        visible: Auth.youtubeSignedIn
+                        Layout.alignment: Qt.AlignVCenter
+                        icon: "expand_more"
+                        style: "tonal"
+                        checkable: true
+                        autoToggle: false
+                        checked: youtubeCard.expanded
+                        rotation: youtubeCard.expanded ? 180 : 0
+                        Behavior on rotation { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutCubic } }
+                        onClicked: youtubeCard.expanded = !youtubeCard.expanded
                     }
                 }
             }
@@ -403,62 +362,44 @@ ColumnLayout {
                 ColumnLayout {
                     id: syncCol
                     width: parent.width
-                    spacing: 16
-                    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Qt.alpha(youtubeCard.fg, 0.2) }
+                    spacing: 2
                     Label {
                         Layout.fillWidth: true
+                        Layout.topMargin: 4
+                        Layout.leftMargin: 4
                         text: I18n.t("Synchronization & Personalization")
-                        type: "titleLarge"
-                        weight: 700
-                        color: youtubeCard.fg
+                        type: "titleSmall"
+                        weight: 600
+                        color: Theme.primary
                     }
                     // each row is a real setting the services follow (sf-services lib.rs follow_youtube_account_use,
                     // history.rs for listening activity)
                     Repeater {
                         model: [
-                            { key: "youtubeLibrarySync", title: I18n.t("Sync Playlists & Liked Songs"),
+                            { key: "youtubeLibrarySync", icon: "library_music", title: I18n.t("Sync Playlists & Liked Songs"),
                               text: I18n.t("Sync YouTube Music playlists and likes with your library.") },
-                            { key: "youtubeHistorySync", title: I18n.t("Sync Listening Activity"),
+                            { key: "youtubeHistorySync", icon: "history", title: I18n.t("Sync Listening Activity"),
                               text: I18n.t("Share played tracks to your YouTube Music account history, and show that history in Recently played.") },
-                            { key: "youtubePersonalHome", title: I18n.t("Personalized Explore Feed"),
+                            { key: "youtubePersonalHome", icon: "travel_explore", title: I18n.t("Personalized Explore Feed"),
                               text: I18n.t("When off, loads Home and Explore anonymously without account history.") },
-                            { key: "youtubePersonalRadio", title: I18n.t("Personalized Queue & Radios"),
+                            { key: "youtubePersonalRadio", icon: "radio", title: I18n.t("Personalized Queue & Radios"),
                               text: I18n.t("When off, builds auto-play recommendations purely based on the current song.") }
                         ]
-                        RowLayout {
+                        SyncRow {
                             required property var modelData
-                            Layout.fillWidth: true
-                            spacing: 16
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 2
-                                Label { Layout.fillWidth: true; text: modelData.title; type: "titleMedium"; weight: 700; color: youtubeCard.fg }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: modelData.text
-                                    type: "bodyMedium"
-                                    color: youtubeCard.fgSoft
-                                    wrapMode: Text.WordWrap
-                                    elide: Text.ElideNone
-                                }
-                            }
-                            BrandSwitch {
-                                on: youtubeCard.fg
-                                accent: youtubeCard.accent
-                                checked: Settings[modelData.key]
-                                onToggled: c => Settings[modelData.key] = c
-                            }
+                            required property int index
+                            first: index === 0
+                            last: index === 3
+                            icon: modelData.icon
+                            title: modelData.title
+                            text: modelData.text
+                            checked: Settings[modelData.key]
+                            onToggled: c => Settings[modelData.key] = c
                         }
                     }
                 }
             }
 
-            Rectangle {
-                visible: Auth.youtubeSignedIn
-                Layout.fillWidth: true
-                implicitHeight: 1
-                color: Qt.alpha(youtubeCard.fg, 0.2)
-            }
 
             // --- signed in: Sync Library Now + Disconnect ---
             PillButton {
@@ -467,8 +408,8 @@ ColumnLayout {
                                           : I18n.t("Sync Library Now")
                 icon: "sync"
                 busy: youtubeCard.syncing
-                color: "#FFFFFF"
-                content: "#8C1D18"
+                color: Theme.primary
+                content: Theme.fgPrimary
                 onClicked: Library.refresh()
             }
             PillButton {
@@ -476,7 +417,7 @@ ColumnLayout {
                 text: I18n.t("Disconnect")
                 icon: "logout"
                 outlined: true
-                content: youtubeCard.fg
+                content: Theme.error
                 onClicked: Auth.youtubeSignOut()
             }
 
@@ -489,8 +430,8 @@ ColumnLayout {
                     visible: !youtubeCard.busy
                     text: I18n.t("Sign in")
                     icon: "open_in_new"
-                    color: "#FFFFFF"
-                    content: "#8C1D18"
+                    color: Theme.primary
+                    content: Theme.fgPrimary
                     onClicked: Auth.startYouTubeLogin()
                 }
                 PillButton {

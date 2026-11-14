@@ -148,7 +148,7 @@ Item {
 
         // Фон: PixelPlayer's player sheet is the cover scheme's primaryContainer (deep in dark mode, pale in light);
         // the blurred cover (when on) shows faintly through the same colour
-        Rectangle { anchors.fill: parent; color: Theme.primaryContainer }
+        Rectangle { anchors.fill: parent; color: PlayerTheme.primaryContainer }
         // Режим, сила размытия и «плавание» — из настроек (см. CoverBackdrop); при смене трека фон
         // меняется вместе с цветами темы — под той же шторкой (см. TrackBackdrop)
         TrackBackdrop {
@@ -161,10 +161,14 @@ Item {
             followTheme: Settings.accentFromCover
             running: root.visible && Player.playing
         }
+        // the veil over the cover background: thin enough for Settings → Cover background to show (each mode its
+        // own strength: the gradient is theme colours already, the blurred cover needs more to keep text readable);
+        // the controls on top are solid containers
         Rectangle {
             anchors.fill: parent
-            color: Theme.primaryContainer
-            opacity: 0.86
+            color: PlayerTheme.primaryContainer
+            opacity: ({ gauss: 0.66, glass: 0.58, palette: 0.4, blobs: 0.5 })[Settings.backdropMode] ?? 0.66
+            Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
         }
 
         // Блокирует клики по приложению под плеером
@@ -178,7 +182,7 @@ Item {
             anchors.top: parent.top
             anchors.margins: 16
             spacing: 12
-            IconButton { icon: "keyboard_arrow_down"; style: "accentGlass"; onClicked: root.hide() }
+            IconButton { scheme: PlayerTheme; icon: "keyboard_arrow_down"; style: "accentGlass"; onClicked: root.hide() }
             Item { Layout.fillWidth: true }
             // lyrics search and options, on the tab switcher's line while the lyrics are shown
             LyricsTools {
@@ -186,12 +190,12 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 visible: root.tab === "lyrics" && (!root.layoutCompact || root.sheetOpen) && Player.hasTrack
             }
-            ButtonGroup {
+            ButtonGroup { scheme: PlayerTheme;
                 model: [{ icon: "title" }, { icon: "queue_music" }]
                 autoSelect: false
                 // Expressive: the active tab is a primary-coloured pill that widens
-                selectedColor: Theme.primary
-                selectedContentColor: Theme.fgPrimary
+                selectedColor: PlayerTheme.primary
+                selectedContentColor: PlayerTheme.fgPrimary
                 selectedGrow: 16
                 currentIndex: root.layoutCompact && !root.sheetOpen ? -1 : root.tab === "lyrics" ? 0 : root.tab === "queue" ? 1 : -1
                 onActivated: i => {
@@ -310,7 +314,7 @@ Item {
                         anchors.bottom: parent.bottom
                         anchors.margins: parent.width * 0.06
                         size: 34
-                        ringColor: Theme.primaryContainer
+                        ringColor: PlayerTheme.primaryContainer
                     }
                 }
 
@@ -351,7 +355,7 @@ Item {
                     text: Player.title
                     type: root.layoutCompact ? "headlineSmall" : "headlineMedium"
                     weight: 700
-                    color: Theme.fgPrimaryContainer
+                    color: PlayerTheme.fgPrimaryContainer
                     opacity: left.infoIn
                     transform: Translate { y: (1 - left.infoIn) * 14 }
                 }
@@ -367,7 +371,7 @@ Item {
                     opacity: Math.max(0, left.infoIn * 1.3 - 0.3)    // чуть позже названия
                     transform: Translate { y: (1 - left.infoIn) * 18 }
                     type: "titleMedium"
-                    color: Qt.alpha(Theme.fgPrimaryContainer, 0.7)
+                    color: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.7)
                 }
                 LinkLabel {
                     Layout.alignment: Qt.AlignHCenter
@@ -382,7 +386,7 @@ Item {
                     transform: Translate { y: (1 - left.infoIn) * 18 }
                     text: Player.artist
                     type: "titleMedium"
-                    color: Qt.alpha(Theme.fgPrimaryContainer, 0.7)
+                    color: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.7)
                 }
                 LinkLabel {
                     Layout.alignment: Qt.AlignHCenter
@@ -396,7 +400,7 @@ Item {
                     transform: Translate { y: (1 - left.infoIn) * 18 }
                     text: Player.album + (Player.codec !== "" && Player.isLocal === true ? "  ·  " + Player.codec : "")
                     type: "bodySmall"
-                    color: Qt.alpha(Theme.fgPrimaryContainer, 0.7)
+                    color: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.7)
                 }
 
                 // Прогресс
@@ -409,9 +413,9 @@ Item {
                     Label {
                         text: root._time(bigSeek.dragging ? bigSeek.dragValue * Player.durationMs : Player.positionMs)
                         type: "labelMedium"
-                        color: Qt.alpha(Theme.fgPrimaryContainer, 0.7)
+                        color: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.7)
                     }
-                    WavyProgress {
+                    WavyProgress { scheme: PlayerTheme;
                         id: bigSeek
                         Layout.fillWidth: true
                         thickness: 6
@@ -420,16 +424,16 @@ Item {
                         value: left.progress
                         wavy: Player.playing
                         // PixelPlayer's seek bar: onPrimaryContainer, the rest of the track at 20 %
-                        activeColor: Theme.fgPrimaryContainer
-                        stopColor: Theme.fgPrimaryContainer
-                        trackColor: Qt.alpha(Theme.fgPrimaryContainer, 0.2)
+                        activeColor: PlayerTheme.fgPrimaryContainer
+                        stopColor: PlayerTheme.fgPrimaryContainer
+                        trackColor: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.2)
                         interactive: true
                         onCommitted: v => Player.seek(v)
                     }
                     Label {
                         text: "−" + root._time(Player.durationMs - Player.positionMs)
                         type: "labelMedium"
-                        color: Qt.alpha(Theme.fgPrimaryContainer, 0.7)
+                        color: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.7)
                     }
                 }
 
@@ -438,7 +442,7 @@ Item {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 4
                     spacing: 12
-                    IconButton {
+                    IconButton { scheme: PlayerTheme;
                         icon: Player.isEpisode ? "replay_10" : "shuffle"; size: "m"
                         checkable: !Player.isEpisode; autoToggle: false; checked: !Player.isEpisode && Player.shuffle
                         enabled: Player.isEpisode || Player.source !== "radio"
@@ -451,19 +455,19 @@ Item {
                                 Player.shuffle = !Player.shuffle
                         }
                     }
-                    IconButton { icon: "skip_previous"; size: "m"; style: "accent"; iconFill: 1; widthMode: "wide"; onClicked: Player.previous() }
-                    PlayButton {
+                    IconButton { scheme: PlayerTheme; icon: "skip_previous"; size: "m"; style: "accent"; iconFill: 1; widthMode: "wide"; onClicked: Player.previous() }
+                    PlayButton { scheme: PlayerTheme;
                         size: root.layoutCompact ? 72 : 96
                         playing: Player.playing
                         loading: Player.buffering
                         spin: Player.isLocal === true
-                        // PixelPlayer: the fixed tertiary pair, the same teal-ish tone in light and dark mode
-                        containerColor: Theme.tertiaryFixedDim
-                        iconColor: Theme.fgTertiaryFixed
+                        // PixelPlayer: the fixed tertiary pair (a shade deeper in light mode, see PlayerTheme.playContainer)
+                        containerColor: PlayerTheme.playContainer
+                        iconColor: PlayerTheme.fgTertiaryFixed
                         onClicked: Player.togglePlay()
                     }
-                    IconButton { icon: "skip_next"; size: "m"; style: "accent"; iconFill: 1; widthMode: "wide"; onClicked: Player.next() }
-                    IconButton {
+                    IconButton { scheme: PlayerTheme; icon: "skip_next"; size: "m"; style: "accent"; iconFill: 1; widthMode: "wide"; onClicked: Player.next() }
+                    IconButton { scheme: PlayerTheme;
                         icon: Player.isEpisode ? "forward_30" : Player.repeat === "one" ? "repeat_one" : "repeat"; size: "m"
                         checkable: !Player.isEpisode; autoToggle: false; checked: !Player.isEpisode && Player.repeat !== "off"
                         style: checked ? "filled" : "standard"
@@ -480,7 +484,7 @@ Item {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 4
                     spacing: 12
-                    IconButton {
+                    IconButton { scheme: PlayerTheme;
                         visible: Player.source === "radio" && !Player.isEpisode
                         icon: "thumb_down"
                         enabled: Player.hasTrack
@@ -493,14 +497,14 @@ Item {
                         name: npDevice.icon
                         size: 22
                         fill: 1
-                        color: Theme.primary
+                        color: PlayerTheme.primary
                     }
                     Icon {
                         Layout.leftMargin: Player.remote === true ? 0 : 8
                         name: volumeRow.locked ? "lock" : Player.volume > 0.5 ? "volume_up" : Player.volume > 0 ? "volume_down" : "volume_off"
                         size: 22
                     }
-                    Slider {
+                    Slider { scheme: PlayerTheme;
                         Layout.preferredWidth: root.layoutCompact ? Math.min(220, left.colWidth - 260) : 220
                         value: Player.volume
                         trackHeight: 14
@@ -511,7 +515,7 @@ Item {
                     }
                     LikeButton { visible: !Player.isEpisode; Layout.leftMargin: 8; track: Player.track }
                     DownloadButton { track: Player.track }
-                    IconButton {
+                    IconButton { scheme: PlayerTheme;
                         visible: Player.isEpisode
                         Layout.leftMargin: 8
                         icon: "bookmark"
@@ -521,7 +525,7 @@ Item {
                         enabled: Player.uri !== ""
                         onClicked: Library.toggleSaved(Player.uri)
                     }
-                    IconButton {
+                    IconButton { scheme: PlayerTheme;
                         id: bigMore
                         icon: "more_horiz"
                         iconSize: 30
@@ -539,7 +543,7 @@ Item {
                     Layout.topMargin: -4
                     text: I18n.t("Volume can only be changed on the device")
                     type: "bodySmall"
-                    color: Theme.fgSurfaceVariant
+                    color: PlayerTheme.fgSurfaceVariant
                 }
 
                 // Пульт: «Играет на … · Слушать здесь», устройство пропало — «Продолжить здесь?»
