@@ -62,7 +62,7 @@ Item {
     readonly property color _fg: PlayerTheme.fgPrimaryContainer
     readonly property color _fgSoft: Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.75)
     function _toggleIcon(on, enabled) {
-        return !enabled ? Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.3) : on ? PlayerTheme.fgPrimary : Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.6)
+        return !enabled ? Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.3) : on ? PlayerTheme.fgPrimary : PlayerTheme.dark ? Qt.alpha(PlayerTheme.fgPrimaryContainer, 0.6) : PlayerTheme.toggleIdle
     }
 
     function _time(ms) {
@@ -105,7 +105,7 @@ Item {
             }
         } }
         // the full player's controls: filled primary pills around the tertiary play button
-        IconButton { scheme: PlayerTheme; icon: "skip_previous"; style: "accent"; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.previous() }
+        IconButton { scheme: PlayerTheme; icon: "skip_previous"; style: PlayerTheme.transportStyle; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.previous() }
         Item {
             implicitWidth: 52
             implicitHeight: 52
@@ -115,13 +115,13 @@ Item {
                 playing: Player.playing
                 loading: Player.buffering
                 spin: Player.isLocal === true      // пульт не перерисовывает окно каждый кадр
-                containerColor: PlayerTheme.playContainer
-                iconColor: PlayerTheme.fgTertiaryFixed
+                containerColor: PlayerTheme.playButtonContainer
+                iconColor: PlayerTheme.playButtonIcon
                 enabled: Player.hasTrack
                 onClicked: Player.togglePlay()
             }
         }
-        IconButton { scheme: PlayerTheme; icon: "skip_next"; style: "accent"; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.next() }
+        IconButton { scheme: PlayerTheme; icon: "skip_next"; style: PlayerTheme.transportStyle; iconFill: 1; widthMode: "wide"; enabled: Player.hasTrack; onClicked: Player.next() }
         Fold { shown: root.roomForModes && !root.compact; IconButton { scheme: PlayerTheme;
             icon: Player.isEpisode ? "forward_30" : Player.repeat === "one" ? "repeat_one" : "repeat"
             style: checked ? "filled" : "standard"

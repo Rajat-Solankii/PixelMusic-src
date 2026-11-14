@@ -185,4 +185,12 @@ QtObject {
     readonly property color errorPaletteKeyColor: _c("errorPaletteKeyColor")
     // the players' play/pause, as Theme.playContainer
     readonly property color playContainer: dark ? tertiaryFixedDim : Qt.darker(tertiaryFixedDim, 1.08)
+
+    // Light mode transport (mini and full player): onPrimary pills with a primary icon around a solid primary
+    // play button; dark mode keeps primary pills around the tertiary-fixed play button
+    readonly property string transportStyle: dark ? "accent" : "accentSoft"
+    readonly property color playButtonContainer: dark ? playContainer : primary
+    readonly property color playButtonIcon: dark ? fgTertiaryFixed : fgPrimary
+    // shuffle / repeat when off: a deeper tone of the sheet's own colour in light mode (onSurfaceVariant greys out)
+    readonly property color toggleIdle: dark ? fgSurfaceVariant : primary
 }

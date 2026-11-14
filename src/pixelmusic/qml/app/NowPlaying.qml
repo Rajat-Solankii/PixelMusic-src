@@ -151,8 +151,11 @@ Item {
         Rectangle { anchors.fill: parent; color: PlayerTheme.primaryContainer }
         // Режим, сила размытия и «плавание» — из настроек (см. CoverBackdrop); при смене трека фон
         // меняется вместе с цветами темы — под той же шторкой (см. TrackBackdrop)
+        // "Soft" here is the solid Expressive sheet alone: the dim cover blurred under the veil only muddied the
+        // colour (darker sheet, same text tone), so the full player skips it
         TrackBackdrop {
             anchors.fill: parent
+            visible: Settings.backdropMode !== "gauss"
             // на весь экран — крупная обложка (CoverBackdrop размер в URL не подменяет)
             source: Player.coverLarge !== "" ? Player.coverLarge : Player.cover
             mode: Settings.backdropMode
@@ -167,6 +170,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             color: PlayerTheme.primaryContainer
+            visible: Settings.backdropMode !== "gauss"
             opacity: ({ gauss: 0.66, glass: 0.58, palette: 0.4, blobs: 0.5 })[Settings.backdropMode] ?? 0.66
             Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
         }
@@ -448,6 +452,8 @@ Item {
                         enabled: Player.isEpisode || Player.source !== "radio"
                         style: checked ? "filled" : "standard"
                         iconFill: 1
+                        id: shuffleBtn
+                        iconColor: enabled && !checked ? PlayerTheme.toggleIdle : shuffleBtn._contentColor
                         onClicked: {
                             if (Player.isEpisode)
                                 Player.seekRelative(-10000)
@@ -455,23 +461,25 @@ Item {
                                 Player.shuffle = !Player.shuffle
                         }
                     }
-                    IconButton { scheme: PlayerTheme; icon: "skip_previous"; size: "m"; style: "accent"; iconFill: 1; widthMode: "wide"; onClicked: Player.previous() }
+                    IconButton { scheme: PlayerTheme; icon: "skip_previous"; size: "m"; style: PlayerTheme.transportStyle; iconFill: 1; widthMode: "wide"; onClicked: Player.previous() }
                     PlayButton { scheme: PlayerTheme;
                         size: root.layoutCompact ? 72 : 96
                         playing: Player.playing
                         loading: Player.buffering
                         spin: Player.isLocal === true
                         // PixelPlayer: the fixed tertiary pair (a shade deeper in light mode, see PlayerTheme.playContainer)
-                        containerColor: PlayerTheme.playContainer
-                        iconColor: PlayerTheme.fgTertiaryFixed
+                        containerColor: PlayerTheme.playButtonContainer
+                        iconColor: PlayerTheme.playButtonIcon
                         onClicked: Player.togglePlay()
                     }
-                    IconButton { scheme: PlayerTheme; icon: "skip_next"; size: "m"; style: "accent"; iconFill: 1; widthMode: "wide"; onClicked: Player.next() }
+                    IconButton { scheme: PlayerTheme; icon: "skip_next"; size: "m"; style: PlayerTheme.transportStyle; iconFill: 1; widthMode: "wide"; onClicked: Player.next() }
                     IconButton { scheme: PlayerTheme;
                         icon: Player.isEpisode ? "forward_30" : Player.repeat === "one" ? "repeat_one" : "repeat"; size: "m"
                         checkable: !Player.isEpisode; autoToggle: false; checked: !Player.isEpisode && Player.repeat !== "off"
                         style: checked ? "filled" : "standard"
                         iconFill: 1
+                        id: repeatBtn
+                        iconColor: enabled && !checked ? PlayerTheme.toggleIdle : repeatBtn._contentColor
                         onClicked: Player.isEpisode ? Player.seekRelative(30000) : Player.cycleRepeat()
                     }
                 }
