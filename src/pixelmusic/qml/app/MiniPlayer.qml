@@ -78,6 +78,14 @@ Item {
         Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsSlow } }
     }
     Elevation { target: bg; level: 2 }
+    // The pill swallows presses and hover: a click in a gap between buttons, or on a disabled one
+    // (shuffle on radio), must not fall through to the track list scrolling underneath.
+    // Wheel still passes through (no onWheel), so the page scrolls under the bar.
+    MouseArea {
+        anchors.fill: bg
+        acceptedButtons: Qt.AllButtons
+        hoverEnabled: true
+    }
 
     RowLayout {
         anchors.fill: parent

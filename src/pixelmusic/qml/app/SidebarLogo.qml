@@ -140,7 +140,9 @@ Item {
         id: wordmark
         x: mark.x + mark.width
         anchors.verticalCenter: parent.verticalCenter
-        text: "PixelMusic"
+        // "Music" takes the theme's primary colour, so the wordmark follows the palette
+        textFormat: Text.StyledText
+        text: "Pixel<font color=\"" + Theme.primary + "\">Music</font>"
         type: "titleMedium"
         font.pixelSize: 18
         weight: 700

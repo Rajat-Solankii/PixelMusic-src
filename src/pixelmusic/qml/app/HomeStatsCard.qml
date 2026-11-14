@@ -159,6 +159,10 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 Layout.preferredHeight: 196
+                Layout.maximumHeight: 196
+                // the bars never leave the chart: while the card re-lays out (Home hidden under "See all",
+                // new stats arriving) a bar could compute a huge height and paint stripes over the whole page
+                clip: true
                 Row {
                     id: bars
                     anchors.fill: parent
@@ -171,7 +175,10 @@ Rectangle {
                             required property int index
                             readonly property bool best: index === root.busiest
                             readonly property real chart: height - 28      // labels under the bars
-                            width: (bars.width - bars.spacing * 6) / 7
+                            // the tallest a bar may be: the chart minus the busiest day's badge on top
+                            readonly property real room: Math.max(12, chart - 40)
+                            readonly property real share: root.maxSeconds > 0 ? Math.min(1, modelData.seconds / root.maxSeconds) : 0
+                            width: Math.max(0, (bars.width - bars.spacing * 6) / 7)
                             height: bars.height
 
                             Rectangle {
@@ -182,7 +189,7 @@ Rectangle {
                                 // the busiest is full height minus its badge; the rest scale against it
                                 // a day without plays is a short flat pill, a light day at least a circle
                                 height: day.modelData.seconds > 0
-                                        ? Math.max(width, (day.chart - 40) * day.modelData.seconds / root.maxSeconds) : 12
+                                        ? Math.min(day.room, Math.max(width, day.room * day.share)) : 12
                                 radius: Math.min(width, height) / 2
                                 color: day.best ? Theme.primary
                                      : day.modelData.seconds > 0 ? Theme.secondaryContainer : Theme.surfaceContainerHighest
