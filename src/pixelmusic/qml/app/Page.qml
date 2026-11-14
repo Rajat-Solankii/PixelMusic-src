@@ -17,6 +17,8 @@ Item {
     default property alias content: column.data
     // Слой под содержимым, вне прокручиваемой области — её clip его не режет (фон шапки, см. HeroShapes)
     property alias underlay: underlayHost.data
+    // buttons at the right end of the title row (Settings → a category: "Reset to defaults")
+    property alias headerActions: headerActionsRow.data
     readonly property alias flickable: flick
     readonly property bool scrolled: flick.contentY > 48
 
@@ -35,22 +37,31 @@ Item {
             width: flick.width - 2 * page.sideMargin
             spacing: 24
 
-            ColumnLayout {
+            RowLayout {
                 visible: page.showHeader
                 Layout.fillWidth: true
-                spacing: 4
-                Label {
+                spacing: 16
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: page.title
-                    type: "displaySmall"
-                    weight: 600
+                    spacing: 4
+                    Label {
+                        Layout.fillWidth: true
+                        text: page.title
+                        type: "displaySmall"
+                        weight: 600
+                    }
+                    Label {
+                        visible: page.subtitle !== ""
+                        Layout.fillWidth: true
+                        text: page.subtitle
+                        type: "bodyLarge"
+                        color: Theme.fgSurfaceVariant
+                    }
                 }
-                Label {
-                    visible: page.subtitle !== ""
-                    Layout.fillWidth: true
-                    text: page.subtitle
-                    type: "bodyLarge"
-                    color: Theme.fgSurfaceVariant
+                Row {
+                    id: headerActionsRow
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 8
                 }
             }
         }

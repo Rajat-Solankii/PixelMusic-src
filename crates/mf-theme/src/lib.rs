@@ -13,6 +13,8 @@ use material_colors::dynamic_color::{
 use material_colors::hct::Hct;
 
 pub mod icons;
+mod palettes;
+pub use palettes::{palette, palette_scheme, Palette, PALETTES};
 mod quantize;
 pub use quantize::CrtRand;
 mod scale;
@@ -295,6 +297,60 @@ pub fn variant_for_seed(seed: u32, chosen: Variant) -> Variant {
     if is_grayscale(seed) { Variant::Monochrome } else { chosen }
 }
 
+/// The app's scheme: `build_scheme` with grey seeds turned Monochrome. For Monochrome the accent roles follow
+/// PixelPlayer Desktop (ColorRoles.toComposeColorScheme): its grey palettes with the usual tone table, so the
+/// containers stay deep in dark mode and pale in light mode. The Monochrome spec itself puts primaryContainer at
+/// T85 in dark and T25 in light, which turned Now Playing's background light in dark mode and dark in light mode.
+pub fn app_scheme(seed: u32, dark: bool, chosen: Variant, contrast: f64) -> Scheme {
+    let variant = variant_for_seed(seed, chosen);
+    let mut scheme = build_scheme(seed, dark, variant, contrast);
+    if variant != Variant::Monochrome {
+        return scheme;
+    }
+    let palettes = DynamicScheme::from_spec(
+        Hct::new(Rgb::from_u32(seed)),
+        variant.material(),
+        dark,
+        Some(contrast),
+        Platform::Phone,
+        SpecVersion::Spec2025,
+    );
+    let tone = |palette: &material_colors::palette::TonalPalette, t: f64| -> u32 {
+        Rgb::from(Hct::from(palette.hue(), palette.chroma(), t)).as_argb_u32()
+    };
+    // (role, dark tone, light tone)
+    let accents: [(&str, f64, f64); 12] = [
+        ("primary", 80.0, 40.0),
+        ("onPrimary", 20.0, 100.0),
+        ("primaryContainer", 30.0, 90.0),
+        ("onPrimaryContainer", 90.0, 10.0),
+        ("secondary", 80.0, 40.0),
+        ("onSecondary", 20.0, 100.0),
+        ("secondaryContainer", 30.0, 90.0),
+        ("onSecondaryContainer", 90.0, 10.0),
+        ("tertiary", 80.0, 40.0),
+        ("onTertiary", 20.0, 100.0),
+        ("tertiaryContainer", 30.0, 90.0),
+        ("onTertiaryContainer", 90.0, 10.0),
+    ];
+    for (role, dark_tone, light_tone) in accents {
+        let palette = match role.trim_start_matches("on").to_ascii_lowercase() {
+            r if r.starts_with("primary") => &palettes.primary_palette,
+            r if r.starts_with("secondary") => &palettes.secondary_palette,
+            _ => &palettes.tertiary_palette,
+        };
+        if let Some(slot) = scheme.colors.get_mut(role) {
+            *slot = tone(palette, if dark { dark_tone } else { light_tone });
+        }
+    }
+    for (role, dark_tone, light_tone) in [("inversePrimary", 40.0, 80.0), ("surfaceTint", 80.0, 40.0)] {
+        if let Some(slot) = scheme.colors.get_mut(role) {
+            *slot = tone(&palettes.primary_palette, if dark { dark_tone } else { light_tone });
+        }
+    }
+    scheme
+}
+
 /// Сторона картинки, до которой она уменьшается перед квантованием.
 pub const SAMPLE_SIZE: u32 = 112;
 /// Число кластеров QuantizeCelebi.
@@ -473,6 +529,25 @@ pub fn format_color(argb: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_grey_cover_keeps_deep_containers_in_dark_mode_and_pale_ones_in_light_mode() {
+        let grey = 0xFF80_8080;
+        let luminance = |argb: u32| {
+            let [_, r, g, b] = argb.to_be_bytes();
+            (u32::from(r) + u32::from(g) + u32::from(b)) / 3
+        };
+        let dark = app_scheme(grey, true, Variant::TonalSpot, 0.0);
+        let light = app_scheme(grey, false, Variant::TonalSpot, 0.0);
+        assert_eq!(dark.variant, Variant::Monochrome);
+        assert!(luminance(dark.colors["primaryContainer"]) < 90, "{:08x}", dark.colors["primaryContainer"]);
+        assert!(luminance(dark.colors["onPrimaryContainer"]) > 180);
+        assert!(luminance(light.colors["primaryContainer"]) > 190, "{:08x}", light.colors["primaryContainer"]);
+        assert!(luminance(light.colors["onPrimaryContainer"]) < 60);
+        // a colourful seed is the plain build_scheme
+        let red = app_scheme(0xFFE9_1E63, true, Variant::TonalSpot, 0.0);
+        assert_eq!(red.colors, build_scheme(0xFFE9_1E63, true, Variant::TonalSpot, 0.0).colors);
+    }
 
     fn camel(snake: &str) -> String {
         let mut out = String::new();

@@ -660,7 +660,7 @@ async fn signed_in_android_vr_goes_with_the_accounts_visitor_id_and_no_cookies()
     // signing in forgets the rest; the anonymous client is refused again, the account's device is not
     service.set_account(Some(account()));
     let stream = service.resolve_stream("fJ9rUzIMcZQ").await.expect("stream");
-    assert_eq!((stream.source.as_str(), stream.itag), ("ANDROID_VR", 140));
+    assert_eq!((stream.source.as_str(), stream.itag), ("ANDROID_VR_USER", 140));
     assert_eq!(stream.user_agent, ANDROID_VR.user_agent);
     let requests = player_requests(&server);
     let user = requests.last().unwrap();

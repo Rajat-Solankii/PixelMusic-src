@@ -623,6 +623,7 @@ impl State {
             added_at: String::new(),
             played_at: times.get(&item.uri).cloned().unwrap_or_default(),
             folder_id: folder.to_owned(),
+            ..Default::default()
         }
     }
 

@@ -16,8 +16,11 @@ use crate::{RESTART_BEFORE_PREVIOUS_MS, Repeat};
 
 /// Queue row ids of the lane start high so they never meet the ids `Core` hands out.
 const FIRST_UID: u64 = 1 << 48;
-/// How many times a failed load is resolved again: the anonymous ANDROID_VR, the account's, then the web player.
-const MAX_RETRIES: u8 = 4;
+/// How many times a failed load is resolved again. The resolver skips the tiers refused for the song, so the
+/// retries walk anonymous ANDROID_VR → the account's → the web player, which is asked again after that.
+pub(crate) const MAX_RETRIES: u8 = 4;
+/// Autoplay keeps at least this many songs ahead of the playing one (it asks for more below it).
+pub(crate) const AUTOPLAY_AHEAD: usize = 10;
 
 /// What the actor does for the lane.
 #[derive(Clone, Debug, PartialEq)]
@@ -607,12 +610,13 @@ impl YtLane {
         self.append(items)
     }
 
-    /// Autoplay: the song whose radio should follow once the list runs out — the current YouTube song while at
-    /// most one song of the list is left after it, nothing is in "Playing next" and repeat is off.
+    /// Autoplay: the song whose radio keeps the list going — the current YouTube song while fewer than
+    /// `AUTOPLAY_AHEAD` songs of the list are left after it, nothing is in "Playing next" and repeat is off. The queue
+    /// so always shows songs to come (asked once per song; songs already listed are skipped when the radio arrives).
     pub fn autoplay_seed(&self) -> Option<&TrackItem> {
         let current = self.current.as_ref()?;
         let left = self.order.len().saturating_sub(self.pos + 1);
-        (self.active && self.repeat == Repeat::Off && self.manual.is_empty() && left <= 1)
+        (self.active && self.repeat == Repeat::Off && self.manual.is_empty() && left < AUTOPLAY_AHEAD)
             .then_some(&current.entry.track)
             .filter(|track| track.uri.starts_with("youtube:track:"))
     }
@@ -686,6 +690,34 @@ impl YtLane {
 
     pub fn clear_manual(&mut self) {
         self.manual.clear();
+    }
+
+    /// "Clear player": the song stops and is forgotten with everything after it; the player shows nothing
+    /// playing and the next start restores nothing. The lane keeps transport (Play then says to choose a song).
+    pub fn clear(&mut self) {
+        self.leave(false);
+        if self.stream.is_some() || self.loading {
+            self.effects.push(YtEffect::Engine(YtCommand::Stop));
+        }
+        self.seq += 1;
+        self.stream = None;
+        self.playing = false;
+        self.loading = false;
+        self.items.clear();
+        self.order.clear();
+        self.pos = 0;
+        self.manual.clear();
+        self.current = None;
+        self.context = PlayContext::default();
+        self.position_ms = 0;
+        self.position_at = None;
+        self.start_ms = 0;
+        self.duration_ms = 0;
+        self.error.clear();
+        self.retried = 0;
+        self.played = Duration::ZERO;
+        self.played_since = None;
+        self.effects.push(YtEffect::Cover(String::new()));
     }
 
     // --- what comes back ---------------------------------------------------------------------
@@ -941,6 +973,24 @@ mod tests {
     }
 
     #[test]
+    fn clearing_stops_the_song_and_forgets_it_with_its_queue() {
+        let mut lane = started(&["a", "b", "c"], 0);
+        lane.add(vec![yt("q")]);
+        lane.take_effects();
+        lane.clear();
+        let effects = lane.take_effects();
+        assert!(effects.iter().any(|effect| matches!(effect, YtEffect::Engine(YtCommand::Stop))));
+        assert!(effects.iter().any(|effect| matches!(effect, YtEffect::Cover(url) if url.is_empty())));
+        assert!(lane.track().is_none() && !lane.playing() && !lane.loading());
+        assert!(lane.rows().is_empty() && lane.manual_count() == 0);
+        assert!(lane.session().is_none(), "nothing is restored next time");
+        // Play has nothing to start; a later stream answer for the old load is ignored
+        lane.play();
+        assert!(lane.track().is_none() && !lane.playing());
+        assert!(resolves(&lane.take_effects()).is_empty());
+    }
+
+    #[test]
     fn a_radio_extends_the_playing_list_without_restarting_it() {
         let mut lane = YtLane::default();
         let radio = PlayContext::with_uri("radio", "youtube:playlist:RDAMVMa");
@@ -1118,19 +1168,22 @@ mod tests {
     }
 
     #[test]
-    fn a_player_error_retries_once_with_a_fresh_url() {
+    fn a_player_error_retries_with_fresh_urls_up_to_the_limit() {
         let mut lane = started(&["a", "b"], 0);
         lane.event(lane.seq(), YtEvent::Position(42_000));
-        lane.event(lane.seq(), YtEvent::Error("403".into()));
-        let effects = lane.take_effects();
-        assert!(effects.contains(&YtEffect::Invalidate("a".into())));
-        let retry = resolves(&effects);
-        assert_eq!(retry.len(), 1);
-        lane.resolved(retry[0].0, Box::new(Ok(stream("a"))));
-        assert!(lane.take_effects().iter().any(|effect| matches!(
-            effect,
-            YtEffect::Engine(YtCommand::Load { position_ms: 42_000, .. })
-        )));
+        for _ in 0..MAX_RETRIES {
+            lane.event(lane.seq(), YtEvent::Error("403".into()));
+            let effects = lane.take_effects();
+            assert!(effects.contains(&YtEffect::Invalidate("a".into())));
+            let retry = resolves(&effects);
+            assert_eq!(retry.len(), 1);
+            lane.resolved(retry[0].0, Box::new(Ok(stream("a"))));
+            assert!(lane.take_effects().iter().any(|effect| matches!(
+                effect,
+                YtEffect::Engine(YtCommand::Load { position_ms: 42_000, .. })
+            )));
+            assert!(lane.error().is_empty());
+        }
         lane.event(lane.seq(), YtEvent::Error("403 again".into()));
         assert_eq!(lane.error(), "403 again");
         assert!(!lane.playing() && !lane.loading());
@@ -1197,11 +1250,13 @@ mod tests {
 
     #[test]
     fn autoplay_asks_for_the_radio_near_the_end_and_appends_it_while_the_song_plays() {
-        let mut lane = started(&["a", "b", "c"], 0);
-        // two songs left: not yet
+        let names: Vec<String> = (0..=AUTOPLAY_AHEAD).map(|i| format!("s{i}")).collect();
+        let list: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut lane = started(&list, 0);
+        // AUTOPLAY_AHEAD songs left: not yet
         assert!(lane.autoplay_seed().is_none());
         lane.next();
-        assert_eq!(lane.autoplay_seed().map(|track| track.track_id.as_str()), Some("b"));
+        assert_eq!(lane.autoplay_seed().map(|track| track.track_id.as_str()), Some("s1"));
         // "Playing next" or repeat keep the list going on their own
         lane.add(vec![yt("m")]);
         assert!(lane.autoplay_seed().is_none());
@@ -1211,10 +1266,12 @@ mod tests {
         lane.set_repeat(Repeat::Off);
 
         // the radio of another song (the user moved on) is ignored; the seed and songs already listed are skipped
-        assert_eq!(lane.autoplay("youtube:track:a", vec![yt("x")]), 0);
-        assert_eq!(lane.autoplay("youtube:track:b", vec![yt("b"), yt("c"), yt("r1"), yt("r2")]), 2);
+        assert_eq!(lane.autoplay("youtube:track:s0", vec![yt("x")]), 0);
+        assert_eq!(lane.autoplay("youtube:track:s1", vec![yt("s1"), yt("s2"), yt("r1"), yt("r2")]), 2);
         let ids: Vec<String> = uris(&lane).into_iter().map(|(_, id)| id).collect();
-        assert_eq!(ids, ["b", "c", "r1", "r2"]);
+        assert_eq!(ids.first().map(String::as_str), Some("s1"));
+        assert!(ids.ends_with(&["r1".to_owned(), "r2".to_owned()]), "{ids:?}");
+        // AUTOPLAY_AHEAD + 1 songs left now: no more asking until the list runs low again
         assert!(lane.autoplay_seed().is_none());
     }
 

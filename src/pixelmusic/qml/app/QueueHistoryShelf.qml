@@ -37,6 +37,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: 392
         orientation: ListView.Horizontal
+        SideScroll { flickable: list }
         spacing: 16
         clip: true
         boundsBehavior: Flickable.StopAtBounds

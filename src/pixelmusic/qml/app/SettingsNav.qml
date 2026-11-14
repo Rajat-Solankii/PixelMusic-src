@@ -19,6 +19,7 @@ Item {
         contentWidth: row.implicitWidth
         contentHeight: height
         flickableDirection: Flickable.HorizontalFlick
+        SideScroll { flickable: flick }
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentWidth > width
         clip: true

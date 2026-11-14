@@ -27,7 +27,7 @@ const DEVICE_KEYS: &[&str] =
     &["id", "name", "type", "isActive", "isThisComputer", "isRestricted", "supportsVolume", "volume", "source"];
 const LIBRARY_KEYS: &[&str] = &[
     "kind", "id", "uri", "title", "subtitle", "cover", "covers", "owner", "ownerId", "canEdit", "readOnly", "pinned",
-    "trackCount", "addedAt", "playedAt", "folderId",
+    "trackCount", "addedAt", "playedAt", "folderId", "albumType",
 ];
 
 fn keys<T: Serialize>(value: &T) -> Vec<String> {

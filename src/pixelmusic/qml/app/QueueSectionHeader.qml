@@ -2,75 +2,53 @@ import QtQuick
 import QtQuick.Layouts
 import Md3
 
-// Заголовок секции очереди: подпись, бейдж-счётчик, волнистая линия до края, необязательная кнопка.
+// A quiet label between queue groups ("Next in queue" · count, "Next from …"): PixelPlayer's queue is one list of
+// cards under its "Next Up" header, so the groups only get a small onSurfaceVariant caption.
 Item {
     id: root
 
     property string title
-    property int count: -1                 // < 0 — без бейджа
-    property string actionIcon
-    property string actionText             // подсказка кнопки
+    property int count: -1                 // < 0 — без счётчика
     property string note                   // строка под заголовком («Новые треки встают в конец»)
 
-    signal action()
-
-    implicitHeight: col.implicitHeight + 16
+    implicitHeight: col.implicitHeight + 10
     implicitWidth: 240
 
     ColumnLayout {
         id: col
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: 8
-        anchors.rightMargin: 4
+        anchors.leftMargin: 6
+        anchors.rightMargin: 6
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 4
-        spacing: 2
+        anchors.bottomMargin: 2
+        spacing: 0
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            spacing: 8
-
+            spacing: 6
             Label {
-                Layout.preferredWidth: implicitWidth
-                Layout.maximumWidth: col.width - 96
+                Layout.fillWidth: true
+                Layout.maximumWidth: Math.ceil(implicitWidth)
                 text: root.title
-                type: "titleSmall"
+                type: "labelLarge"
+                weight: 600
                 color: Theme.fgSurfaceVariant
             }
-            Rectangle {
+            Label {
                 visible: root.count >= 0
-                implicitWidth: Math.max(20, countLabel.implicitWidth + 12)
-                implicitHeight: 20
-                radius: 10
-                color: Theme.secondaryContainer
-                Label {
-                    id: countLabel
-                    anchors.centerIn: parent
-                    text: root.count
-                    type: "labelSmall"
-                    color: Theme.fgSecondaryContainer
-                }
+                text: "· " + root.count
+                type: "labelLarge"
+                color: Qt.alpha(Theme.fgSurfaceVariant, 0.7)
             }
-            WavyDivider {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 8
-                Layout.minimumWidth: 16
-            }
-            IconButton {
-                visible: root.actionIcon !== ""
-                icon: root.actionIcon
-                size: "xs"
-                onClicked: root.action()
-            }
+            Item { Layout.fillWidth: true }
         }
         Label {
             visible: root.note !== ""
             Layout.fillWidth: true
             text: root.note
             type: "bodySmall"
-            color: Theme.fgSurfaceVariant
+            color: Qt.alpha(Theme.fgSurfaceVariant, 0.7)
         }
     }
 }

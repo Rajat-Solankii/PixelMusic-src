@@ -148,7 +148,11 @@ ColumnLayout {
         topRightRadius: topLeftRadius
         bottomLeftRadius: last ? Theme.shape.extraLarge : Theme.shape.extraSmall
         bottomRightRadius: bottomLeftRadius
-        color: Theme.surfaceContainerHigh
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: Theme.dark ? "#4E0B10" : "#FBE3E1" }
+            GradientStop { position: 1; color: Theme.dark ? "#7E171C" : "#F6CBC7" }
+        }
         opacity: enabled ? 1 : 0.6
         ColumnLayout {
             id: srCol
@@ -261,11 +265,7 @@ ColumnLayout {
         Layout.fillWidth: true
         implicitHeight: ytCol.implicitHeight + 48
         radius: Theme.shape.extraLarge + 4
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0; color: Theme.dark ? "#4E0B10" : "#FBE3E1" }
-            GradientStop { position: 1; color: Theme.dark ? "#7E171C" : "#F6CBC7" }
-        }
+        color: Theme.surfaceContainerHigh
 
         ColumnLayout {
             id: ytCol

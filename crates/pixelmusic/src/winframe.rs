@@ -292,10 +292,27 @@ pub fn update_icon(colorway: &str) {
         "orangeYellow" => "orange_yellow",
         _ => "blue_purple",
     };
-    let icon = crate::engine::assets_dir().join("logo").join(format!("{name}.svg"));
-    if !icon.is_file() {
-        tracing::warn!("no logo for colorway {colorway}: {}", icon.display());
+    let logo = crate::engine::assets_dir().join("logo");
+    let svg = logo.join(format!("{name}.svg"));
+    if !svg.is_file() {
+        tracing::warn!("no logo for colorway {colorway}: {}", svg.display());
         return;
     }
-    crate::qt::ffi::ffi::app_set_window_icon(&QString::from(icon.to_string_lossy().as_ref()));
+    // Windows: the .ico (16..256 px, drawn per size) for the window and taskbar button; the SVG elsewhere
+    let ico = logo.join(format!("{name}.ico"));
+    let window_icon = if cfg!(target_os = "windows") && ico.is_file() { &ico } else { &svg };
+    crate::qt::ffi::ffi::app_set_window_icon(&QString::from(window_icon.to_string_lossy().as_ref()));
+
+    // The desktop, Start menu and pinned taskbar shortcuts follow the colour too (only an installed copy has
+    // them: shortcuts pointing at another exe are left alone). The default colour is the exe's own icon.
+    if cfg!(target_os = "windows") && !crate::context::ctx().flags.screenshot {
+        let target = if name == "blue_purple" || !ico.is_file() {
+            std::env::current_exe().ok()
+        } else {
+            Some(ico)
+        };
+        if let Some(target) = target {
+            crate::qt::ffi::ffi::shell_set_shortcut_icons(&QString::from(target.to_string_lossy().as_ref()));
+        }
+    }
 }

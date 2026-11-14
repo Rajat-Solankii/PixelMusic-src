@@ -4,54 +4,58 @@ import Md3
 import PixelMusic.Core
 
 // Правая выдвижная панель: очередь / текст песни.
+// The queue is PixelPlayer Desktop's side panel: its own "Next Up" header (QueueView) with 14 px margins and no
+// tab row; the player bar's queue and lyrics buttons switch between the two. Lyrics keep a small header.
 Surface {
     id: root
 
-    // Вкладки (Settings.rightPanelTab). Подпись — только у выбранной: три подписи в 340 px не помещаются.
-    readonly property var tabs: [
-        { key: "queue", text: I18n.t("Queue"), icon: "queue_music" },
-        { key: "lyrics", text: I18n.t("Song lyrics"), icon: "title" }
-    ]
-    readonly property int tabIndex: Math.max(0, tabs.findIndex(t => t.key === Settings.rightPanelTab))
-    readonly property string tab: tabs[tabIndex].key
+    readonly property string tab: Settings.rightPanelTab === "lyrics" ? "lyrics" : "queue"
 
     level: "container"
     translucency: Settings.ambientBackground && Player.cover !== "" ? 0.3 : 0
+
+    QueueView {
+        anchors.fill: parent
+        anchors.leftMargin: 14
+        anchors.rightMargin: 14
+        anchors.topMargin: 10
+        visible: root.tab === "queue"
+    }
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
         anchors.bottomMargin: 0
         spacing: 12
+        visible: root.tab === "lyrics"
 
         RowLayout {
             Layout.fillWidth: true
-            ButtonGroup {
-                model: root.tabs.map((t, i) => ({ icon: t.icon, text: i === root.tabIndex ? t.text : "" }))
-                autoSelect: false
-                currentIndex: root.tabIndex
-                onActivated: i => Settings.rightPanelTab = root.tabs[i].key
+            spacing: 8
+            Rectangle {
+                Layout.preferredWidth: 34
+                Layout.preferredHeight: 34
+                radius: 17
+                color: Qt.alpha(Theme.primaryContainer, 0.8)
+                Icon { anchors.centerIn: parent; name: "lyrics"; size: 18; color: Theme.fgPrimaryContainer }
             }
-            Item { Layout.fillWidth: true }
-            LyricsTools { visible: root.tab === "lyrics" && Player.hasTrack }
+            Label {
+                Layout.fillWidth: true
+                text: I18n.t("Song lyrics")
+                type: "titleMedium"
+                weight: 700
+            }
+            LyricsTools { visible: Player.hasTrack }
             IconButton { icon: "close"; onClicked: Settings.rightPanelOpen = false }
         }
 
-        Item {
+        LyricsView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-
-            QueueView {
-                anchors.fill: parent
-                visible: root.tab === "queue"
-            }
-            LyricsView {
-                anchors.fill: parent
-                anchors.bottomMargin: 16
-                visible: root.tab === "lyrics" && Settings.rightPanelOpen
-                baseFontSize: 22
-                anchorPos: 0.3
-            }
+            Layout.bottomMargin: 16
+            visible: Settings.rightPanelOpen
+            baseFontSize: 22
+            anchorPos: 0.3
         }
     }
 }

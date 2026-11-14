@@ -65,6 +65,16 @@ const QUEUE_WAIT: Duration = Duration::from_millis(50);
 /// output counts as stuck. A few times the longest device buffer.
 const STALL: Duration = Duration::from_secs(2);
 
+/// How long to wait before each new try when an output that was playing will not open again. A default device
+/// that switches, Bluetooth headphones that reconnect or another app that held the device exclusively usually
+/// let go within a second or two. The last try opens the default device.
+const REOPEN_BACKOFF: [Duration; 4] = [
+    Duration::from_millis(150),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+    Duration::from_millis(1_500),
+];
+
 /// Watches a waiting writer's queue for an output that stopped playing.
 struct Stall {
     consumed: u64,
@@ -637,6 +647,12 @@ pub struct RodioSink {
     /// Reading the outgoing track's last seconds ahead for a crossfade:
     /// how many frames of it have gone to the queue so far.
     collecting: Option<u64>,
+    /// Whether an output has opened since the sink was made. Only then is a
+    /// failed open a device that went away for a moment (and worth trying
+    /// again) rather than a PC with no output at all.
+    opened: bool,
+    /// The waits between tries to open an output that went away.
+    reopen_backoff: &'static [Duration],
 }
 
 struct Output {
@@ -874,6 +890,8 @@ impl RodioSink {
             stretch: TimeStretch::new(SAMPLE_RATE, NUM_CHANNELS as usize),
             track: 0,
             collecting: None,
+            opened: false,
+            reopen_backoff: &REOPEN_BACKOFF,
         }
     }
 
@@ -931,12 +949,49 @@ impl RodioSink {
                 self.applied_volume = -1.0;
             }
         }
+        self.opened = true;
         Ok(())
     }
 
-    /// As `open_if_needed`, reporting a failure to the interface.
+    /// As `open_if_needed`, but an output that played before and will not
+    /// open now is tried again a few times, waiting a little longer each
+    /// time, and last on the default device, before the music stops.
+    fn open_with_retries(&mut self) -> Result<(), OpenError> {
+        let mut error = match self.open_if_needed() {
+            Ok(()) => return Ok(()),
+            Err(error) if !self.opened => return Err(error),
+            Err(error) => error,
+        };
+        let tries = self.reopen_backoff.len();
+        for (attempt, wait) in self.reopen_backoff.iter().enumerate() {
+            log::warn!("{error}; trying again in {wait:?} ({}/{tries})", attempt + 1);
+            thread::sleep(*wait);
+            let last = attempt + 1 == tries;
+            let result = if last && self.device.is_some() {
+                // The chosen device may be the one that went away for good.
+                log::warn!("audio output: trying the default device");
+                self.output = None;
+                (self.open)(None, self.buffer_ms, &self.control).map(|output| {
+                    self.output = Some(output);
+                    self.applied_volume = -1.0;
+                })
+            } else {
+                self.open_if_needed()
+            };
+            match result {
+                Ok(()) => {
+                    log::info!("audio output open again after {} tries", attempt + 1);
+                    return Ok(());
+                }
+                Err(next) => error = next,
+            }
+        }
+        Err(error)
+    }
+
+    /// As `open_with_retries`, reporting a failure to the interface.
     fn ensure_open(&mut self) -> SinkResult<()> {
-        self.open_if_needed().map_err(|error| {
+        self.open_with_retries().map_err(|error| {
             let message = error.to_string();
             log::error!("{message}");
             (self.on_error)(message.clone());
@@ -1133,6 +1188,7 @@ impl Sink for RodioSink {
         let refill = u64::from(output.sample_rate) * REFILL.as_millis() as u64 / 1_000;
         let mut stall = Stall::new(output.queued.consumed(), Instant::now());
         let mut stalled = false;
+        let mut lost = false;
         while !read_ahead && output.sink.len() > QUEUE_LIMIT {
             if output.failed() {
                 // Headphones that connect, a new default output or a device
@@ -1148,9 +1204,8 @@ impl Sink for RodioSink {
                         continue;
                     }
                     Ok(_) | Err(_) => {
-                        let message = OUTPUT_STOPPED.to_string();
-                        (self.on_error)(message.clone());
-                        return Err(SinkError::OnWrite(message));
+                        lost = true;
+                        break;
                     }
                 }
             }
@@ -1165,9 +1220,15 @@ impl Sink for RodioSink {
             // and then nothing would ever make room. Start it over.
             log::warn!("the audio output stopped playing for {STALL:?}; opening it again");
             self.output = None;
-            if let Err(e) = self.ensure_open() {
-                log::warn!("could not reopen audio output after stall: {e}; will retry on next write");
-                return Ok(());
+            self.ensure_open()?;
+        } else if lost {
+            // The device went away and would not open at once: give it a
+            // moment (and then the default device) before stopping.
+            if let Err(error) = self.open_with_retries() {
+                log::error!("{error}");
+                let message = OUTPUT_STOPPED.to_string();
+                (self.on_error)(message.clone());
+                return Err(SinkError::OnWrite(message));
             }
         }
         self.apply_volume();
@@ -1508,6 +1569,72 @@ mod tests {
 
     fn no_device(_: Option<&str>, _: u32, _: &AudioControl) -> Result<Output, OpenError> {
         Err(OpenError::NoDevice)
+    }
+
+    thread_local! {
+        /// The devices `refusing` was asked for, in order.
+        static ASKED: std::cell::RefCell<Vec<Option<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// An output that went away and refuses to open, like a device another
+    /// app holds exclusively.
+    fn refusing(device: Option<&str>, _: u32, _: &AudioControl) -> Result<Output, OpenError> {
+        ASKED.with(|asked| asked.borrow_mut().push(device.map(str::to_owned)));
+        Err(OpenError::Device("connection refused".into()))
+    }
+
+    /// An output that played and then will not open is tried again after
+    /// each back-off wait, the last time on the default device, and only
+    /// then reported, once.
+    #[test]
+    fn an_output_that_went_away_is_tried_again_before_the_music_stops() {
+        const WAITS: [Duration; 3] = [Duration::ZERO; 3];
+        ASKED.with(|asked| asked.borrow_mut().clear());
+        let reported: Arc<Mutex<Vec<String>>> = Arc::default();
+        let store = Arc::clone(&reported);
+        let mut sink = RodioSink {
+            open: refusing,
+            opened: true,
+            reopen_backoff: &WAITS,
+            ..RodioSink::new(
+                Some("Headphones".into()),
+                Arc::new(move |message| store.lock().unwrap().push(message)),
+                Box::new(librespot_playback::mixer::NoOpVolume),
+                DEFAULT_BUFFER_MS,
+                AudioControl::new(DEFAULT_BUFFER_MS),
+            )
+        };
+        let mut converter = Converter::new(None);
+        let packet = AudioPacket::Samples(vec![0.0; 441 * NUM_CHANNELS as usize]);
+        let Err(SinkError::ConnectionRefused(message)) = sink.write(packet, &mut converter) else {
+            panic!("an output that never opens again still stops the music");
+        };
+        assert!(message.starts_with(OPEN_FAILED));
+        let asked = ASKED.with(|asked| asked.borrow().clone());
+        let headphones = Some("Headphones".to_owned());
+        assert_eq!(asked, vec![headphones.clone(), headphones.clone(), headphones, None]);
+        assert_eq!(reported.lock().unwrap().as_slice(), [message]);
+    }
+
+    /// A PC that never had an output is not kept waiting: the first packet
+    /// reports it at once.
+    #[test]
+    fn a_pc_without_any_output_is_not_retried() {
+        ASKED.with(|asked| asked.borrow_mut().clear());
+        let mut sink = RodioSink {
+            open: refusing,
+            ..RodioSink::new(
+                None,
+                Arc::new(|_| {}),
+                Box::new(librespot_playback::mixer::NoOpVolume),
+                DEFAULT_BUFFER_MS,
+                AudioControl::new(DEFAULT_BUFFER_MS),
+            )
+        };
+        let mut converter = Converter::new(None);
+        let packet = AudioPacket::Samples(vec![0.0; 441 * NUM_CHANNELS as usize]);
+        assert!(matches!(sink.write(packet, &mut converter), Err(SinkError::ConnectionRefused(_))));
+        assert_eq!(ASKED.with(|asked| asked.borrow().len()), 1);
     }
 
     /// #623: a PC with no output at all. librespot exits the process when

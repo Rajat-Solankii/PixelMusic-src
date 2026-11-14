@@ -37,7 +37,9 @@ ColumnLayout {
         spacing: 8
         Label { text: st.title; type: "titleMedium"; weight: 600 }
         ListView {
+            id: shelfRow
             Layout.fillWidth: true
+            SideScroll { flickable: shelfRow }
             Layout.leftMargin: -root.sectionPad
             Layout.rightMargin: -root.sectionPad
             Layout.preferredHeight: st.rowHeight

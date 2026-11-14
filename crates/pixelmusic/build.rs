@@ -110,6 +110,8 @@ END
             println!("cargo::rustc-link-lib=advapi32");
             // floating.cpp: границы кнопок панели задач — UI Automation (COM, BSTR)
             println!("cargo::rustc-link-lib=oleaut32");
+            // mf_shell.cpp: shortcut icons (CLSID_ShellLink, FOLDERID_*)
+            println!("cargo::rustc-link-lib=uuid");
         }
         // dlsym (display.rs: QWindowSystemInterface::handlePrimaryScreenChanged)
         Ok("linux") => println!("cargo::rustc-link-lib=dl"),

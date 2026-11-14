@@ -181,6 +181,15 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "shuffleContext"]
         fn shuffle_context(self: &Player, uri: &QString);
+        /// Several albums' songs as one list, in the given order (New releases: the first singles and EPs);
+        /// `shuffle` plays them shuffled. `title` names the list in "Playing from". `albumsLoaded` follows.
+        #[qinvokable]
+        #[cxx_name = "playAlbums"]
+        fn play_albums(self: &Player, uris: &QStringList, shuffle: bool, title: &QString);
+        /// `playAlbums` finished reading: `ok` false — nothing could be read (the queue is untouched).
+        #[qsignal]
+        #[cxx_name = "albumsLoaded"]
+        fn albums_loaded(self: Pin<&mut Player>, ok: bool);
         /// Список URI с индекса (радио, история).
         #[qinvokable]
         #[cxx_name = "playUris"]
@@ -221,6 +230,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "clearManualQueue"]
         fn clear_manual_queue(self: &Player);
+        /// Stop and forget the current song and its queue: the player shows "Nothing playing".
+        #[qinvokable]
+        #[cxx_name = "clearPlayer"]
+        fn clear_player(self: &Player);
         /// «Слушать здесь».
         #[qinvokable]
         #[cxx_name = "transferHere"]
@@ -689,6 +702,34 @@ impl qobject::Player {
         ctx().services.player.play_context(PlayContext::with_uri(&kind, uri), None, Some(true));
     }
 
+    fn play_albums(&self, uris: &QStringList, shuffle: bool, title: &QString) {
+        let uris = string_list(uris);
+        let title = title.to_string();
+        let (catalog, player) = (ctx().services.catalog.clone(), ctx().services.player.clone());
+        let qt = self.qt_thread();
+        ctx().rt.spawn(async move {
+            // all at once, kept in list order; an album that fails to read is skipped
+            let pages = futures::future::join_all(uris.iter().map(|uri| catalog.album(uri))).await;
+            let tracks: Vec<TrackItem> = pages
+                .into_iter()
+                .zip(&uris)
+                .filter_map(|(page, uri)| page.inspect_err(|error| tracing::warn!("play albums {uri}: {error}")).ok())
+                .flat_map(|page| page.tracks)
+                .filter(|track| track.available)
+                .collect();
+            let ok = !tracks.is_empty();
+            if ok {
+                let context = PlayContext::new(md3_model::contexts::TRACKS).titled(title);
+                if shuffle {
+                    player.shuffle_from(tracks, context);
+                } else {
+                    player.play_items(tracks, 0, context);
+                }
+            }
+            qt.queue(move |player| player.albums_loaded(ok)).ok();
+        });
+    }
+
     fn play_uris(&self, uris: &QStringList, index: i32) {
         let uris = string_list(uris);
         if let Ok(index) = usize::try_from(index)
@@ -753,6 +794,10 @@ impl qobject::Player {
 
     fn clear_manual_queue(&self) {
         ctx().services.player.clear_manual_queue();
+    }
+
+    fn clear_player(&self) {
+        ctx().services.player.clear();
     }
 
     fn transfer_here(&self) {

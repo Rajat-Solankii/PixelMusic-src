@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use cxx::UniquePtr;
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QString, QStringList};
 use md3_model::{HomeShelf, PlayContext, TrackItem, contexts};
 use sf_services::home::{HomeMixes, YouTubeHomeSnapshot};
 use sf_services::youtube::BrowseRef;
@@ -20,6 +20,8 @@ pub mod qobject {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qlist.h");
         type QList_QVariant = cxx_qt_lib::QList<cxx_qt_lib::QVariant>;
     }
@@ -91,6 +93,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "browseYouTube"]
         fn browse_youtube(self: Pin<&mut Home>, browse_id: &QString, params: &QString);
+        /// The first two covers of a mood or genre page (the fanned covers on its Moods & genres card), read in
+        /// the background and remembered; `moodCoversLoaded` brings them.
+        #[qinvokable]
+        #[cxx_name = "moodCovers"]
+        fn mood_covers(self: &Home, browse_id: &QString, params: &QString);
+        #[qsignal]
+        #[cxx_name = "moodCoversLoaded"]
+        fn mood_covers_loaded(self: Pin<&mut Home>, key: QString, covers: QStringList);
     }
 
     impl cxx_qt::Threading for Home {}
@@ -189,6 +199,49 @@ impl qobject::Home {
         ctx().rt.spawn(async move {
             let result = ctx().services.home.youtube_browse(&target).await;
             let _ = thread.queue(move |home| home.browse_loaded(generation, result));
+        });
+    }
+
+    fn mood_covers(&self, browse_id: &QString, params: &QString) {
+        let target = BrowseRef {
+            browse_id: browse_id.to_string(),
+            params: Some(params.to_string()).filter(|params| !params.is_empty()),
+        };
+        if target.browse_id.is_empty() {
+            return;
+        }
+        let key = format!("{}|{}", target.browse_id, target.params.as_deref().unwrap_or_default());
+        let thread = self.qt_thread();
+        let send = move |thread: cxx_qt::CxxQtThread<qobject::Home>, key: String, covers: Vec<String>| {
+            let _ = thread.queue(move |home| {
+                let mut list = QStringList::default();
+                for cover in &covers {
+                    list.append(QString::from(cover.as_str()));
+                }
+                home.mood_covers_loaded(QString::from(key.as_str()), list);
+            });
+        };
+        if let Some(covers) = mood_cover_cache().lock().ok().and_then(|cache| cache.get(&key).cloned()) {
+            return send(thread, key, covers);
+        }
+        ctx().rt.spawn(async move {
+            // a few pages at a time: a whole Moods & genres grid asks for ~40 of them at once
+            let Ok(_permit) = mood_cover_gate().acquire().await else { return };
+            let covers: Vec<String> = match ctx().services.home.youtube_browse(&target).await {
+                Ok(shelves) => shelves
+                    .iter()
+                    .flat_map(|shelf| shelf.items.iter())
+                    .filter_map(|item| item.get("cover").and_then(|cover| cover.as_str()))
+                    .filter(|cover| !cover.is_empty())
+                    .take(2)
+                    .map(str::to_owned)
+                    .collect(),
+                Err(error) => return tracing::debug!("mood covers {key}: {error}"),
+            };
+            if let Ok(mut cache) = mood_cover_cache().lock() {
+                cache.insert(key.clone(), covers.clone());
+            }
+            send(thread, key, covers);
         });
     }
 
@@ -306,4 +359,15 @@ impl cxx_qt::Initialize for qobject::Home {
         self.as_mut().apply_mixes(snapshot);
         forward_watch(self.qt_thread(), mixes, Self::apply_mixes);
     }
+}
+
+/// Covers of mood / genre pages already read this run ("browseId|params" -> up to two covers).
+fn mood_cover_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn mood_cover_gate() -> &'static tokio::sync::Semaphore {
+    static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    &GATE
 }

@@ -64,6 +64,8 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <shobjidl.h>
+#include <shlobj.h>
+#include <knownfolders.h>
 #endif
 
 #if defined(Q_OS_LINUX) && defined(__GLIBC__)
@@ -410,6 +412,66 @@ void
 app_set_window_icon(const QString& path)
 {
   QGuiApplication::setWindowIcon(QIcon(path));
+}
+
+void
+shell_set_shortcut_icons(const QString& icon_path)
+{
+#if defined(Q_OS_WIN)
+  std::wstring icon = icon_path.toStdWString();
+  std::replace(icon.begin(), icon.end(), L'/', L'\\');
+  wchar_t exe[MAX_PATH] = {};
+  if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0)
+    return;
+  std::wstring self(exe);
+  std::thread([icon, self]() {
+    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)))
+      return;
+    // the shortcuts the installers make (Setup.cs and pixelmusic.iss), and the one Windows makes when pinning
+    std::vector<std::wstring> links;
+    auto add = [&links](REFKNOWNFOLDERID folder, const wchar_t* rest) {
+      PWSTR base = nullptr;
+      if (SUCCEEDED(SHGetKnownFolderPath(folder, 0, nullptr, &base)))
+        links.push_back(std::wstring(base) + rest);
+      CoTaskMemFree(base);
+    };
+    add(FOLDERID_Desktop, L"\\Pixel Music.lnk");
+    add(FOLDERID_Programs, L"\\Pixel Music\\Pixel Music.lnk");
+    add(FOLDERID_Programs, L"\\Pixel Music.lnk");
+    add(FOLDERID_Startup, L"\\Pixel Music.lnk");
+    add(FOLDERID_RoamingAppData, L"\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar\\Pixel Music.lnk");
+    bool changed = false;
+    for (const std::wstring& path : links) {
+      if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+        continue;
+      IShellLinkW* link = nullptr;
+      if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+        continue;
+      IPersistFile* file = nullptr;
+      if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file)))) {
+        // loaded and saved in place: the AppUserModelID and everything else in the shortcut stay as they are
+        if (SUCCEEDED(file->Load(path.c_str(), STGM_READWRITE))) {
+          wchar_t target[MAX_PATH] = {};
+          wchar_t current[MAX_PATH] = {};
+          int index = 0;
+          link->GetPath(target, MAX_PATH, nullptr, 0);
+          link->GetIconLocation(current, MAX_PATH, &index);
+          bool ours = _wcsicmp(target, self.c_str()) == 0;
+          bool same = _wcsicmp(current, icon.c_str()) == 0 || (current[0] == 0 && _wcsicmp(icon.c_str(), self.c_str()) == 0);
+          if (ours && !same && SUCCEEDED(link->SetIconLocation(icon.c_str(), 0)) && SUCCEEDED(file->Save(path.c_str(), TRUE)))
+            changed = true;
+        }
+        file->Release();
+      }
+      link->Release();
+    }
+    if (changed)
+      SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    CoUninitialize();
+  }).detach();
+#else
+  Q_UNUSED(icon_path);
+#endif
 }
 
 int

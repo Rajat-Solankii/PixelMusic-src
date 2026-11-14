@@ -342,6 +342,27 @@ Item {
         return null
     }
 
+    // A page that changed what it shows in place (Settings swiped to another category): its stack entry and its
+    // keep-alive key follow, so reopening the first route builds that page again instead of reusing this one,
+    // and reopening the new route finds this one. A cached copy already under the new key is dropped.
+    function rekey(item, name, props) {
+        const key = name + "|" + JSON.stringify(props ?? {})
+        for (let i = _keptKeyed.length - 1; i >= 0; i--) {
+            const e = _keptKeyed[i]
+            if (e.key === key && e.item !== item) {
+                _keptKeyed.splice(i, 1)
+                if (!stack.some(s => s.item === e.item))
+                    e.item.destroy()
+            }
+        }
+        const mine = _keptKeyed.find(e => e.item === item)
+        if (mine)
+            mine.key = key
+        for (const e of stack)
+            if (e.item === item)
+                e.props = props ?? {}
+    }
+
     function _rememberKeyed(p, item) {
         const key = p.name + "|" + JSON.stringify(p.props)
         if (_takeKeptKeyed(key))

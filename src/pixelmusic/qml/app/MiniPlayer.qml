@@ -58,6 +58,13 @@ Item {
     readonly property alias progress: playerProgress.value
     PlayerProgress { id: playerProgress; active: seekBar.visible && !seekBar.dragging }
 
+    // PixelPlayer Desktop's player bar colours: content onPrimaryContainer at 75 %, toggles primary when on
+    readonly property color _fg: Theme.fgPrimaryContainer
+    readonly property color _fgSoft: Qt.alpha(Theme.fgPrimaryContainer, 0.75)
+    function _toggleIcon(on, enabled) {
+        return !enabled ? Qt.alpha(Theme.fgPrimaryContainer, 0.3) : on ? Theme.fgPrimary : Qt.alpha(Theme.fgPrimaryContainer, 0.6)
+    }
+
     function _time(ms) {
         const s = Math.max(0, Math.round(ms / 1000))
         return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0")
@@ -67,7 +74,8 @@ Item {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        color: Theme.surfaceContainerHighest
+        color: Theme.primaryContainer
+        Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsSlow } }
     }
     Elevation { target: bg; level: 2 }
 
@@ -83,7 +91,8 @@ Item {
             icon: Player.isEpisode ? "replay_10" : "shuffle"
             style: checked ? "filled" : "standard"
             iconFill: 1
-            iconColor: checked ? Theme.fgPrimary : enabled ? Theme.fgSurface : _contentColor
+            containerColor: checked && enabled ? Theme.primary : "transparent"
+            iconColor: root._toggleIcon(checked, enabled)
             checkable: !Player.isEpisode
             autoToggle: false
             checked: !Player.isEpisode && Player.shuffle
@@ -114,7 +123,8 @@ Item {
             icon: Player.isEpisode ? "forward_30" : Player.repeat === "one" ? "repeat_one" : "repeat"
             style: checked ? "filled" : "standard"
             iconFill: 1
-            iconColor: checked ? Theme.fgPrimary : enabled ? Theme.fgSurface : _contentColor
+            containerColor: checked && enabled ? Theme.primary : "transparent"
+            iconColor: root._toggleIcon(checked, enabled)
             checkable: !Player.isEpisode
             autoToggle: false
             checked: !Player.isEpisode && Player.repeat !== "off"
@@ -176,7 +186,7 @@ Item {
                         id: volumeHint
                         anchors.fill: parent
                         radius: Theme.shape.medium
-                        color: Qt.alpha(Theme.surfaceContainerHighest, 0.88)
+                        color: Qt.alpha(Theme.primaryContainer, 0.88)
                         opacity: 0
                         visible: opacity > 0
                         Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
@@ -185,6 +195,7 @@ Item {
                             text: Math.round(Player.volume * 100) + "%"
                             type: "labelMedium"
                             weight: 600
+                            color: root._fg
                         }
                         Timer { id: volumeHintHide; interval: 1000; onTriggered: volumeHint.opacity = 0 }
                     }
@@ -194,7 +205,7 @@ Item {
                         anchors.bottom: parent.bottom
                         anchors.rightMargin: -4
                         anchors.bottomMargin: -4
-                        ringColor: Theme.surfaceContainerHighest
+                        ringColor: Theme.primaryContainer
                     }
                 }
 
@@ -205,6 +216,7 @@ Item {
                         Layout.fillWidth: true
                         text: Player.hasTrack ? Player.title : I18n.t("Nothing playing")
                         type: "titleSmall"
+                        color: root._fg
                     }
                     // Исполнитель · кодек или «Играет на …» (по правому краю — прямо над временем)
                     RowLayout {
@@ -223,7 +235,7 @@ Item {
                             refs: Player.track ? (Player.track.artistRefs ?? []) : []
                             text: Player.artist
                             type: "bodySmall"
-                            color: Theme.fgSurfaceVariant
+                            color: root._fgSoft
                         }
                         LinkLabel {
                             Layout.fillWidth: true
@@ -235,7 +247,7 @@ Item {
                             text: Player.errorText !== "" ? Player.errorText
                                 : Player.hasTrack ? Player.artist : I18n.t("Play a track, album or playlist")
                             type: "bodySmall"
-                            color: Player.errorText !== "" ? Theme.error : Theme.fgSurfaceVariant
+                            color: Player.errorText !== "" ? Theme.error : root._fgSoft
                         }
                         CodecBadge { Layout.alignment: Qt.AlignVCenter; Layout.bottomMargin: 3 }
                         RemoteLabel {
@@ -259,13 +271,16 @@ Item {
                             value: root.progress
                             wavy: Player.playing
                             interactive: true
+                            activeColor: Theme.primary
+                            stopColor: Theme.primary
+                            trackColor: Qt.alpha(Theme.fgPrimaryContainer, 0.2)
                             onCommitted: v => Player.seek(v)
                         }
                         Label {
                             text: root._time(seekBar.dragging ? seekBar.dragValue * Player.durationMs : Player.positionMs)
                                   + " / " + root._time(Player.durationMs)
                             type: "labelSmall"
-                            color: Theme.fgSurfaceVariant
+                            color: root._fgSoft
                         }
                     }
                 }
@@ -290,13 +305,22 @@ Item {
         // лайк — всегда, у выпуска — «сохранить» (закладка)
         Fold { shown: Player.source === "radio" && !Player.isEpisode && !root.compact; IconButton {
             icon: "thumb_down"
+            iconColor: root._fgSoft
             enabled: Player.hasTrack
             onClicked: Library.dislike(Player.track)
         } }
-        LikeButton { visible: !Player.isEpisode; track: Player.track }
+        // the heart: no container, primary when liked (the target's favourite button)
+        LikeButton {
+            visible: !Player.isEpisode
+            track: Player.track
+            containerColor: "transparent"
+            iconColor: !enabled ? Qt.alpha(Theme.fgPrimaryContainer, 0.3) : liked ? Theme.primary : root._fgSoft
+        }
         IconButton {
             visible: Player.isEpisode
             icon: "bookmark"
+            containerColor: "transparent"
+            iconColor: checked ? Theme.primary : root._fgSoft
             checkable: true
             autoToggle: false
             checked: Library.savedRevision >= 0 && Player.uri !== "" && Library.isSaved(Player.uri)
@@ -308,18 +332,29 @@ Item {
             icon: "more_horiz"
             iconSize: 30
             iconWeight: 700
-            iconColor: enabled ? Theme.fgSurface : Qt.alpha(Theme.fgSurface, Theme.stateLayer.disabledContent)
+            iconColor: enabled ? root._fgSoft : Qt.alpha(Theme.fgPrimaryContainer, 0.3)
             enabled: Player.hasTrack
             onClicked: {
                 const p = miniMore.mapToItem(null, 0, 0)
                 Catalog.requestTrackMenuAt(Player.track, p.x, p.y, miniMore.width, miniMore.height)
             }
         } }
+        // Clear player: stop and forget the song and its queue ("Nothing playing"; the next start restores nothing)
+        Fold { shown: (root.roomForMenu || root.compact) && Player.hasTrack; IconButton {
+            icon: "close"
+            iconSize: 24
+            containerColor: "transparent"
+            iconColor: root._fgSoft
+            Accessible.name: I18n.t("Clear player")
+            onClicked: Player.clearPlayer()
+        } }
         Fold { shown: !root.compact; Item { width: 8; height: 8 } }
 
         // Панели и громкость
         Fold { shown: !root.compact; IconButton {
             icon: "title"
+            containerColor: checked ? Theme.primary : "transparent"
+            iconColor: checked ? Theme.fgPrimary : root._fgSoft
             checkable: true
             autoToggle: false
             checked: Settings.rightPanelOpen && Settings.rightPanelTab === "lyrics"
@@ -329,6 +364,8 @@ Item {
         Fold { shown: !root.compact; IconButton {
             id: queueButton
             icon: "queue_music"
+            containerColor: checked ? Theme.primary : "transparent"
+            iconColor: checked ? Theme.fgPrimary : root._fgSoft
             checkable: true
             autoToggle: false
             checked: (Settings.rightPanelOpen && Settings.rightPanelTab === "queue") || queueDrop.containsDrag
@@ -356,12 +393,16 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 name: volumeRow.locked ? "lock" : Player.volume > 0.5 ? "volume_up" : Player.volume > 0 ? "volume_down" : "volume_off"
                 size: 20
+                color: root._fgSoft
             }
             Slider {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 96
                 trackHeight: 10
                 handleHeight: 28
+                activeColor: Theme.primary
+                handleColor: Theme.primary
+                inactiveColor: Qt.alpha(Theme.fgPrimaryContainer, 0.2)
                 enabled: !volumeRow.locked
                 opacity: enabled ? 1 : Theme.stateLayer.disabledContent
                 value: Player.volume

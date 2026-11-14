@@ -47,7 +47,7 @@ impl Channel {
 /// How the running copy was installed — decides which asset replaces it and how.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallKind {
-    /// Inno Setup install (unins000.exe next to the exe, or under Program Files / AppData\Local\Programs)
+    /// Setup.exe install (unins000.exe or Uninstall.exe next to the exe, or under Program Files / AppData\Local\Programs)
     WindowsInstaller,
     /// unpacked portable zip
     WindowsPortable,

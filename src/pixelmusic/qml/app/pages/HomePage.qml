@@ -20,7 +20,12 @@ Page {
     // Полки: Repeater по составу полок [{key, kind}] — он меняется, только если полки добавились, ушли
     // или переставились. Данные полки кладутся в её Loader на месте и только если изменились: обновление
     // «Недавно прослушанного» не пересоздаёт «Сделано для вас» и остальные плитки.
-    property var shelfIds: []
+    // The shelves as a ListModel updated by difference (_syncShelves): new shelves are inserted, gone ones removed,
+    // moved ones moved, and the shelves already on screen keep their delegates. (It was a JS array: every change —
+    // e.g. the next page of the feed arriving while scrolling — rebuilt all shelves, the page collapsed and regrew
+    // and every cover reloaded from its placeholder: the flicker and dark tiles while scrolling.)
+    ListModel { id: shelfModel }
+    readonly property int shelfCount: shelfModel.count
     // Material 3 Expressive containers: every shelf sits in a solid, fully rounded section card (the look of the
     // listening-stats card), its tiles and rows one tone up (surfaceContainerHighest) inside it
     readonly property real sectionPad: page.compact ? 16 : 20
@@ -38,9 +43,27 @@ Page {
             list.splice(Math.min(quick + 2, list.length), 0, { key: "lastfmFeed", kind: "lastfm" })
         if (hasMixes)
             list.splice(quick + 1, 0, { key: "homeMixes", kind: "mixes" })
-        const ids = list.map(s => ({ key: s.key ?? "", kind: s.kind ?? "" }))
-        if (JSON.stringify(ids) !== JSON.stringify(shelfIds))
-            shelfIds = ids
+        const ids = list.map(s => ({ key: String(s.key ?? ""), kind: String(s.kind ?? ""), variant: String(s.variant ?? "") }))
+        for (let i = 0; i < ids.length; ++i) {
+            const want = ids[i]
+            const have = i < shelfModel.count ? shelfModel.get(i) : null
+            if (have && have.key === want.key && have.kind === want.kind && have.variant === want.variant)
+                continue
+            let j = -1
+            for (let k = i + 1; k < shelfModel.count; ++k) {
+                const e = shelfModel.get(k)
+                if (e.key === want.key && e.kind === want.kind && e.variant === want.variant) {
+                    j = k
+                    break
+                }
+            }
+            if (j >= 0)
+                shelfModel.move(j, i, 1)
+            else
+                shelfModel.insert(i, want)
+        }
+        if (shelfModel.count > ids.length)
+            shelfModel.remove(ids.length, shelfModel.count - ids.length)
         for (let i = 0; i < list.length; ++i) {
             const loader = shelfRepeater.itemAt(i)
             if (!loader)
@@ -208,7 +231,7 @@ Page {
 
         // Загрузка: заглушки без мерцания
         ColumnLayout {
-            visible: (Home.loading || (page.youtubeHome && Home.youtubeLoading)) && page.shelfIds.length === 0
+            visible: (Home.loading || (page.youtubeHome && Home.youtubeLoading)) && page.shelfCount === 0
             Layout.fillWidth: true
             spacing: 12
             SectionHeader { text: I18n.t("Quick access") }
@@ -237,7 +260,7 @@ Page {
         }
 
         EmptyState {
-            visible: Home.errorText !== "" && page.shelfIds.length === 0 && !Home.loading
+            visible: Home.errorText !== "" && page.shelfCount === 0 && !Home.loading
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 24
             icon: "cloud_off"
@@ -250,15 +273,17 @@ Page {
 
         Repeater {
             id: shelfRepeater
-            model: page.shelfIds
+            model: shelfModel
             // _syncShelves puts the shelf's data here; the loaded shelf reads it from its Loader (`parent.shelfData`)
             Rectangle {
                 id: section
-                required property var modelData        // {key, kind}
+                required property string key            // ListModel roles (shelfModel)
+                required property string kind
+                required property string variant
                 property var shelfData: ({})
                 property string json
                 // HomeMixes brings its own cards
-                readonly property bool card: modelData.kind !== "mixes"
+                readonly property bool card: section.kind !== "mixes"
                 readonly property real pad: card ? page.sectionPad : 0
                 Layout.fillWidth: true
                 implicitHeight: shelf.item ? shelf.item.implicitHeight + 2 * pad : 0
@@ -271,12 +296,12 @@ Page {
                     x: section.pad
                     y: section.pad
                     width: parent.width - 2 * section.pad
-                    sourceComponent: section.modelData.key === "quick"
-                            ? (section.modelData.variant === "list" ? quickPicksShelf : quickShelf)
-                        : section.modelData.key === "quickPicks" ? quickPicksShelf
-                        : section.modelData.kind === "mixes" ? mixesShelf
-                        : section.modelData.kind === "lastfm" ? lastfmShelf
-                        : section.modelData.kind === "tracks" ? tracksShelf
+                    sourceComponent: section.key === "quick"
+                            ? (section.variant === "list" ? quickPicksShelf : quickShelf)
+                        : section.key === "quickPicks" ? quickPicksShelf
+                        : section.kind === "mixes" ? mixesShelf
+                        : section.kind === "lastfm" ? lastfmShelf
+                        : section.kind === "tracks" ? tracksShelf
                         : rowShelf
                 }
             }
@@ -287,11 +312,11 @@ Page {
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 8
             size: 40
-            visible: page.youtubeHome && Home.youtubeLoading && page.shelfIds.length > 0
+            visible: page.youtubeHome && Home.youtubeLoading && page.shelfCount > 0
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
-            visible: page.youtubeHome && Home.youtubeError !== "" && Home.youtubeHasMore && page.shelfIds.length > 0
+            visible: page.youtubeHome && Home.youtubeError !== "" && Home.youtubeHasMore && page.shelfCount > 0
             text: I18n.t("Retry")
             icon: "refresh"
             style: "tonal"
@@ -556,6 +581,7 @@ Page {
                 Layout.rightMargin: -page.sectionPad
                 Layout.preferredHeight: rowCol.kind === "episodes" ? 104 : rowCol.kind === "artists" ? 200 : 220
                 orientation: ListView.Horizontal
+                SideScroll { flickable: strip }
                 spacing: 24
                 leftMargin: page.sectionPad
                 rightMargin: page.sectionPad

@@ -33,7 +33,8 @@ Item {
             return style === "text" || style === "outlined" ? "transparent" : Qt.alpha(Theme.fgSurface, Theme.stateLayer.disabledContainer)
         switch (style) {
         case "filled": return checkable && !checked ? Theme.surfaceContainer : Theme.primary
-        case "tonal": return _selected ? Theme.secondary : Theme.primaryContainer
+        // Compose's FilledTonalButton, as PixelPlayer Desktop uses it: secondaryContainer / onSecondaryContainer
+        case "tonal": return _selected ? Theme.secondary : Theme.secondaryContainer
         case "elevated": return _selected ? Theme.primary : Theme.surfaceContainerLow
         case "outlined": return _selected ? Theme.inverseSurface : "transparent"
         default: return "transparent"
@@ -44,7 +45,7 @@ Item {
             return Qt.alpha(Theme.fgSurface, Theme.stateLayer.disabledContent)
         switch (style) {
         case "filled": return checkable && !checked ? Theme.fgSurfaceVariant : Theme.fgPrimary
-        case "tonal": return _selected ? Theme.fgSecondary : Theme.fgPrimaryContainer
+        case "tonal": return _selected ? Theme.fgSecondary : Theme.fgSecondaryContainer
         case "elevated": return _selected ? Theme.fgPrimary : Theme.primary
         case "outlined": return _selected ? Theme.fgInverseSurface : Theme.fgSurfaceVariant
         default: return Theme.primary

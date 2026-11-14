@@ -260,6 +260,11 @@ impl PlayerHandle {
         self.send(Command::ClearManualQueue);
     }
 
+    /// Stop and forget the current song and its queue.
+    pub fn clear(&self) {
+        self.send(Command::Clear);
+    }
+
     /// Перезапросить очередь (/me/player/queue).
     pub fn refresh_queue(&self) {
         self.send(Command::RefreshQueue);

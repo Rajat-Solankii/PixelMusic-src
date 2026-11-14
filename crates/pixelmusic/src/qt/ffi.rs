@@ -26,6 +26,8 @@ pub mod ffi {
         fn install_native_crash_log(path: &QString);
         fn app_set_quit_on_last_window_closed(value: bool);
         fn app_set_window_icon(path: &QString);
+        /// Windows: the app's own shortcuts (desktop, Start menu, Startup, pinned taskbar) get this icon
+        fn shell_set_shortcut_icons(icon_path: &QString);
         fn app_add_font(path: &QString) -> i32;
         /// "en" — no translator; otherwise qtbase_<code>.qm (Qt's own dialogs and menus) + QLocale default
         fn app_set_qt_language(code: &QString);

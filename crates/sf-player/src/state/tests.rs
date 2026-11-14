@@ -2891,31 +2891,28 @@ mod actor {
         assert!(events.iter().any(|event| matches!(event, PlayerEvent::ErrorChanged)));
         assert!(player.last_load().is_none());
 
-        // a player error retries once with a fresh URL
+        // a player error retries with a fresh URL, each time from the tier after the one that failed
         rig.send(Msg::Command(Command::PlayItems { items: vec![yt("v1")], row: 0, context: PlayContext::new("search") }))
             .await;
         rig.settle().await;
-        let seq = player.last_load().unwrap();
-        rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Error("HTTP 403".into()) })).await;
-        rig.settle().await;
-        assert_eq!(source.invalidated.lock().unwrap().as_slice(), ["v1"]);
-        assert!(player.last_load().unwrap() > seq);
-        assert!(rig.snapshot.borrow().error_text.is_empty());
-        // a second failure gets one more fresh URL (the resolver has moved on to another tier)
-        let second = player.last_load().unwrap();
-        rig.send(Msg::YouTube(YtMsg::Event { seq: second, event: YtEvent::Error("HTTP 403".into()) })).await;
-        rig.settle().await;
-        assert_eq!(source.invalidated.lock().unwrap().len(), 2);
-        assert!(player.last_load().unwrap() > second);
-        assert!(rig.snapshot.borrow().error_text.is_empty());
-        // the third failure is the listener's: the player's own text, no fourth attempt
+        let max = usize::from(crate::state::youtube::MAX_RETRIES);
+        for attempt in 1..=max {
+            let seq = player.last_load().unwrap();
+            rig.send(Msg::YouTube(YtMsg::Event { seq, event: YtEvent::Error("HTTP 403".into()) })).await;
+            rig.settle().await;
+            assert_eq!(source.invalidated.lock().unwrap().len(), attempt);
+            assert!(player.last_load().unwrap() > seq);
+            assert!(rig.snapshot.borrow().error_text.is_empty());
+        }
+        assert_eq!(source.invalidated.lock().unwrap()[0], "v1");
+        // the failure after the last retry is the listener's: the player's own text, no further attempt
         let retried = player.last_load().unwrap();
         let text = "YouTube didn't send this song's audio. Try again in a moment.";
         rig.send(Msg::YouTube(YtMsg::Event { seq: retried, event: YtEvent::Error(text.into()) })).await;
         rig.settle().await;
         assert_eq!(rig.snapshot.borrow().error_text, text);
         assert_eq!(player.last_load(), Some(retried));
-        assert_eq!(source.invalidated.lock().unwrap().len(), 2);
+        assert_eq!(source.invalidated.lock().unwrap().len(), max);
     }
 
     #[tokio::test]

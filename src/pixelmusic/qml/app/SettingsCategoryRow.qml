@@ -46,8 +46,9 @@ Rectangle {
     signal clicked()
 
     Layout.fillWidth: true
-    implicitHeight: Math.max(80, text.implicitHeight + 32)
-    readonly property real _outer: Theme.shape.extraLarge
+    // PixelPlayer Desktop's settings rows: 88 px, 24 px outer / 4 px inner corners of the group, 56 px icon circle
+    implicitHeight: Math.max(88, text.implicitHeight + 32)
+    readonly property real _outer: 24
     readonly property real _inner: Theme.shape.extraSmall
     topLeftRadius: first ? _outer : _inner
     topRightRadius: first ? _outer : _inner
@@ -69,14 +70,14 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 20
-        anchors.rightMargin: 20
-        spacing: 18
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        spacing: 16
 
         Rectangle {
-            Layout.preferredWidth: 52
-            Layout.preferredHeight: 52
-            radius: 26
+            Layout.preferredWidth: 56
+            Layout.preferredHeight: 56
+            radius: 28
             color: root._tone[0]
             Icon {
                 anchors.centerIn: parent

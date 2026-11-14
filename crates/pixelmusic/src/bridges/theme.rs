@@ -7,7 +7,7 @@ use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QColor, QString, QStringList, QVariant};
 use mf_platform::{SettingKey, SettingValue, SettingsStore};
 use sf_player::PlayerEvent;
-use mf_theme::{Scheme, Variant};
+use mf_theme::{Palette, Scheme, Variant};
 
 use super::{Delivery, forward_events, local_path};
 use crate::context::ctx;
@@ -65,6 +65,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setSeedFromImage"]
         fn set_seed_from_image(self: Pin<&mut ThemeEngine>, source: &QString);
+        /// The colours a seed would give in the current light/dark mode and scheme style, for the accent picker:
+        /// [primary, secondaryContainer, tertiaryContainer] as "#rrggbb" ([] — not a colour).
+        #[qinvokable]
+        fn swatch(self: &ThemeEngine, seed: &QString) -> QStringList;
+        /// The curated palettes, one "id|Name|#c1 #c2 #c3 #c4 #c5" each (lightest colour first); picking one stores
+        /// "palette:<id>" in customSeed.
+        #[qinvokable]
+        fn palettes(self: &ThemeEngine) -> QStringList;
     }
 
     impl cxx_qt::Threading for ThemeEngine {}
@@ -93,6 +101,8 @@ pub struct ThemeEngineRust {
     seed: u32,
     dark: bool,
     variant: Variant,
+    /// a curated palette chosen instead of an accent colour (used while the accent is not from a cover)
+    palette: Option<&'static Palette>,
     contrast: f64,
     request: u64,
     pending_image: Option<PathBuf>,
@@ -108,6 +118,7 @@ impl Default for ThemeEngineRust {
             seed: DEFAULT_SEED,
             dark: true,
             variant: Variant::TonalSpot,
+            palette: None,
             contrast: 0.0,
             request: 0,
             pending_image: None,
@@ -134,14 +145,27 @@ fn to_qcolors(scheme: &Scheme) -> QVariantMap {
     map
 }
 
-/// (dark, variant, seed) по настройкам themeMode / schemeVariant / customSeed и системной теме.
-fn settings_state() -> (bool, Variant, u32) {
+/// (dark, variant, seed, palette) по настройкам themeMode / schemeVariant / customSeed и системной теме.
+fn settings_state() -> (bool, Variant, u32, Option<&'static Palette>) {
     let store = &ctx().services.settings;
     let mode = store.get_str(SettingKey::ThemeMode);
     let dark = if mode == "system" { *ctx().system_dark.borrow() } else { mode != "light" };
     let variant = Variant::from_choice(&store.get_str(SettingKey::SchemeVariant));
-    let seed = mf_theme::parse_color(&custom_seed(store)).unwrap_or(DEFAULT_SEED);
-    (dark, variant, seed)
+    let choice = custom_seed(store);
+    let palette = mf_theme::palette(&choice).filter(|_| choice.trim_start().starts_with("palette:"));
+    let seed = match palette {
+        Some(p) => p.accent,
+        None => mf_theme::parse_color(&choice).unwrap_or(DEFAULT_SEED),
+    };
+    (dark, variant, seed, palette)
+}
+
+/// The scheme for a seed, or for the palette when one is chosen.
+fn scheme_for(seed: u32, palette: Option<&'static Palette>, dark: bool, variant: Variant, contrast: f64) -> Scheme {
+    match palette {
+        Some(p) => mf_theme::palette_scheme(p, dark, variant, contrast),
+        None => mf_theme::app_scheme(seed, dark, variant, contrast),
+    }
 }
 
 fn non_empty_path(path: String) -> Option<PathBuf> {
@@ -169,6 +193,33 @@ impl qobject::ThemeEngine {
         }
     }
 
+    fn swatch(&self, seed: &QString) -> QStringList {
+        let mut list = QStringList::default();
+        let text = seed.to_string();
+        let scheme = if let Some(p) = mf_theme::palette(&text).filter(|_| text.starts_with("palette:")) {
+            mf_theme::palette_scheme(p, self.dark, self.variant, self.contrast)
+        } else {
+            let Some(seed) = mf_theme::parse_color(&text) else { return list };
+            mf_theme::app_scheme(seed, self.dark, self.variant, self.contrast)
+        };
+        for role in ["primary", "secondaryContainer", "tertiaryContainer"] {
+            if let Some(&argb) = scheme.colors.get(role) {
+                list.append(QString::from(mf_theme::format_color(argb).as_str()));
+            }
+        }
+        list
+    }
+
+    fn palettes(&self) -> QStringList {
+        mf_theme::PALETTES
+            .iter()
+            .map(|p| {
+                let colors: Vec<String> = p.colors.iter().map(|&c| mf_theme::format_color(c)).collect();
+                QString::from(format!("{}|{}|{}", p.id, p.name, colors.join(" ")).as_str())
+            })
+            .collect()
+    }
+
     fn set_variant(mut self: Pin<&mut Self>, value: QString) {
         let variant = Variant::from_choice(&value.to_string());
         if variant != self.variant {
@@ -192,6 +243,7 @@ impl qobject::ThemeEngine {
     fn set_seed(mut self: Pin<&mut Self>, color: &QColor) {
         let mut this = self.as_mut().rust_mut();
         this.pending_image = None;
+        this.palette = None;
         this.seed = color_argb(color);
         self.as_mut().seed_changed();
         self.rebuild(None);
@@ -205,7 +257,8 @@ impl qobject::ThemeEngine {
 
     /// Изменились themeMode/schemeVariant/accentFromCover/customSeed или системная тема.
     fn apply_settings(mut self: Pin<&mut Self>) {
-        let (dark, variant, seed) = settings_state();
+        let (dark, variant, seed, palette) = settings_state();
+        self.as_mut().rust_mut().palette = palette;
         if dark != self.dark {
             self.as_mut().rust_mut().dark = dark;
             self.as_mut().dark_changed();
@@ -235,19 +288,20 @@ impl qobject::ThemeEngine {
         this.pending_image = image.clone();
         this.request += 1;
         let (request, seed, dark, variant, contrast) = (this.request, this.seed, this.dark, this.variant, this.contrast);
+        let palette = this.palette;
         ctx().rt.spawn_blocking(move || {
-            let seed = match &image {
+            let (seed, palette) = match &image {
                 Some(path) => match mf_theme::artwork_seed_from_image(path) {
-                    Ok(seed) => seed,
+                    Ok(seed) => (seed, None),
                     Err(error) => {
                         tracing::debug!("theme: {error}");
                         return;
                     }
                 },
-                None => seed,
+                None => (seed, palette),
             };
             // black-and-white artwork (or a grey colour) gets a grey scheme, not an invented hue
-            let scheme = mf_theme::build_scheme(seed, dark, mf_theme::variant_for_seed(seed, variant), contrast);
+            let scheme = scheme_for(seed, palette, dark, variant, contrast);
             let _ = thread.queue(move |theme| theme.scheme_ready(request, scheme));
         });
     }
@@ -289,13 +343,14 @@ impl qobject::ThemeEngine {
 impl cxx_qt::Initialize for qobject::ThemeEngine {
     fn initialize(mut self: Pin<&mut Self>) {
         // стартовая схема синхронно: окно не «перекрашивается» при запуске
-        let (dark, variant, seed) = settings_state();
+        let (dark, variant, seed, palette) = settings_state();
         {
             let mut this = self.as_mut().rust_mut();
             this.dark = dark;
             this.variant = variant;
             this.seed = seed;
-            this.colors = to_qcolors(&mf_theme::build_scheme(seed, dark, mf_theme::variant_for_seed(seed, variant), this.contrast));
+            this.palette = palette;
+            this.colors = to_qcolors(&scheme_for(seed, palette, dark, variant, this.contrast));
         }
         self.as_mut().dark_changed();
         self.as_mut().variant_changed();

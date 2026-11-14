@@ -9,7 +9,7 @@ pub mod single_instance;
 pub mod system;
 
 pub use dirs::CacheUsage;
-pub use settings::{SettingKey, SettingType, SettingValue, SettingsStore};
+pub use settings::{SettingKey, SettingType, SettingValue, SettingsStore, category_keys};
 pub use single_instance::InstanceListener;
 
 #[derive(Debug, thiserror::Error)]

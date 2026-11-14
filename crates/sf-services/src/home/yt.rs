@@ -27,6 +27,17 @@ pub(super) struct YtHome {
     continuation: Option<String>,
 }
 
+/// The release type behind a tile's kind label ("Single", "EP", "Album"), for the New releases Play / Shuffle.
+fn album_type(label: &str) -> &'static str {
+    if label == "EP" {
+        "ep"
+    } else if label == mf_i18n::t("Single") || label.eq_ignore_ascii_case("single") {
+        "single"
+    } else {
+        "album"
+    }
+}
+
 fn to_value(value: impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or_default()
 }
@@ -52,6 +63,7 @@ pub(crate) fn tile(item: &YtItem) -> LibraryEntry {
             subtitle: album.artists.clone(),
             cover: album.cover.clone(),
             read_only: true,
+            album_type: album_type(&album.kind).to_owned(),
             ..Default::default()
         },
         YtItem::Artist(artist) => LibraryEntry {
@@ -115,6 +127,7 @@ fn mood_shelves(moods: &[Mood]) -> Vec<HomeShelf> {
             "title": mood.title,
             "browseId": mood.browse.browse_id,
             "browseParams": mood.browse.params.clone().unwrap_or_default(),
+            "color": mood.color,
         });
         match out.iter_mut().find(|shelf| shelf.title == mood.group) {
             Some(shelf) => shelf.items.push(item),

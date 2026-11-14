@@ -325,6 +325,8 @@ pub struct LibraryEntry {
     pub played_at: String,
     /// id родительской папки rootlist, "" — корень
     pub folder_id: String,
+    /// albums only: "single" | "ep" | "album" (YouTube Music tiles), "" — unknown
+    pub album_type: String,
 }
 
 /// Аккаунт для Auth.account: id, uri, displayName, email, country, product, premium, avatar.

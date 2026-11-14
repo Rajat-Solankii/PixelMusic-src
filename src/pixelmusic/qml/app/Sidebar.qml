@@ -296,6 +296,7 @@ Item {
                 x: 40 - root.margin - markSize / 2
                 anchors.verticalCenter: parent.verticalCenter
                 markSize: 40
+                pillWidth: parent.width - x
                 expanded: !root.rail
                 onActivated: {
                     if (root.drawer || root.drawerOpen)

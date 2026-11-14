@@ -8,7 +8,11 @@
     2. cargo build --release -p pixelmusic (or -CargoProfile debug).
     3. Assembles target\dist\pixelmusic\: pixelmusic.exe, qml\ (src\pixelmusic\qml), assets\ (fonts,
        icons), Qt through windeployqt --qmldir, the MSVC runtime.
-    4. Builds the installer with Inno Setup -> target\dist\PixelMusic-<version>-Setup.exe.
+    4. Builds the Pixel Music installer (installer\windows\Setup.cs, compiled with the csc.exe of the .NET
+       Framework that ships with Windows; the app folder rides inside as payload.zip)
+       -> target\dist\PixelMusic-<version>-Setup.exe, and its uninstaller.
+    5. Also builds the previous Inno Setup installer -> target\dist\PixelMusic-<version>-Setup-inno.exe
+       (kept while the new installer is being proven; skipped when Inno Setup isn't installed).
 
     Audio is played by librespot inside the exe (cpal/WASAPI opens the device); there are no external player DLLs.
 
@@ -29,7 +33,10 @@
     Do not run cargo (use an existing target\<profile>\pixelmusic.exe).
 
 .PARAMETER SkipInstaller
-    Skip the Inno Setup step.
+    Skip both installer steps.
+
+.PARAMETER SkipInno
+    Skip only the Inno Setup installer.
 
 .PARAMETER Portable
     Also pack the folder into PixelMusic-<version>-windows-x64-portable.zip.
@@ -42,6 +49,7 @@ param(
     [string]$CargoProfile = "release",
     [switch]$SkipBuild,
     [switch]$SkipInstaller,
+    [switch]$SkipInno,
     [switch]$Portable
 )
 
@@ -184,11 +192,55 @@ if ($Portable) {
 }
 
 if ($SkipInstaller) {
-    Write-Host "`nDone: $Stage\$ExeName (Inno Setup skipped)" -ForegroundColor Green
+    Write-Host "`nDone: $Stage\$ExeName (installers skipped)" -ForegroundColor Green
     exit 0
 }
 
-# ─── 4. Inno Setup ────────────────────────────────────────────────────────────
+# ─── 4. Pixel Music installer (installer\windows\Setup.cs) ────────────────────
+Write-Step "Building the Pixel Music installer"
+$installerSrc = Join-Path $ProjectRoot "installer\windows"
+$csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+if (-not (Test-Path $csc)) { Abort "csc.exe of .NET Framework 4 not found: $csc" }
+$work = Join-Path $OutDir "installer-work"
+if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+New-Item -ItemType Directory -Force $work | Out-Null
+
+$payload = Join-Path $work "payload.zip"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[IO.Compression.ZipFile]::CreateFromDirectory($Stage, $payload, [IO.Compression.CompressionLevel]::Optimal, $false)
+Write-Ok "payload.zip: $([math]::Round((Get-Item $payload).Length / 1MB, 0)) MB"
+
+$versionTxt = Join-Path $work "version.txt"
+[IO.File]::WriteAllText($versionTxt, $Version)
+$logoPng = Join-Path $installerSrc "logo.png"
+$icon = Join-Path $ProjectRoot "pixelmusic.ico"
+$setupCs = Join-Path $installerSrc "Setup.cs"
+$refs = "/reference:System.IO.Compression.dll,System.IO.Compression.FileSystem.dll"
+# the app's typeface (Google Sans, fixed weights cut from the variable font) for the installer's text
+$fontRes = @("Regular", "Medium", "Bold") | ForEach-Object { "/resource:" + (Join-Path $installerSrc "fonts\GoogleSans-$_.ttf") + ",GoogleSans-$_.ttf" }
+
+$uninstallExe = Join-Path $work "Uninstall.exe"
+$out = & $csc /nologo /target:winexe /optimize+ /define:UNINSTALLER "/win32icon:$icon" $refs `
+    "/resource:$logoPng,logo.png" $fontRes "/resource:$versionTxt,version.txt" "/out:$uninstallExe" $setupCs 2>&1
+if ($LASTEXITCODE -ne 0) { $out | Write-Host; Abort "Uninstall.exe didn't compile" }
+
+$setupExe = Join-Path $OutDir "$FilePrefix-$Version-Setup.exe"
+if (Test-Path $setupExe) { Remove-Item $setupExe -Force }
+$out = & $csc /nologo /target:winexe /optimize+ "/win32icon:$icon" $refs `
+    "/resource:$payload,payload.zip" "/resource:$uninstallExe,Uninstall.exe" `
+    "/resource:$logoPng,logo.png" $fontRes "/resource:$versionTxt,version.txt" "/out:$setupExe" $setupCs 2>&1
+if ($LASTEXITCODE -ne 0) { $out | Write-Host; Abort "Setup.exe didn't compile" }
+Remove-Item $work -Recurse -Force
+Write-Ok "installer: $setupExe ($([math]::Round((Get-Item $setupExe).Length / 1MB, 0)) MB)"
+
+if ($SkipInno) {
+    Write-Host "`nDone:" -ForegroundColor Green
+    Write-Host "  Installer:  $setupExe" -ForegroundColor White
+    Write-Host "  Portable:   $Stage\$ExeName" -ForegroundColor White
+    exit 0
+}
+
+# ─── 5. Inno Setup (the previous installer, kept until the new one is proven) ──
 Write-Step "Looking for Inno Setup"
 $iscc = $null
 $isccCmd = Get-Command ISCC -ErrorAction SilentlyContinue
@@ -201,21 +253,25 @@ foreach ($candidate in @(
     if ($candidate -and (Test-Path $candidate)) { $iscc = $candidate; break }
 }
 if (-not $iscc) {
-    Write-Warn "Inno Setup 6 not found (winget install JRSoftware.InnoSetup), skipping the installer"
-    Write-Host "`nDone: $Stage\$ExeName" -ForegroundColor Green
+    Write-Warn "Inno Setup 6 not found (winget install JRSoftware.InnoSetup), skipping the Inno installer"
+    Write-Host "`nDone:" -ForegroundColor Green
+    Write-Host "  Installer:  $setupExe" -ForegroundColor White
+    Write-Host "  Portable:   $Stage\$ExeName" -ForegroundColor White
     exit 0
 }
 Write-Ok $iscc
 
-Write-Step "Building the installer"
+Write-Step "Building the Inno Setup installer"
 # VersionInfoVersion — только числа: 0.2.0-rc1 → 0.2.0
 $numVersion = ($Version -split '[-+]')[0]
-& $iscc "/Qp" "/DAppVersion=$Version" "/DAppNumVersion=$numVersion" "/DDistDir=$Stage" "/O$OutDir" (Join-Path $ProjectRoot "pixelmusic.iss")
+# "-Setup-inno.exe": the in-app updater picks the asset ending in "-setup.exe", which is the new installer
+$innoBase = "$FilePrefix-$Version-Setup-inno"
+& $iscc "/Qp" "/DAppVersion=$Version" "/DAppNumVersion=$numVersion" "/DDistDir=$Stage" "/O$OutDir" "/F$innoBase" (Join-Path $ProjectRoot "pixelmusic.iss")
 if ($LASTEXITCODE -ne 0) { Abort "Inno Setup failed with exit code $LASTEXITCODE" }
 
-$setupExe = Join-Path $OutDir "$FilePrefix-$Version-Setup.exe"
-if (-not (Test-Path $setupExe)) { Abort "$setupExe not found after ISCC" }
-$sizeMB = [math]::Round((Get-Item $setupExe).Length / 1MB, 0)
+$innoExe = Join-Path $OutDir "$innoBase.exe"
+if (-not (Test-Path $innoExe)) { Abort "$innoExe not found after ISCC" }
 Write-Host "`nDone:" -ForegroundColor Green
-Write-Host "  Installer:  $setupExe ($sizeMB MB)" -ForegroundColor White
+Write-Host "  Installer:  $setupExe" -ForegroundColor White
+Write-Host "  Inno Setup: $innoExe" -ForegroundColor White
 Write-Host "  Portable:   $Stage\$ExeName" -ForegroundColor White

@@ -400,7 +400,9 @@ Window {
                             }
                             if (name === "shelf") {         // startPage=shelf:<browseId> — a YouTube Music "see all" page
                                 reset("home")
-                                push("shelf", { shelf: { key: "youtube:start", title: id, kind: "tiles", items: [], browseId: id } })
+                                const titles = { FEmusic_new_releases_albums: I18n.t("New releases"), FEmusic_charts: I18n.t("Charts"),
+                                                 FEmusic_moods_and_genres: I18n.t("Moods & genres"), FEmusic_non_music_audio: I18n.t("Podcasts") }
+                                push("shelf", { shelf: { key: "youtube:start", title: titles[id] ?? id, kind: "tiles", items: [], browseId: id } })
                                 return
                             }
                             reset("home")

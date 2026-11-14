@@ -12,7 +12,7 @@ Item {
     property bool compact: false
 
     readonly property var queue: Player.queue
-    readonly property real rowHeight: compact ? 60 : 68     // card + 4 px gap
+    readonly property real rowHeight: compact ? 68 : 76     // card + 8 px gap (QueueRow.rowGap)
     readonly property int contextPreview: 20     // столько строк контекста видно до «Ещё N треков»
 
     // ---- Границы секций (порядок в модели: current → manual → context) ----
@@ -25,6 +25,9 @@ Item {
     readonly property int contextShown: contextExpanded ? contextRows : Math.min(contextRows, contextPreview)
     readonly property int contextMore: Math.max(0, Player.contextRemaining - contextShown)
     readonly property bool dropZoneShown: Player.isLocal && Player.hasTrack && Player.manualCount === 0
+    // the list reaches this far past the panel padding on each side, so a lifted card (scaled, with a shadow) is not
+    // cut by the list's clip; rows keep the panel's width inside it
+    readonly property real _bleed: 8
 
     function recount() {
         if (!queue) {
@@ -41,7 +44,9 @@ Item {
         target: Player
         function onQueueChanged() {
             root.recount()
-            root._resetDrag()
+            // an update while the card is still gliding (autoplay adding songs) must not drop the pending move
+            if (!glideTimer.running)
+                root._resetDrag()
         }
     }
     Connections {
@@ -90,6 +95,7 @@ Item {
     function _retarget() {
         const dy = _dy + list.contentY - _scrollStart
         dragOffset = Math.max(-dragFrom * rowHeight, Math.min((dragRows - 1 - dragFrom) * rowHeight, dy))
+        // the slot it drops into: the one its centre is over (the rows in between trade places as it goes)
         dragTo = Math.max(0, Math.min(dragRows - 1, dragFrom + Math.round(dragOffset / rowHeight)))
     }
     function endDrag() {
@@ -97,21 +103,25 @@ Item {
         if (dragFrom < 0)
             return
         if (dragTo !== dragFrom && Player.queueReorderable) {
-            // строка стоит на новом месте, пока не придёт обновлённая модель
-            dragOffset = (dragTo - dragFrom) * rowHeight
-            if (dragSection === "manual")
-                Player.moveManual(dragFrom, dragTo)
-            else
-                Player.moveContext(dragFrom, dragTo)
+            // the card glides into its slot first (settling before the offset, so the change animates); the move
+            // goes to the player when it is there, and the rows stay put until the updated queue arrives
             settleTimer.restart()
+            glideTimer.restart()
+            dragOffset = (dragTo - dragFrom) * rowHeight
         } else {
-            _resetDrag()
+            // back to where it was, gliding
+            glideTimer.stop()
+            settleTimer.restart()
+            settleTimer.interval = Theme.motion.spatialFast + 20
+            dragOffset = 0
         }
     }
     function _resetDrag() {
         if (dragFrom < 0)
             return
         settleTimer.stop()
+        settleTimer.interval = 1000
+        glideTimer.stop()
         shiftAnimated = false
         dragSection = ""
         dragFrom = -1
@@ -119,7 +129,21 @@ Item {
         dragOffset = 0
         Qt.callLater(() => root.shiftAnimated = true)
     }
-    Timer { id: settleTimer; interval: 600; onTriggered: root._resetDrag() }
+    Timer { id: settleTimer; interval: 1000; onTriggered: root._resetDrag() }
+    Timer {
+        id: glideTimer
+        interval: Theme.motion.spatialFast + 20
+        onTriggered: {
+            if (root.dragFrom < 0 || root.dragTo === root.dragFrom)
+                return
+            if (root.dragSection === "manual")
+                Player.moveManual(root.dragFrom, root.dragTo)
+            else
+                Player.moveContext(root.dragFrom, root.dragTo)
+        }
+    }
+    // after release: the card glides into its slot and the rows it passed settle with it
+    readonly property bool settling: settleTimer.running
     // the list scrolls by itself while a lifted row is held near its top or bottom edge (faster closer to it)
     Timer {
         readonly property real edge: 56
@@ -138,6 +162,10 @@ Item {
     function shiftFor(section, m) {
         if (dragFrom < 0 || section !== dragSection || m < 0 || m === dragFrom)
             return 0
+        // while the card is held it floats over the list and leaves no space behind: the rows after it close up
+        // by one place. On release the rows open exactly one slot where it drops (below)
+        if (!settling)
+            return m > dragFrom ? -rowHeight : 0
         if (dragFrom < dragTo && m > dragFrom && m <= dragTo)
             return -rowHeight
         if (dragTo < dragFrom && m >= dragTo && m < dragFrom)
@@ -211,11 +239,24 @@ Item {
                             : I18n.t("Play a playlist or album. To play a track next, choose “Add to queue” in its menu or drag it here")
     }
 
-    // «Играет на …» и «Играет из …» — над списком, не прокручиваются
+    // the playing song is the first row: «locate» shows once it has scrolled out of view
+    readonly property bool _currentOutOfView: list.visible && list.contentY - list.originY > rowHeight * 0.75
+
+    // «Играет на …», «Next Up» и «Играет из …» — над списком, не прокручиваются
     Column {
         id: top
         width: parent.width
         spacing: 0
+
+        QueueHeader {
+            width: parent.width
+            count: root.count
+            locateShown: root._currentOutOfView
+            canClear: Player.canClearQueue && root.manualRows > 0
+            onLocate: list.positionViewAtBeginning()
+            onClear: root.clearQueue()
+        }
+        Item { width: 1; height: 4 }
 
         Item {
             width: parent.width
@@ -247,6 +288,8 @@ Item {
         id: list
         anchors.fill: parent
         anchors.topMargin: top.height
+        anchors.leftMargin: -root._bleed
+        anchors.rightMargin: -root._bleed
         visible: root.count > 0
         clip: true
         model: root.queue
@@ -289,10 +332,13 @@ Item {
 
             Loader {
                 id: head
-                width: parent.width
-                active: cell.first && !cell.hidden
+                x: root._bleed
+                width: parent.width - 2 * root._bleed
+                // no header over the playing song (it is the pill); "Next from …" only under queued songs
+                active: cell.first && !cell.hidden && cell.sec !== "current"
+                        && (cell.sec !== "context" || root.manualRows > 0 || root.dropZoneShown)
                 sourceComponent: Column {
-                    width: cell.width
+                    width: cell.width - 2 * root._bleed
                     spacing: 4
 
                     Item {
@@ -308,45 +354,31 @@ Item {
                     }
                     QueueSectionHeader {
                         width: parent.width
-                        title: cell.sec === "current" ? I18n.t("Now playing")
-                             : cell.sec === "manual" ? I18n.t("Next in queue")
+                        title: cell.sec === "manual" ? I18n.t("Next in queue")
                              : Player.contextTitle !== "" ? I18n.t("Next from “{0}”", Player.contextTitle) : I18n.t("Next up")
                         count: cell.sec === "manual" ? Player.manualCount : -1
-                        actionIcon: cell.sec === "manual" && Player.canClearQueue ? "clear_all" : ""
-                        actionText: I18n.t("Clear")
                         note: cell.sec === "manual" && Player.remote ? I18n.t("New tracks go to the end") : ""
-                        onAction: root.clearQueue()
                     }
                 }
             }
 
-            // место, куда встанет поднятая строка
-            Rectangle {
-                visible: cell.lifted && root.dragTo !== root.dragFrom
-                y: cell.headerHeight + (root.dragTo - root.dragFrom) * root.rowHeight + 2
-                width: parent.width
-                height: root.rowHeight - 4
-                radius: Theme.shape.large
-                color: "transparent"
-                border.width: 2
-                border.color: Theme.primary
-            }
-
             QueueRow {
                 id: row
-                width: parent.width
+                x: root._bleed
+                width: parent.width - 2 * root._bleed
                 height: root.rowHeight
                 compact: root.compact
                 y: cell.headerHeight + (cell.lifted ? root.dragOffset : root.shiftFor(cell.sec, cell.m))
+                // the other cards make way like the target's no-bounce spring
                 Behavior on y {
-                    enabled: !row.dragging && root.shiftAnimated
-                    NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized }
+                    // the held card follows the pointer directly; everything else (closing up, opening the slot,
+                    // the card gliding into it) animates
+                    enabled: root.shiftAnimated && !(cell.lifted && !root.settling)
+                    NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasizedDecelerate }
                 }
                 // свойства корня делегата трогают переходы ListView (add/displaced), поэтому приглушаем строку
                 opacity: root.dragFrom >= 0 && cell.sec !== root.dragSection && cell.sec !== "current" ? 0.45 : 1
                 Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsDefault } }
-                scale: row.dragging ? 1.03 : 1
-                Behavior on scale { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
                 track: root.rowData(cell.index, cell.model.uid, cell.model.title)
                 current: cell.sec === "current"
                 draggable: cell.movable
@@ -374,7 +406,8 @@ Item {
         }
 
         footer: Column {
-            width: list.width
+            x: root._bleed
+            width: list.width - 2 * root._bleed
             spacing: 8
             topPadding: 4
 

@@ -8,12 +8,6 @@ import PixelMusic.Core
 Rectangle {
     id: root
 
-    // same mapping as SidebarLogo (Settings.logoColorway → assets/logo/<file>.svg)
-    readonly property var _logoFiles: ({
-        bluePurple: "blue_purple", babyPinkPurple: "baby_pink_purple", graphiteGray: "graphite",
-        limeGreen: "lime_green", limeLemon: "lime_lemon", orangeYellow: "orange_yellow"
-    })
-
     Layout.fillWidth: true
     implicitHeight: column.implicitHeight + 56
     radius: Theme.shape.extraLarge
@@ -28,14 +22,15 @@ Rectangle {
         anchors.rightMargin: 24
         spacing: 10
 
-        Image {
+        // the launcher icon: the mark on a white M3 Expressive tile; it turns slowly, like the Android splash
+        AppLogo {
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 88
-            Layout.preferredHeight: 88
-            source: Qt.resolvedUrl("../../assets/logo/" + (root._logoFiles[Settings.logoColorway] ?? "blue_purple") + ".svg")
-            sourceSize: Qt.size(176, 176)
-            fillMode: Image.PreserveAspectFit
-            smooth: true
+            Layout.preferredWidth: 96
+            Layout.preferredHeight: 96
+            size: 96
+            markScale: 1.1
+            shape: logoArea.containsMouse ? "sunny" : "cookie9"
+            MouseArea { id: logoArea; anchors.fill: parent; hoverEnabled: true }
         }
         Label {
             Layout.alignment: Qt.AlignHCenter

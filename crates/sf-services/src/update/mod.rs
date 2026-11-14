@@ -75,7 +75,9 @@ pub fn install_kind() -> InstallKind {
     let exe = std::env::current_exe().ok().map(|p| std::fs::canonicalize(&p).unwrap_or(p)).unwrap_or_default();
     let exe = PathBuf::from(exe.to_string_lossy().trim_start_matches(r"\\?\"));
     let appimage = std::env::var("APPIMAGE").ok();
-    let has_uninstaller = exe.parent().is_some_and(|dir| dir.join("unins000.exe").is_file());
+    // unins000.exe — an Inno Setup install; Uninstall.exe — the Pixel Music installer (installer/windows/Setup.cs)
+    let has_uninstaller =
+        exe.parent().is_some_and(|dir| dir.join("unins000.exe").is_file() || dir.join("Uninstall.exe").is_file());
     let mut roots: Vec<PathBuf> =
         ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"].into_iter().filter_map(std::env::var_os).map(PathBuf::from).collect();
     // per-user Inno installs: %LOCALAPPDATA%\Programs

@@ -961,7 +961,11 @@ pub fn moods(response: &Value) -> Vec<Mood> {
             let button = &item["musicNavigationButtonRenderer"];
             let title = runs_text(&button["buttonText"]);
             if let (false, Some(browse)) = (title.is_empty(), browse_ref(&button["clickCommand"]["browseEndpoint"])) {
-                out.push(Mood { group: group.clone(), title, browse });
+                let color = button["solid"]["leftStripeColor"]
+                    .as_u64()
+                    .map(|argb| format!("#{:06x}", argb & 0x00ff_ffff))
+                    .unwrap_or_default();
+                out.push(Mood { group: group.clone(), title, browse, color });
             }
         }
     }

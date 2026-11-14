@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Md3
@@ -283,112 +284,156 @@ ColumnLayout {
         }
     }
 
-    // ---- Recently played: two rows of pills, in a solid section card like the other Home shelves ----
-    Rectangle {
-        id: recentCard
-        readonly property real pad: root.compact ? 16 : 20
+    // ---- Recently played: PixelPlayer Desktop's RecentlyPlayedSection ----
+    // Three rows of 68 px pills, each as wide as its text needs (190…310 px in five steps), filled column by column
+    // and scrolled sideways together. Each pill is its cover's primaryContainer (CoverTones: Tonal Spot, light or
+    // dark) with the title in onPrimaryContainer and the artist at 80 %; the playing song's pill squares its corners
+    // (34 → 18 px, 280 ms). The header is the target's: a large title and a 72 × 44 arrow button.
+    ColumnLayout {
+        id: recentSection
+        readonly property real pillHeight: 68
+        readonly property real gap: 12
+        readonly property int rowCount: 3
+        readonly property var widthSteps: [190, 220, 250, 280, 310]
+        // until a cover's own colours arrive (CoverTones) — or when the cover cannot be read — the theme's container
+        readonly property var fallback: [Theme.primaryContainer, Theme.fgPrimaryContainer, Qt.alpha(Theme.fgPrimaryContainer, 0.8)]
+
+        function pillWidth(t) {
+            const w = (t.title ?? "").trim().length + (t.artists ?? "").trim().length * 0.55
+            return widthSteps[w < 18 ? 0 : w < 28 ? 1 : w < 40 ? 2 : w < 54 ? 3 : 4]
+        }
+        // as many songs as fill the width plus two columns to scroll to (at least five columns), dealt column by
+        // column over the three rows like the target (the first rows take the remainder)
+        readonly property var rows: {
+            const songs = root.recent
+            if (songs.length === 0 || width <= 0)
+                return []
+            const columns = Math.max(5, Math.ceil((width + gap) / (widthSteps[0] + gap)) + 2)
+            const shown = songs.slice(0, columns * rowCount)
+            const base = Math.floor(shown.length / rowCount), rest = shown.length % rowCount
+            const targets = [base + (rest > 0 ? 1 : 0), base + (rest > 1 ? 1 : 0), base]
+            const out = [[], [], []]
+            let i = 0
+            for (let c = 0; c < targets[0]; c++)
+                for (let r = 0; r < rowCount && i < shown.length; r++)
+                    if (c < targets[r])
+                        out[r].push({ index: i, track: shown[i++] })
+            return out
+        }
+
         visible: root.recent.length > 0
         Layout.fillWidth: true
-        Layout.topMargin: 4
-        implicitHeight: recentCol.implicitHeight + 2 * pad
-        radius: Theme.shape.extraLarge
-        color: Theme.surfaceContainerHigh
-        ColumnLayout {
-            id: recentCol
-            x: recentCard.pad
-            y: recentCard.pad
-            width: parent.width - 2 * recentCard.pad
-            spacing: 12
-            RowLayout {
+        Layout.topMargin: 12
+        spacing: 14
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 4
+            Layout.rightMargin: 4
+            spacing: 8
+            Label {
                 Layout.fillWidth: true
-                spacing: 8
-                Label {
-                    Layout.fillWidth: true
-                    text: I18n.t("Recently played")
-                    type: "headlineSmall"
-                    weight: 600
-                    fade: true
-                }
-                IconButton {
-                    icon: "arrow_forward"
-                    size: "xs"
-                    onClicked: root.seeAll("recent")
-                }
+                text: I18n.t("Recently played")
+                type: "headlineSmall"
+                font.pixelSize: root.compact ? 22 : 26
+                weight: 600
+                fade: true
             }
-            GridLayout {
-                id: pills
-                readonly property int perRow: Math.max(1, Math.min(4, Math.floor((recentCard.width - 2 * recentCard.pad + 12) / 292)))
-                // until a cover's own colours arrive (CoverTones) — or when the cover cannot be read — the pills take the
-                // tones of the theme in turn
-                readonly property var tones: [
-                    [Theme.primaryContainer, Theme.fgPrimaryContainer],
-                    [Theme.secondaryContainer, Theme.fgSecondaryContainer],
-                    [Theme.tertiaryContainer, Theme.fgTertiaryContainer],
-                    [Theme.surfaceContainerHighest, Theme.fgSurface]
-                ]
-                Layout.fillWidth: true
-                columns: perRow
-                columnSpacing: 12
-                rowSpacing: 12
+            Item {
+                Layout.preferredWidth: root.compact ? 60 : 72
+                Layout.preferredHeight: root.compact ? 38 : 44
+                Rectangle { anchors.fill: parent; radius: height / 2; color: Theme.surfaceContainerHigh }
+                Icon { anchors.centerIn: parent; name: "arrow_forward"; size: root.compact ? 20 : 22; color: Theme.fgSurface }
+                StateLayer { anchors.fill: parent; radius: height / 2; onClicked: root.seeAll("recent") }
+            }
+        }
+
+        Flickable {
+            id: pillScroll
+            Layout.fillWidth: true
+            Layout.preferredHeight: recentSection.rowCount * recentSection.pillHeight + (recentSection.rowCount - 1) * recentSection.gap
+            contentWidth: pillRows.width
+            contentHeight: height
+            flickableDirection: Flickable.HorizontalFlick
+            SideScroll { flickable: pillScroll }
+            boundsBehavior: Flickable.StopAtBounds
+            clip: true
+
+            Column {
+                id: pillRows
+                spacing: recentSection.gap
                 Repeater {
-                    model: root.recent.slice(0, pills.perRow * 2)
-                    Item {
-                        id: pill
+                    model: recentSection.rows
+                    Row {
+                        id: pillRow
                         required property var modelData
-                        required property int index
-                        readonly property var fallback: pills.tones[index % pills.tones.length]
-                        // the cover's container tone and the text colours made for it, for the light or dark scheme
-                        readonly property var coverTones: CoverTones.revision, CoverTones.tones(modelData.cover ?? "", Theme.dark)
-                        readonly property color container: coverTones.container ?? fallback[0]
-                        readonly property color onContainer: coverTones.onContainer ?? fallback[1]
-                        readonly property color onContainerVariant: coverTones.onContainerVariant ?? fallback[1]
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 280
-                        Layout.preferredHeight: 60
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: height / 2
-                            color: pill.container
-                            Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: Theme.motion.effectsSlow } }
-                        }
-                        StateLayer {
-                            anchors.fill: parent
-                            radius: height / 2
-                            color: pill.onContainer
-                            onClicked: Player.playFrom(Home.recentTracks, pill.index)
-                        }
-                        TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            onTapped: point => root.trackMenu(pill.modelData, pill, point.position.x, point.position.y)
-                        }
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 20
-                            spacing: 12
-                            MorphImage {
-                                Layout.preferredWidth: 44
-                                Layout.preferredHeight: 44
-                                shape: "circle"
-                                source: pill.modelData.cover ?? ""
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 0
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: pill.modelData.title ?? ""
-                                    type: "titleSmall"
-                                    color: pill.onContainer
-                                    fade: true
+                        spacing: recentSection.gap
+                        height: recentSection.pillHeight
+                        Repeater {
+                            model: pillRow.modelData
+                            Item {
+                                id: pill
+                                required property var modelData
+                                readonly property var track: modelData.track
+                                readonly property bool current: (track.trackId ?? "") !== "" && track.trackId === Player.trackId
+                                // the cover's container tone and the text colours made for it, light or dark
+                                readonly property var coverTones: CoverTones.revision, CoverTones.tones(track.cover ?? "", Theme.dark)
+                                readonly property color container: coverTones.container ?? recentSection.fallback[0]
+                                readonly property color fgTitle: coverTones.onContainer ?? recentSection.fallback[1]
+                                readonly property color fgArtist: coverTones.onContainerVariant ?? recentSection.fallback[2]
+                                width: recentSection.pillWidth(track)
+                                height: recentSection.pillHeight
+                                property real corner: current ? 18 : height / 2
+                                Behavior on corner { enabled: !Theme.reducedMotion; NumberAnimation { duration: 280; easing.type: Easing.InOutQuad } }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: pill.corner
+                                    color: pill.container
+                                    Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: 280 } }
                                 }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: pill.modelData.artists ?? ""
-                                    type: "bodySmall"
-                                    color: pill.onContainerVariant
-                                    opacity: pill.coverTones.onContainerVariant ? 1 : 0.75
-                                    fade: true
+                                StateLayer {
+                                    anchors.fill: parent
+                                    radius: pill.corner
+                                    color: pill.fgTitle
+                                    onClicked: Player.playFrom(Home.recentTracks, pill.modelData.index)
+                                }
+                                TapHandler {
+                                    acceptedButtons: Qt.RightButton
+                                    onTapped: point => root.trackMenu(pill.track, pill, point.position.x, point.position.y)
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 9
+                                    anchors.rightMargin: 16
+                                    spacing: 12
+                                    MorphImage {
+                                        Layout.preferredWidth: 50
+                                        Layout.preferredHeight: 50
+                                        shape: "circle"
+                                        source: pill.track.cover ?? ""
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 0
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: pill.track.title ?? ""
+                                            type: "titleMedium"
+                                            font.pixelSize: 17
+                                            weight: 600
+                                            color: pill.fgTitle
+                                            Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: 280 } }
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: pill.track.artists ?? ""
+                                            type: "bodySmall"
+                                            font.pixelSize: 14
+                                            color: pill.fgArtist
+                                            Behavior on color { enabled: !Theme.transitioning; ColorAnimation { duration: 280 } }
+                                        }
+                                    }
                                 }
                             }
                         }

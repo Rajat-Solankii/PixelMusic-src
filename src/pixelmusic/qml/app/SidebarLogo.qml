@@ -16,6 +16,9 @@ Item {
     readonly property url logoSource: Qt.resolvedUrl("../../assets/logo/" + (_logoFiles[Settings.logoColorway] ?? "blue_purple") + ".svg")
 
     property real markSize: 40                 // logo side
+    // PixelPlayer Desktop's sidebar header: a fully rounded pill (surfaceContainerHighest at 60 %) behind the
+    // logo glyph (primary, 24 px) and the bold name. In the rail the pill is just the circle around the mark.
+    property real pillWidth: markSize
     property bool expanded: true               // true — действие «свернуть», false — «развернуть»
     property bool wordmarkVisible: expanded
     // Наведение или фокус; стенды и снимки могут выставить вручную
@@ -30,6 +33,16 @@ Item {
 
     implicitWidth: wordmark.x + wordmark.width
     implicitHeight: markSize
+
+    Rectangle {
+        id: pill
+        height: root.markSize
+        width: root.expanded ? Math.max(root.markSize, root.pillWidth) : root.markSize
+        anchors.verticalCenter: parent.verticalCenter
+        radius: height / 2
+        color: Qt.alpha(Theme.surfaceContainerHighest, 0.6)
+        Behavior on width { enabled: !root._instant; NumberAnimation { duration: Theme.motion.spatialDefault; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.motion.emphasized } }
+    }
 
     Item {
         id: mark
@@ -73,24 +86,17 @@ Item {
                                     : root.highlighted ? (mark.activeFocus && !area.containsMouse ? Theme.stateLayer.focus : Theme.stateLayer.hover) : 0
         Behavior on stateOpacity { enabled: !root._instant; NumberAnimation { duration: Theme.motion.effectsFast } }
 
-        // the button: a circle under the action icon
-        Rectangle {
-            anchors.fill: parent
-            radius: width / 2
-            color: Qt.tint(Theme.secondaryContainer, Qt.alpha(Theme.fgSecondaryContainer, mark.stateOpacity))
-            opacity: mark.t
-            visible: opacity > 0
-        }
-
-        Image {
-            anchors.fill: parent
-            source: root.logoSource
-            sourceSize: Qt.size(width * Screen.devicePixelRatio, height * Screen.devicePixelRatio)
-            smooth: true
-            mipmap: true
-            opacity: mark.glyphOut
-            visible: opacity > 0
-            scale: 0.6 + 0.4 * mark.glyphOut
+        // the logo as a launcher icon: the mark on a white M3 Expressive tile (cookie). On hover / focus the tile
+        // morphs into the round button behind the action icon and takes the button's colour.
+        AppLogo {
+            anchors.centerIn: parent
+            size: root.markSize - 4
+            scale: 1 + mark.t * 4 / (root.markSize - 4)
+            shape: mark.t > 0.5 ? "circle" : "cookie9"
+            tileColor: mark.t > 0.5 ? Qt.tint(Theme.secondaryContainer, Qt.alpha(Theme.fgSecondaryContainer, mark.stateOpacity)) : "white"
+            markScale: 1.12
+            markOpacity: mark.glyphOut
+            Behavior on tileColor { enabled: !root._instant; ColorAnimation { duration: Theme.motion.effectsFast } }
         }
 
         Icon {
@@ -129,10 +135,12 @@ Item {
 
     Label {
         id: wordmark
-        x: mark.x + mark.width + 12
+        x: mark.x + mark.width
         anchors.verticalCenter: parent.verticalCenter
-        text: "Pixel Music"
-        type: "titleLarge"
+        text: "PixelMusic"
+        type: "titleMedium"
+        font.pixelSize: 18
+        weight: 700
         color: Theme.fgSurface
         opacity: root.wordmarkVisible ? 1 : 0
         visible: opacity > 0

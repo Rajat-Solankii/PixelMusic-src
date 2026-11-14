@@ -57,6 +57,8 @@ pub(crate) enum Command {
     /// reorder the rest of the playing context (indices within that section; only the YouTube lane)
     MoveContext { from: usize, to: usize },
     ClearManualQueue,
+    /// stop and forget the current song and its queue ("Nothing playing")
+    Clear,
     RefreshQueue,
     TogglePlay,
     Play,
@@ -371,6 +373,8 @@ impl Actor {
             Command::MoveManual { from, to } => core.move_manual(from, to),
             Command::MoveContext { .. } => {}
             Command::ClearManualQueue => core.clear_queue(),
+            // Spotify keeps its context on the device: here clearing can only stop it
+            Command::Clear => core.pause(),
             Command::RefreshQueue => core.refresh_queue(true),
             Command::TogglePlay => core.toggle_play(),
             Command::Play => core.play(),
@@ -651,9 +655,20 @@ impl Actor {
 
     /// While the lane has a song, the saved session is the lane's (`Core` knows nothing of YouTube songs).
     pub(crate) fn with_lane_session(&self, data: SessionData) -> SessionData {
-        let session = if self.youtube.is_active() { self.youtube.session() } else { None };
-        let Some((track, position_ms, rows, context)) = session else {
+        if !self.youtube.is_active() {
             return data;
+        }
+        let Some((track, position_ms, rows, context)) = self.youtube.session() else {
+            // the lane owns the player but has no song (cleared): nothing to restore next time
+            return SessionData {
+                context_uri: None,
+                context: PlayContext::default(),
+                track: None,
+                position_ms: 0,
+                manual: Vec::new(),
+                rows: Vec::new(),
+                ..data
+            };
         };
         SessionData {
             version: SessionData::VERSION,
@@ -808,6 +823,12 @@ impl Actor {
             }
             Command::ClearManualQueue => {
                 self.youtube.clear_manual();
+                None
+            }
+            Command::Clear => {
+                self.youtube.clear();
+                // the session file forgets the song now, not at the next save
+                self.core.save_session();
                 None
             }
             Command::RefreshQueue => None,

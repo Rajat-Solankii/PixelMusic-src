@@ -141,6 +141,8 @@ pub struct Mood {
     pub group: String,
     pub title: String,
     pub browse: BrowseRef,
+    /// the tile's own colour ("#rrggbb", from its left stripe), "" — none
+    pub color: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

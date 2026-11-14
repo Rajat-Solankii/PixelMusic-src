@@ -28,6 +28,10 @@ void set_qt_env(const QString& name, const QString& value);
 void install_native_crash_log(const QString& path);
 void app_set_quit_on_last_window_closed(bool value);
 void app_set_window_icon(const QString& path);
+// Windows: point this app's own shortcuts (desktop, Start menu, Startup, pinned taskbar) at `icon_path`
+// (an .ico; the exe itself for the default icon). Only shortcuts whose target is this exe are touched;
+// runs on a worker thread and refreshes Explorer's icons when one changed. Elsewhere — nothing.
+void shell_set_shortcut_icons(const QString& icon_path);
 // QFontDatabase::addApplicationFont; -1 — ошибка
 int app_add_font(const QString& path);
 // Qt's own strings (dialogs, context menus): qtbase_<code>.qm from translations/ next to the exe or Qt's

@@ -17,6 +17,132 @@ Page {
     property string category
     readonly property string activeCategory: category !== "" ? category : section !== "" ? categoryOf(section) : ""
     function shows(key) { return activeCategory === key }
+
+    // ---- "Reset to defaults" (one category's preferences; a sub-page resets its parent's) ----
+    readonly property string resetKey: activeCategory === "" ? "" : (categoryInfo(activeCategory).parent ?? activeCategory)
+    readonly property bool canReset: resetKey !== "" && Settings.canReset(resetKey)
+    function askReset() {
+        const name = categoryInfo(resetKey).text ?? ""
+        resetDialog.ask({
+            icon: "restart_alt",
+            title: I18n.t("Reset {0} settings?", name),
+            text: I18n.t("Every option in {0} goes back to its default. Your accounts, music folders, playlists and listening history are not touched.", name),
+            action: I18n.t("Reset")
+        }, () => {
+            const key = page.resetKey
+            const changed = Settings.resetCategory(key)
+            // the proxy and the audio engine take their new values only when applied
+            if (key === "network")
+                Settings.applyProxy("system", "", "", "", "")   // the defaults (the properties update a moment later)
+            if (key === "playback")
+                Settings.applyEngineSettings()
+            resetSnack.show(changed > 0 ? I18n.t("{0} settings restored to defaults", name)
+                                        : I18n.t("{0} settings are already at their defaults", name))
+        })
+    }
+    headerActions: Button {
+        visible: page.canReset
+        style: "tonal"
+        icon: "restart_alt"
+        text: I18n.t("Reset to defaults")
+        onClicked: page.askReset()
+    }
+    ConfirmDialog { id: resetDialog }
+
+    // ---- Swipe between categories: a sideways two-finger touchpad swipe (or a tilting wheel) on an open
+    // category goes to the previous / next one, in the order of the category list. The page slides out and the
+    // next slides in; it replaces the open page in place (the route follows), so Back still returns to the list.
+    property int _swipeDir: 0
+    property int _queuedDir: 0
+    property string _swipeKey
+    function swipeTo(dir) {
+        const here = categoryInfo(activeCategory).parent ?? activeCategory
+        const cur = categories.findIndex(c => c.key === here)
+        const next = cur + dir
+        if (cur < 0 || next < 0 || next >= categories.length)
+            return
+        // a swipe during the slide is not lost: it runs right after it
+        if (swipeAnim.running) {
+            _queuedDir = dir
+            return
+        }
+        _swipeDir = dir
+        _swipeKey = categories[next].key
+        if (Theme.reducedMotion)
+            _applySwipe(false)
+        else
+            swipeAnim.restart()
+    }
+    function _applySwipe(slide) {
+        section = ""
+        category = _swipeKey
+        // the route and the router's cache follow the page (reopening the first category shows that category)
+        if (router)
+            router.rekey(page, "settings", { category: _swipeKey })
+        flickable.contentY = 0
+        swipeShift.x = slide === false ? 0 : _swipeDir * 56
+    }
+    Translate { id: swipeShift }
+    SequentialAnimation {
+        id: swipeAnim
+        ParallelAnimation {
+            NumberAnimation { target: swipeShift; property: "x"; to: -page._swipeDir * 56; duration: 130; easing.type: Easing.InCubic }
+            NumberAnimation { target: page.flickable; property: "opacity"; to: 0; duration: 130 }
+        }
+        ScriptAction { script: page._applySwipe(true) }
+        ParallelAnimation {
+            NumberAnimation { target: swipeShift; property: "x"; to: 0; duration: 280; easing.type: Easing.OutCubic }
+            NumberAnimation { target: page.flickable; property: "opacity"; to: 1; duration: 220 }
+        }
+        onFinished: {
+            if (page._queuedDir !== 0) {
+                const d = page._queuedDir
+                page._queuedDir = 0
+                page.swipeTo(d)
+            }
+        }
+    }
+    WheelHandler {
+        id: swipeWheel
+        property real travel: 0
+        property int firedDir: 0            // the direction this gesture already turned the page, 0 = none
+        parent: page.flickable
+        target: null
+        enabled: page.activeCategory !== ""
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        orientation: Qt.Horizontal
+        onWheel: event => {
+            const dx = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 120 * 60
+            swipeIdle.restart()
+            // fingers to the left → the next category, to the right → the previous one. One page per direction
+            // in a gesture (the touchpad's momentum does not flip several pages); turning back mid-gesture
+            // counts from where it turned, so it goes back at once
+            const dir = dx > 0 ? -1 : dx < 0 ? 1 : 0
+            if (firedDir !== 0 && dir !== 0 && dir !== firedDir && Math.sign(travel) !== Math.sign(dx))
+                travel = 0
+            travel += dx
+            const want = travel > 0 ? -1 : 1
+            if (Math.abs(travel) > 140 && want !== firedDir) {
+                firedDir = want
+                travel = 0
+                page.swipeTo(want)
+            }
+        }
+    }
+    Timer {
+        id: swipeIdle
+        interval: 260
+        onTriggered: {
+            swipeWheel.travel = 0
+            swipeWheel.firedDir = 0
+        }
+    }
+    Snackbar {
+        id: resetSnack
+        parent: page
+        anchors.fill: parent
+        z: 50
+    }
     property string query: ""
 
     readonly property var categories: [
@@ -254,6 +380,7 @@ Page {
     }
 
     Component.onCompleted: {
+        page.flickable.transform = [swipeShift]
         Settings.refreshAudioDevices()
         Settings.refreshCacheUsage()
         if (signedIn)
@@ -566,35 +693,196 @@ Page {
                     title: I18n.t("Accent color")
                     description: Settings.accentFromCover ? I18n.t("When nothing is playing") : I18n.t("The app’s main color")
                     Flow {
-                        width: Math.min(8 * 40, Math.max(160, page.width - 2 * page.sideMargin - 48))
+                        width: Math.min(8 * 48, Math.max(160, page.width - 2 * page.sideMargin - 48))
                         spacing: 8
                         Repeater {
                             // seeds of the Material 3 tonal palettes (baseline purple, blue, teal, green, amber, red, pink);
                             // the scheme is built from the seed, so each one gives a full harmonious set of roles
                             model: [String(Theme.defaultSeed).toUpperCase(), "#6750A4", "#0B57D0", "#006A6A", "#386A20",
                                     "#7D5700", "#9C4146", "#984061"]
+                            // as in Android's wallpaper colours: each seed shows the colours it would give in this
+                            // mode and scheme style (primary on top, secondary and tertiary below), on a tonal tile
+                            // that turns into a cookie when picked
                             MorphShape {
+                                id: swatch
                                 required property string modelData
                                 readonly property bool current: Settings.customSeed.toUpperCase() === modelData
-                                width: 32
-                                height: 32
-                                shape: current || swatchArea.containsMouse ? "cookie6" : "circle"
-                                color: modelData
+                                readonly property var roles: ThemeEngine.dark !== undefined && ThemeEngine.variant !== "" ? ThemeEngine.swatch(modelData) : ThemeEngine.swatch(modelData)
+                                width: 40
+                                height: 40
+                                shape: current ? "cookie6" : swatchArea.containsMouse ? "cookie9" : "circle"
+                                color: current ? Theme.secondaryContainer : Theme.surfaceContainerHighest
                                 scale: swatchArea.pressed ? 0.9 : 1
                                 Behavior on scale { NumberAnimation { duration: Theme.motion.effectsFast } }
-                                MorphShape {
+                                Canvas {
+                                    id: pie
                                     anchors.centerIn: parent
-                                    width: 12; height: 12
-                                    visible: parent.current
-                                    shape: "circle"
-                                    color: "white"
+                                    width: 26
+                                    height: 26
+                                    rotation: swatch.current ? 45 : 0
+                                    Behavior on rotation { NumberAnimation { duration: Theme.motion.spatialDefault; easing.type: Easing.OutBack } }
+                                    onPaint: {
+                                        const ctx = getContext("2d")
+                                        ctx.reset()
+                                        const r = swatch.roles
+                                        if (!r || r.length < 3)
+                                            return
+                                        const c = width / 2
+                                        const slice = (from, to, color) => {
+                                            ctx.beginPath(); ctx.moveTo(c, c); ctx.arc(c, c, c, from, to); ctx.closePath()
+                                            ctx.fillStyle = color; ctx.fill()
+                                        }
+                                        slice(Math.PI, 2 * Math.PI, r[0])
+                                        slice(Math.PI / 2, Math.PI, r[1])
+                                        slice(0, Math.PI / 2, r[2])
+                                    }
+                                    Connections {
+                                        target: swatch
+                                        function onRolesChanged() { pie.requestPaint() }
+                                    }
+                                }
+                                // picked: a small check badge at the corner
+                                Rectangle {
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    anchors.margins: -2
+                                    width: 18
+                                    height: 18
+                                    radius: 9
+                                    color: Theme.primary
+                                    border.width: 2
+                                    border.color: Theme.surfaceContainerLow
+                                    scale: swatch.current ? 1 : 0
+                                    visible: scale > 0
+                                    Behavior on scale { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
+                                    Icon { anchors.centerIn: parent; name: "check"; size: 12; weight: 700; color: Theme.fgPrimary }
                                 }
                                 MouseArea {
                                     id: swatchArea
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: Settings.customSeed = parent.modelData
+                                    onClicked: Settings.customSeed = swatch.modelData
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Curated pastel palettes: in light mode their own colours become the background, cards and
+                // containers (dark mode keeps a dark scheme in their hues). Drawn as tall pills, lightest colour on
+                // top and the deeper ones in bands below, with the name underneath.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Label { text: I18n.t("Color palettes"); type: "bodyLarge" }
+                    Label {
+                        Layout.fillWidth: true
+                        text: Settings.accentFromCover
+                              ? I18n.t("Pastel themes in their own colours, used when nothing is playing. Made for light mode")
+                              : I18n.t("Pastel themes in their own colours. Made for light mode")
+                        type: "bodyMedium"
+                        color: Theme.fgSurfaceVariant
+                        wrapMode: Text.Wrap
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 12
+                        spacing: 12
+                        Repeater {
+                            model: ThemeEngine.palettes()
+                            Item {
+                                id: paletteItem
+                                required property string modelData
+                                readonly property var parts: modelData.split("|")
+                                readonly property string paletteId: parts[0]
+                                readonly property var colors: (parts[2] ?? "").split(" ")
+                                readonly property bool current: Settings.customSeed === "palette:" + paletteId
+                                width: 84
+                                height: pill.height + 8 + nameLabel.height
+
+                                // selected: a ring around the pill
+                                Rectangle {
+                                    anchors.centerIn: pill
+                                    width: pill.width + 10
+                                    height: pill.height + 10
+                                    radius: width / 2
+                                    color: "transparent"
+                                    border.width: 2
+                                    border.color: Theme.primary
+                                    opacity: paletteItem.current ? 1 : 0
+                                    scale: paletteItem.current ? 1 : 0.92
+                                    Behavior on opacity { NumberAnimation { duration: Theme.motion.effectsFast } }
+                                    Behavior on scale { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
+                                }
+                                Canvas {
+                                    id: pill
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: 5 + (paletteArea.containsMouse && !paletteItem.current ? -3 : 0)
+                                    width: 52
+                                    height: 96
+                                    scale: paletteArea.pressed ? 0.94 : 1
+                                    Behavior on y { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
+                                    Behavior on scale { NumberAnimation { duration: Theme.motion.effectsFast } }
+                                    onPaint: {
+                                        const ctx = getContext("2d")
+                                        ctx.reset()
+                                        const c = paletteItem.colors
+                                        if (c.length < 5)
+                                            return
+                                        const r = width / 2
+                                        ctx.beginPath()
+                                        ctx.moveTo(0, r)
+                                        ctx.arc(r, r, r, Math.PI, 2 * Math.PI)
+                                        ctx.lineTo(width, height - r)
+                                        ctx.arc(r, height - r, r, 0, Math.PI)
+                                        ctx.closePath()
+                                        ctx.clip()
+                                        // lightest colour on top (a little over half), the deeper four in bands
+                                        const top = Math.round(height * 0.52)
+                                        const band = (height - top) / 4
+                                        ctx.fillStyle = c[0]; ctx.fillRect(0, 0, width, top + 1)
+                                        for (let i = 1; i < 5; ++i) {
+                                            ctx.fillStyle = c[i]
+                                            ctx.fillRect(0, top + (i - 1) * band, width, band + 1)
+                                        }
+                                    }
+                                }
+                                // picked: the check badge on the pill's lower edge
+                                Rectangle {
+                                    anchors.horizontalCenter: pill.horizontalCenter
+                                    anchors.verticalCenter: pill.bottom
+                                    anchors.verticalCenterOffset: -14
+                                    width: 22
+                                    height: 22
+                                    radius: 11
+                                    color: Theme.primary
+                                    border.width: 2
+                                    border.color: Theme.surfaceContainerLow
+                                    scale: paletteItem.current ? 1 : 0
+                                    visible: scale > 0
+                                    Behavior on scale { NumberAnimation { duration: Theme.motion.spatialFast; easing.type: Easing.OutBack } }
+                                    Icon { anchors.centerIn: parent; name: "check"; size: 14; weight: 700; color: Theme.fgPrimary }
+                                }
+                                Label {
+                                    id: nameLabel
+                                    anchors.top: pill.bottom
+                                    anchors.topMargin: 10
+                                    width: parent.width
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: I18n.t(paletteItem.parts[1] ?? "")
+                                    type: "labelMedium"
+                                    color: paletteItem.current ? Theme.fgSurface : Theme.fgSurfaceVariant
+                                    font.weight: paletteItem.current ? Font.DemiBold : Font.Normal
+                                    wrapMode: Text.Wrap
+                                    maximumLineCount: 2
+                                }
+                                MouseArea {
+                                    id: paletteArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Settings.customSeed = "palette:" + paletteItem.paletteId
                                 }
                             }
                         }
@@ -656,13 +944,12 @@ Page {
 
                                 Behavior on border.width { NumberAnimation { duration: Theme.motion.effectsFast } }
 
-                                Image {
+                                AppLogo {
                                     anchors.centerIn: parent
-                                    width: 40
-                                    height: 40
-                                    source: Qt.resolvedUrl("../../../assets/logo/" + modelData.file + ".svg")
-                                    sourceSize: Qt.size(80, 80)
-                                    smooth: true
+                                    size: 42
+                                    markScale: 1.1
+                                    colorway: modelData.key
+                                    shape: Settings.logoColorway === modelData.key ? "cookie9" : "circle"
                                 }
 
                                 Icon {

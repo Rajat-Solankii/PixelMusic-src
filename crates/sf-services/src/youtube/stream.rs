@@ -405,7 +405,7 @@ async fn web_attempt(
 async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) -> Result<YtStream> {
     let data_saver = streams.data_saver.load(Ordering::Relaxed);
     let mut last_error = None;
-    // tiers whose URL for this video was refused part-way lately go last (the web tier is always asked)
+    // tiers whose URL for this video was refused part-way lately go last, after the web tier
     let refused = streams.refused_tiers(&video_id);
     let skip_vr = refused.iter().any(|tier| tier == ANDROID_VR.name);
     let skip_vr_user = refused.iter().any(|tier| tier == ANDROID_VR_USER_SOURCE);
@@ -481,6 +481,32 @@ async fn fetch(client: Arc<InnerTube>, streams: Arc<Streams>, video_id: String) 
                 }
             }
             Err(_) => {}
+        }
+    }
+
+    // nothing else answered: the tiers skipped for this song are still better than an error
+    if skip_vr {
+        let resting = lock(&streams.tiers).android_vr_until.is_some_and(|until| Instant::now() < until);
+        if !resting {
+            log::info!("youtube streams: {video_id}: the other tiers failed; asking ANDROID_VR again");
+            match vr_request(&client, &ANDROID_VR, Login::Never, &video_id, data_saver).await {
+                Ok(stream) => return Ok(stream),
+                Err((error, _)) => {
+                    last_error.get_or_insert(error);
+                }
+            }
+        }
+    }
+    if skip_vr_user && client.signed_in() && !user_resting {
+        log::info!("youtube streams: {video_id}: the other tiers failed; asking ANDROID_VR_USER again");
+        match vr_request(&client, &ANDROID_VR_USER, Login::Required, &video_id, data_saver).await {
+            Ok(mut stream) => {
+                stream.source = ANDROID_VR_USER_SOURCE.to_owned();
+                return Ok(stream);
+            }
+            Err((error, _)) => {
+                last_error.get_or_insert(error);
+            }
         }
     }
     Err(last_error.unwrap_or_else(|| YouTubeError::Unplayable(String::new())))

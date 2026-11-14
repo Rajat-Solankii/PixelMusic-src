@@ -15,7 +15,7 @@ Row {
     // true — the segments share the group's width equally (give the group a width, e.g. Layout.fillWidth with a
     // small Layout.preferredWidth); false — each segment as wide as its content
     property bool fill: false
-    // selected segment: container and content colours (Expressive accent: Theme.primary / Theme.fgPrimary)
+    // selected segment: PixelPlayer Desktop's ToggleSegmentButton — primaryContainer / onPrimaryContainer
     property color selectedColor: Theme.primaryContainer
     property color selectedContentColor: Theme.fgPrimaryContainer
     // Expressive width change: the selected segment grows by this many px, its neighbours give way

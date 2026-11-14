@@ -34,7 +34,7 @@ ColumnLayout {
             x: root.grouped ? 0 : 24
             y: root.grouped ? 0 : 20
             width: parent.width - 2 * x
-            spacing: root.grouped ? 3 : 20
+            spacing: root.grouped ? 2 : 20
         }
     }
 }

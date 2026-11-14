@@ -633,6 +633,15 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "applyProxy"]
         fn apply_proxy(self: Pin<&mut Settings>, mode: &QString, host: &QString, port: &QString, username: &QString, password: &QString);
+        /// Settings → <category> → "Reset to defaults": the category's preferences back to their defaults
+        /// (mf_platform::category_keys). Returns how many changed; the properties follow through the store's events.
+        #[qinvokable]
+        #[cxx_name = "resetCategory"]
+        fn reset_category(self: Pin<&mut Settings>, category: &QString) -> i32;
+        /// Whether the category has preferences to reset (stats and backup do not).
+        #[qinvokable]
+        #[cxx_name = "canReset"]
+        fn can_reset(self: &Settings, category: &QString) -> bool;
     }
 
     impl cxx_qt::Threading for Settings {}
@@ -941,6 +950,15 @@ impl qobject::Settings {
 
     fn apply_engine_settings(self: Pin<&mut Self>) {
         ctx().services.auth.restart_engine();
+    }
+
+    fn reset_category(self: Pin<&mut Self>, category: &QString) -> i32 {
+        let changed = ctx().services.settings.reset_category(&category.to_string());
+        i32::try_from(changed).unwrap_or(i32::MAX)
+    }
+
+    fn can_reset(&self, category: &QString) -> bool {
+        !mf_platform::category_keys(&category.to_string()).is_empty()
     }
 
     fn check_monochrome(mut self: Pin<&mut Self>) {

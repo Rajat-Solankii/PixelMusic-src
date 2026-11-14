@@ -14,6 +14,7 @@ An adaptive icon shows only the middle 72 dp of its 108 dp layers, so the SVG ke
 Output:
     src/pixelmusic/assets/logo/<name>.svg           the logo (sidebar, window icon, Settings swatches)
     src/pixelmusic/assets/logo/<name>-<16|24|32>.png  tray icons
+    src/pixelmusic/assets/logo/<name>.ico           (16..256) shortcut icon when that colourway is chosen (Windows)
     src/pixelmusic/assets/pixelmusic.svg            = blue_purple.svg (default window icon)
     src/pixelmusic/assets/tray-<black|white>-<16|24|32>.png  one-colour silhouette (macOS template icon)
     crates/sf-auth/src/logo.svg                     = blue_purple.svg (the OAuth "close this tab" page)
@@ -249,8 +250,16 @@ def main():
         shapes = parse_foreground(SRC / f"ic_pixelmusic_{fg_name}.xml")
         svg = build_svg(title, bg, shapes)
         (logo_dir / f"{name}.svg").write_text(svg, encoding="utf-8", newline="\n")
+        # the mark alone (no background square): the app draws it on its own white launcher-shaped tile
+        mark = re.sub(r'<rect [^>]*/>\n', "", svg)
+        (logo_dir / f"{name}_mark.svg").write_text(mark, encoding="utf-8", newline="\n")
         for size in (16, 24, 32):
             render(bg, shapes, size).save(logo_dir / f"{name}-{size}.png", optimize=True)
+        # Windows: the app points its desktop / Start menu / pinned taskbar shortcuts at the chosen colourway's icon
+        ico_sizes = [16, 24, 32, 48, 64, 128, 256]
+        ico_frames = [render(bg, shapes, s) for s in ico_sizes]
+        ico_frames[-1].save(logo_dir / f"{name}.ico", format="ICO", sizes=[(s, s) for s in ico_sizes],
+                            append_images=ico_frames[:-1])
         if ref_dir:
             print(f"{name}: mean abs diff to reference = {compare(render(bg, shapes, 512, square=True), ref_dir / (name + '.png')):.2f}")
         if name == DEFAULT:

@@ -1048,6 +1048,50 @@ impl SettingsStore {
     pub fn subscribe(&self) -> broadcast::Receiver<SettingKey> {
         self.changes.subscribe()
     }
+
+    /// Settings → <category> → "Reset to defaults": every key of the category (`category_keys`) back to its
+    /// default. Returns how many values changed (each is announced to subscribers like any other write).
+    pub fn reset_category(&self, category: &str) -> usize {
+        category_keys(category).into_iter().filter(|&key| self.set(key, key.default_value())).count()
+    }
+}
+
+/// The keys a Settings category shows (and so resets). Only preferences: window geometry and panel state, the
+/// volume, library data (music and download folders, pins, hidden tracks, radio seeds), accounts and devices
+/// (sign-in, device name, client ids) and one-off flags are never reset. Unknown categories (stats, backup) have
+/// nothing to reset.
+pub fn category_keys(category: &str) -> Vec<SettingKey> {
+    let names: &[&str] = match category {
+        "accounts" => &[
+            "youtubeHistorySync", "youtubeLibrarySync", "youtubePersonalHome", "youtubePersonalRadio", "localPlaylistSync",
+            "lastfmScrobble", "lastfmNowPlaying", "lastfmMinTrackS", "lastfmThresholdPct", "lastfmMaxThresholdS",
+            "lastfmExplore", "lastfmSmartMix", "lastfmShowMixes", "lastfmMixRetentionDays",
+        ],
+        "music" => &["audioCache", "audioCacheMb", "downloadsLimitMb"],
+        "appearance" => &[
+            "themeMode", "schemeVariant", "accentFromCover", "customSeed", "trackTransition", "backdropMode",
+            "nowPlayingBlur", "nowPlayingDrift", "ambientBackground", "coverSpin", "coverPulse", "calmWhenInactive",
+            "animations", "lowPowerMode", "gpuPreference", "language", "uiScale", "logoColorway", "homeRadioHidden",
+            "sidebarLibrary", "closeToTray", "wheelStep", "floatingPlayer", "floatingPlayerStyle", "floatingKeyHints",
+            "floatingHideFullscreen", "floatingHideMaximized", "floatingEdge", "floatingOffsetX", "floatingFreeX",
+            "floatingFreeY", "floatingIslandScreens", "taskbarScreens", "taskbarPositions", "taskbarWidgetPos",
+        ],
+        "lyrics" => &[
+            "lyricsMode", "lyricsFontScale", "lyricsScrim", "lyricsTextAlign", "lyricsFillMode", "lyricsVisibleLines",
+            "lyricsHighlight", "lyricsActiveScale", "lyricsIdleScale", "lyricsWordBounce", "lyricsDimOpacity",
+            "lyricsScrollMs", "lyricsStaggerMs", "lyricsBlurAmount", "lyricsLineSpacing", "lyricsAnimate",
+            "lyricsShowSource", "lyricsSyncMs", "lyricsRomanize",
+        ],
+        "playback" => &[
+            "autoplay", "normalisation", "gapless", "bitrate", "crossfade", "playbackSpeed", "audioDevice",
+            "losslessStreams", "jioSaavnStreams", "youtubeDataSaver", "audioBalance", "monoAudio",
+        ],
+        "equalizer" => &["eqEnabled", "eqPreamp", "eqBands", "eqPreset"],
+        "network" => &["proxyMode", "proxyHost", "proxyPort", "proxyUsername", "coversBypassProxy"],
+        "about" => &["autoUpdateCheck", "updateChannel", "skippedVersion"],
+        _ => &[],
+    };
+    names.iter().filter_map(|name| SettingKey::from_name(name)).collect()
 }
 
 /// В памяти.
@@ -1460,6 +1504,55 @@ mod registry {
                 other => key.set_value(name, &other.to_qt_string()),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    const CATEGORIES: [&str; 8] = ["accounts", "music", "appearance", "lyrics", "playback", "equalizer", "network", "about"];
+
+    #[test]
+    fn every_category_key_exists_and_belongs_to_one_category_only() {
+        let mut seen = std::collections::HashSet::new();
+        for category in CATEGORIES {
+            let keys = category_keys(category);
+            assert!(!keys.is_empty(), "{category}");
+            for key in keys {
+                assert!(seen.insert(key), "{} is in two categories", key.name());
+            }
+        }
+        // the names in the table are all real keys (a typo would silently drop one)
+        assert_eq!(seen.len(), CATEGORIES.iter().map(|c| category_keys(c).len()).sum::<usize>());
+        let total: usize = [14, 3, 35, 19, 12, 4, 5, 3].iter().sum();
+        assert_eq!(seen.len(), total, "a name in category_keys does not match a SettingKey");
+        assert!(category_keys("stats").is_empty() && category_keys("backup").is_empty());
+    }
+
+    #[test]
+    fn resetting_a_category_restores_its_defaults_and_leaves_the_rest_alone() {
+        let store = SettingsStore::in_memory();
+        let mut changes = store.subscribe();
+        store.set(SettingKey::ThemeMode, SettingValue::Str("light".into()));
+        store.set(SettingKey::CoverSpin, SettingValue::Bool(false));
+        store.set(SettingKey::LyricsFontScale, SettingValue::Float(1.3));
+        store.set(SettingKey::WindowWidth, SettingValue::Int(1500));
+        while changes.try_recv().is_ok() {}
+
+        assert_eq!(store.reset_category("appearance"), 2);
+        assert_eq!(store.get(SettingKey::ThemeMode), SettingKey::ThemeMode.default_value());
+        assert_eq!(store.get(SettingKey::CoverSpin), SettingKey::CoverSpin.default_value());
+        // other categories and the window are untouched
+        assert_eq!(store.get(SettingKey::LyricsFontScale), SettingValue::Float(1.3));
+        assert_eq!(store.get(SettingKey::WindowWidth), SettingValue::Int(1500));
+        let mut announced = Vec::new();
+        while let Ok(key) = changes.try_recv() {
+            announced.push(key);
+        }
+        assert!(announced.contains(&SettingKey::ThemeMode) && announced.contains(&SettingKey::CoverSpin));
+        // nothing left to change the second time
+        assert_eq!(store.reset_category("appearance"), 0);
     }
 }
 
